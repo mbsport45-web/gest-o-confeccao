@@ -1,0 +1,9 @@
+{
+  "name": "gestão de confecção",
+  "install": "set -euo pipefail\ncd /workspace\nif [ ! -f package.json ]; then\n  echo \"[install] No package.json at /workspace on this revision; skipping npm install.\"\n  exit 0\nfi\nif [ -f package-lock.json ]; then\n  npm ci --no-audit --no-fund\nelse\n  npm install --no-audit --no-fund\nfi",
+  "start": "set -euo pipefail\ncd /workspace\nif [ ! -f package.json ]; then\n  echo \"[start] No package.json at /workspace; nothing to start.\"\n  exit 0\nfi\nif [ ! -d node_modules ]; then\n  if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi\nfi\nhas_dev=$(node -p \"require('./package.json').scripts && require('./package.json').scripts.dev ? 'yes' : 'no'\")\nif [ \"$has_dev\" != \"yes\" ]; then\n  echo \"[start] No npm dev script; skipping servers.\"\n  exit 0\nfi\nif curl -sf --max-time 2 http://127.0.0.1:3001/api/health >/dev/null || curl -sf --max-time 2 http://127.0.0.1:4000/api/health >/dev/null; then\n  echo \"[start] API already running.\"\n  exit 0\nfi\nnohup npm run dev >/tmp/gestao-dev.log 2>&1 &\necho $! >/tmp/gestao-dev.pid\nfor i in $(seq 1 60); do\n  if curl -sf --max-time 2 http://127.0.0.1:3001/api/health >/dev/null || curl -sf --max-time 2 http://127.0.0.1:4000/api/health >/dev/null; then\n    echo \"[start] API is ready.\"\n    exit 0\n  fi\n  sleep 1\ndone\necho \"[start] Timed out waiting for API. See /tmp/gestao-dev.log\" >&2\nexit 1",
+  "ports": [
+    { "name": "api", "port": 3001 },
+    { "name": "web", "port": 5173 }
+  ]
+}
