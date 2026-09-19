@@ -1,0 +1,24 @@
+{
+  "name": "Gestão de Confecção",
+  "install": "npm install",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "npm run dev:server"
+    },
+    {
+      "name": "web",
+      "command": "npm run dev:web"
+    }
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 5173
+    },
+    {
+      "name": "api",
+      "port": 4000
+    }
+  ]
+}
