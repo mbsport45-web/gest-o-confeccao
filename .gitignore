@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.log
 *.local
+*.tsbuildinfo
 
 # SQLite database files (generated at runtime)
 data/
