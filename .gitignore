@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.log
+*.local
+
+# SQLite database files (generated at runtime)
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Environment overrides
+.env
+.env.*
+!.env.example
