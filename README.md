@@ -1,6 +1,6 @@
 # gestão de confecção
 
-Sistema de gestão de confecção para controle de **ordens de produção**, **etapas/fluxo**, **clientes**, **produtos** (com variantes de cor e tamanho), **matérias-primas** e **estoque**.
+Sistema de gestão de confecção para controle de **ordens de produção**, **etapas/fluxo**, **clientes**, **produtos** (com variantes de cor e tamanho), **matérias-primas** e **estoque**. A interface web abre em um **dashboard** com navegação lateral (pt-BR) e detalhe visual da OP (Corte → Costura → Acabamento → Qualidade → Embalagem), usando os dados reais da API.
 
 Monorepo full-stack em TypeScript:
 
