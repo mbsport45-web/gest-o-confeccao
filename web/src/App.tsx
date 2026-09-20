@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { ClientesPage } from './ClientesPage';
+import { MateriasPrimasPage } from './MateriasPrimasPage';
 import { OrdensPage } from './OrdensPage';
 import { ProdutosPage } from './ProdutosPage';
 
-type Pagina = 'ordens' | 'clientes' | 'produtos';
+type Pagina = 'ordens' | 'clientes' | 'produtos' | 'materias';
 
 const SUBTITULO: Record<Pagina, string> = {
   ordens: 'Controle de ordens de produção',
   clientes: 'Cadastro e gestão de clientes',
   produtos: 'Cadastro de produtos e variantes',
+  materias: 'Cadastro de matérias-primas',
 };
 
 export function App() {
@@ -47,12 +49,22 @@ export function App() {
           >
             Produtos
           </button>
+          <button
+            type="button"
+            className={
+              pagina === 'materias' ? 'nav__item nav__item--ativo' : 'nav__item'
+            }
+            onClick={() => setPagina('materias')}
+          >
+            Matérias-primas
+          </button>
         </nav>
       </header>
 
       {pagina === 'ordens' && <OrdensPage />}
       {pagina === 'clientes' && <ClientesPage />}
       {pagina === 'produtos' && <ProdutosPage />}
+      {pagina === 'materias' && <MateriasPrimasPage />}
     </div>
   );
 }

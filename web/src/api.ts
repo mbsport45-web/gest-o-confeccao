@@ -385,3 +385,159 @@ export async function removerVarianteProduto(
   });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
+
+export const STATUS_MATERIA = ['ativo', 'inativo'] as const;
+export type StatusMateria = (typeof STATUS_MATERIA)[number];
+
+export const TIPOS_MATERIA = [
+  'tecido',
+  'linha',
+  'aviamento',
+  'forro',
+  'etiqueta',
+  'botao',
+  'ziper',
+  'elastico',
+  'outro',
+] as const;
+export type TipoMateria = (typeof TIPOS_MATERIA)[number];
+
+export const UNIDADES_MATERIA = ['UN', 'PC', 'MT', 'KG', 'ROLO', 'CX'] as const;
+
+export const TIPO_MATERIA_LABEL: Record<TipoMateria, string> = {
+  tecido: 'Tecido',
+  linha: 'Linha',
+  aviamento: 'Aviamento',
+  forro: 'Forro',
+  etiqueta: 'Etiqueta',
+  botao: 'Botão',
+  ziper: 'Zíper',
+  elastico: 'Elástico',
+  outro: 'Outro',
+};
+
+export interface MateriaPrima {
+  id: number;
+  codigo: string | null;
+  nome: string;
+  descricao: string | null;
+  tipo: TipoMateria;
+  categoria: string | null;
+  cor: string | null;
+  composicao: string | null;
+  largura_cm: number | null;
+  gramatura: number | null;
+  unidade: string;
+  custo: number;
+  estoque_minimo: number;
+  fornecedor: string | null;
+  referencia_fornecedor: string | null;
+  ncm: string | null;
+  status: StatusMateria;
+  observacoes: string | null;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export type MateriaPrimaPayload = {
+  codigo?: string;
+  nome: string;
+  descricao?: string;
+  tipo?: TipoMateria;
+  categoria?: string;
+  cor?: string;
+  composicao?: string;
+  largura_cm?: number | null;
+  gramatura?: number | null;
+  unidade?: string;
+  custo?: number;
+  estoque_minimo?: number;
+  fornecedor?: string;
+  referencia_fornecedor?: string;
+  ncm?: string;
+  status?: StatusMateria;
+  observacoes?: string;
+};
+
+export interface ListaMaterias {
+  data: MateriaPrima[];
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+export interface FiltrosMaterias {
+  q?: string;
+  status?: StatusMateria | '';
+  tipo?: string;
+  categoria?: string;
+  unidade?: string;
+  pagina?: number;
+  por_pagina?: number;
+}
+
+export async function listarMateriasPrimas(
+  filtros: FiltrosMaterias = {},
+): Promise<ListaMaterias> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.status) params.set('status', filtros.status);
+  if (filtros.tipo) params.set('tipo', filtros.tipo);
+  if (filtros.categoria) params.set('categoria', filtros.categoria);
+  if (filtros.unidade) params.set('unidade', filtros.unidade);
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await fetch(`/api/materias-primas?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterMateriaPrima(id: number): Promise<MateriaPrima> {
+  const res = await fetch(`/api/materias-primas/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarMateriaPrima(
+  dados: MateriaPrimaPayload,
+): Promise<MateriaPrima> {
+  const res = await fetch('/api/materias-primas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarMateriaPrima(
+  id: number,
+  dados: Partial<MateriaPrimaPayload>,
+): Promise<MateriaPrima> {
+  const res = await fetch(`/api/materias-primas/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarStatusMateriaPrima(
+  id: number,
+  status: StatusMateria,
+): Promise<MateriaPrima> {
+  const res = await fetch(`/api/materias-primas/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerMateriaPrima(id: number): Promise<void> {
+  const res = await fetch(`/api/materias-primas/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}

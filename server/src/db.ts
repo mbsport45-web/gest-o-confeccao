@@ -114,6 +114,34 @@ export function createDatabase(location: string) {
     CREATE UNIQUE INDEX IF NOT EXISTS produto_variantes_codigo_barras_unique
       ON produto_variantes (codigo_barras)
       WHERE codigo_barras IS NOT NULL AND codigo_barras != '';
+
+    -- Matérias-primas (base para ficha técnica/BOM, estoque e compras).
+    CREATE TABLE IF NOT EXISTS materias_primas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo TEXT,
+      nome TEXT NOT NULL,
+      descricao TEXT,
+      tipo TEXT NOT NULL DEFAULT 'tecido',
+      categoria TEXT,
+      cor TEXT,
+      composicao TEXT,
+      largura_cm REAL,
+      gramatura REAL,
+      unidade TEXT NOT NULL DEFAULT 'UN',
+      custo REAL NOT NULL DEFAULT 0,
+      estoque_minimo REAL NOT NULL DEFAULT 0,
+      fornecedor TEXT,
+      referencia_fornecedor TEXT,
+      ncm TEXT,
+      status TEXT NOT NULL DEFAULT 'ativo',
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS materias_primas_codigo_unique
+      ON materias_primas (codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
   `);
 
   const ordemCols = db

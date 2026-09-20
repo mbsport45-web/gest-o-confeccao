@@ -57,7 +57,8 @@ body {
 }
 
 .app__main--clientes,
-.app__main--produtos {
+.app__main--produtos,
+.app__main--materias {
   grid-template-columns: 1fr 400px;
 }
 
@@ -409,11 +410,17 @@ button {
   font-size: 0.8rem;
 }
 
+.filtros--materias {
+  grid-template-columns: 1.6fr 0.8fr 0.9fr 1fr;
+}
+
 @media (max-width: 900px) {
   .app__main--clientes,
   .app__main--produtos,
+  .app__main--materias,
   .filtros,
-  .filtros--produtos {
+  .filtros--produtos,
+  .filtros--materias {
     grid-template-columns: 1fr;
   }
 }

@@ -3,6 +3,7 @@ import cors from 'cors';
 import { createOrdensRouter } from './ordens.js';
 import { createClientesRouter } from './clientes.js';
 import { createProdutosRouter } from './produtos.js';
+import { createMateriasPrimasRouter } from './materiasPrimas.js';
 import type { AppDatabase } from './db.js';
 
 export function createApp(db: AppDatabase): Express {
@@ -18,6 +19,7 @@ export function createApp(db: AppDatabase): Express {
 
   app.use('/api/clientes', createClientesRouter(db));
   app.use('/api/produtos', createProdutosRouter(db));
+  app.use('/api/materias-primas', createMateriasPrimasRouter(db));
   app.use('/api/ordens', createOrdensRouter(db));
 
   return app;
