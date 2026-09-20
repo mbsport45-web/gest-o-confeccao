@@ -61,9 +61,10 @@ npm run dev:web
 | `GET`    | `/api/convites` | Lista convites (padrão: pendentes). |
 | `POST`   | `/api/convites` | Convida e-mail com papel; devolve o token uma vez. |
 | `DELETE` | `/api/convites/:id` | Cancela convite pendente. |
-| `GET`    | `/api/planos` | Catálogo Básico, Profissional e Enterprise (limites e recursos). Cobrança desativada. |
-| `GET`    | `/api/assinatura` | Plano, uso e **status** da assinatura da sessão (`trial`, `ativa`, `past_due`, `cancelada`, `expirada`). |
-| `PATCH`  | `/api/assinatura` | Troca o plano **ou** aplica uma ação de status (`ativar`, `cancelar`, `regularizar`, `reativar`, `renovar`, `marcar_atraso`, `expirar`), sem pagamento. |
+| `GET`    | `/api/planos` | Catálogo comercial Básico (R$ 99,90/mês), Profissional (R$ 149,90/mês) e Enterprise (R$ 199,90/mês), com limites e recursos. Cobrança desativada. |
+| `GET`    | `/api/assinatura` | Plano, uso, preço mensal e **status** da assinatura da sessão (`trial`, `ativa`, `past_due`, `cancelada`, `expirada`). |
+| `GET`    | `/api/assinatura/eventos` | Histórico comercial da empresa da sessão (assinar, upgrade, downgrade, cancelar). Sem gateway. |
+| `PATCH`  | `/api/assinatura` | Troca o plano (**upgrade**/**downgrade**) **ou** aplica uma ação de status (`ativar`/`reativar`/`renovar` preparam assinatura mensal, `cancelar`, `regularizar`, `marcar_atraso`, `expirar`), sem pagamento. |
 | `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
 | `POST`   | `/api/ordens`       | Cria uma ordem de produção (código, produto/variante, BOM). |
 | `GET`    | `/api/ordens/ficha-tecnica` | Lê a ficha técnica/BOM do produto ou variante. |
@@ -151,7 +152,7 @@ Papéis por empresa, com permissões de visualizar/criar/editar/excluir por mód
 
 A API recusa (403) ação fora do papel e responde 404 quando o registro é de outra empresa. `/api/health` continua público. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query.
 
-Cada empresa tem uma **assinatura** com um plano (**Básico**, **Profissional** ou **Enterprise**), limites, recursos e uma máquina de estados:
+Cada empresa tem uma **assinatura** com um plano comercial (**Básico R$ 99,90/mês**, **Profissional R$ 149,90/mês** ou **Enterprise R$ 199,90/mês**), limites, recursos e uma máquina de estados:
 
 | Status | O que permite | O que bloqueia |
 | --- | --- | --- |
@@ -161,7 +162,7 @@ Cada empresa tem uma **assinatura** com um plano (**Básico**, **Profissional** 
 | `cancelada` | Login e leitura dos dados | Criar/editar/excluir operação e trocar plano |
 | `expirada` | Login e leitura dos dados | Criar/editar/excluir operação e trocar plano |
 
-Cadastro novo entra em **trial**. Transições inválidas respondem 409 (`transicao_invalida`). Operação bloqueada responde 403 (`assinatura_bloqueada`) — distinto do 403 de papel (`modulo`/`acao`). A cobrança fica **desativada**: não há gateway, preço nem pagamento. Trocar o plano (proprietário/administrador) só vale em `trial` ou `ativa`. Os dados continuam isolados pela empresa da sessão.
+Cadastro novo entra em **trial**. Transições inválidas respondem 409 (`transicao_invalida`). Operação bloqueada responde 403 (`assinatura_bloqueada`) — distinto do 403 de papel (`modulo`/`acao`). A cobrança fica **desativada**: não há gateway nem pagamento real. Os preços mensais já estão no catálogo e cada troca de plano ou ação comercial gera um evento (`assinar`, `upgrade`, `downgrade`, `cancelar`) para o faturamento futuro. Trocar o plano (proprietário/administrador) só vale em `trial` ou `ativa`. Os dados continuam isolados pela empresa da sessão.
 
 Os limites são **aplicados de verdade** na API (e refletidos na interface). Criar além do teto responde **409** com `codigo: "limite_plano"`, o uso atual, o máximo e um aviso de upgrade. A contagem usa só a empresa da sessão — `empresa_id` no body não contorna o limite. Convites pendentes ocupam vaga de usuário. Pedidos e OPs contam no mês calendário (`criado_em`). PostgreSQL/RLS ainda não entra nesta etapa.
 

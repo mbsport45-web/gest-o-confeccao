@@ -1661,10 +1661,13 @@ export interface PlanoEmpresa {
   codigo: string;
   nome: string;
   descricao: string;
+  ordem: number;
   limites: LimitesPlano;
   recursos: RecursosPlano;
   preco_mensal: number | null;
   preco_anual: number | null;
+  moeda: string;
+  ciclo: string;
 }
 
 export interface PoliticaAssinatura {
@@ -1704,6 +1707,49 @@ export const ACAO_ASSINATURA_LABEL: Record<AcaoAssinatura, string> = {
   expirar: 'Simular expiração',
 };
 
+export interface ComercialAssinatura {
+  ciclo: 'mensal' | string;
+  moeda: string;
+  valor_mensal: number | null;
+  preco_anual: number | null;
+  gateway: string | null;
+  cobranca: 'desativada' | string;
+  pronta: boolean;
+  operacoes: Array<'assinar' | 'upgrade' | 'downgrade' | 'cancelar'>;
+}
+
+export interface EventoAssinatura {
+  id: number;
+  tipo: 'assinar' | 'upgrade' | 'downgrade' | 'cancelar' | 'regularizar' | 'marcar_atraso' | 'expirar' | string;
+  de_plano: string | null;
+  para_plano: string | null;
+  de_status: string | null;
+  para_status: string | null;
+  ciclo: string;
+  moeda: string;
+  valor_mensal: number | null;
+  cobranca: string;
+  gateway: string | null;
+  criado_em: string;
+}
+
+export const EVENTO_ASSINATURA_LABEL: Record<string, string> = {
+  assinar: 'Assinatura mensal',
+  upgrade: 'Upgrade',
+  downgrade: 'Downgrade',
+  cancelar: 'Cancelamento',
+  regularizar: 'Regularização',
+  marcar_atraso: 'Atraso simulado',
+  expirar: 'Expiração',
+};
+
+export function formatarPrecoMensal(valor: number | null, moeda = 'BRL'): string {
+  if (valor === null) return 'Preço sob consulta';
+  const [reais, centavos] = valor.toFixed(2).split('.');
+  const simbolo = moeda === 'BRL' ? 'R$' : moeda;
+  return `${simbolo} ${reais.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${centavos}/mês`;
+}
+
 export interface AssinaturaEmpresa {
   status: StatusAssinatura;
   status_label: string;
@@ -1713,6 +1759,7 @@ export interface AssinaturaEmpresa {
   renova_em: string | null;
   gateway: string | null;
   plano: PlanoEmpresa;
+  comercial: ComercialAssinatura;
   uso: UsoPlano;
   acesso: {
     leitura: boolean;
@@ -1860,7 +1907,13 @@ export async function cancelarConvite(id: number): Promise<void> {
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
-export async function listarPlanos(): Promise<{ data: PlanoEmpresa[]; cobranca: string }> {
+export async function listarPlanos(): Promise<{
+  data: PlanoEmpresa[];
+  cobranca: string;
+  ciclo: string;
+  moeda: string;
+  gateway: string | null;
+}> {
   const res = await apiFetch('/api/planos');
   if (!res.ok) return parseError(res);
   return res.json();
@@ -1868,6 +1921,17 @@ export async function listarPlanos(): Promise<{ data: PlanoEmpresa[]; cobranca: 
 
 export async function obterAssinatura(): Promise<AssinaturaEmpresa> {
   const res = await apiFetch('/api/assinatura');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarEventosAssinatura(): Promise<{
+  data: EventoAssinatura[];
+  cobranca: string;
+  ciclo: string;
+  gateway: string | null;
+}> {
+  const res = await apiFetch('/api/assinatura/eventos');
   if (!res.ok) return parseError(res);
   return res.json();
 }

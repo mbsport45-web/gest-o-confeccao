@@ -12,6 +12,23 @@ export const STATUS_ASSINATURA_PADRAO = 'trial' as const;
 export const TRIAL_DIAS = 14;
 export const CICLO_DIAS = 30;
 export const ATRASO_GRACA_DIAS = 7;
+export const CICLO_PADRAO = 'mensal' as const;
+export const MOEDA_PLANO = 'BRL' as const;
+
+export const TIPOS_OPERACAO_COMERCIAL = ['assinar', 'upgrade', 'downgrade', 'cancelar'] as const;
+export type TipoOperacaoComercial = (typeof TIPOS_OPERACAO_COMERCIAL)[number];
+
+export const TIPOS_EVENTO_ASSINATURA = [
+  'assinar',
+  'upgrade',
+  'downgrade',
+  'cancelar',
+  'regularizar',
+  'marcar_atraso',
+  'expirar',
+] as const;
+export type TipoEventoAssinatura = (typeof TIPOS_EVENTO_ASSINATURA)[number];
+export type TipoMudancaPlano = 'upgrade' | 'downgrade' | 'manter';
 
 export const STATUS_ASSINATURA = [
   'trial',
@@ -86,7 +103,7 @@ export function politicaDaAssinatura(status: StatusAssinatura) {
         'Trocar de plano',
         'Gerenciar o status da assinatura',
       ],
-      bloqueia: ['Cobrança real (desativada nesta etapa)'],
+      bloqueia: ['Cobrança real (catálogo com preço mensal; gateway ainda desativado)'],
       acoes,
     };
   }
@@ -98,7 +115,7 @@ export function politicaDaAssinatura(status: StatusAssinatura) {
   const permite = [
     'Entrar na empresa e ler os dados já gravados',
     'Ver o plano, o uso e o status da assinatura',
-    'Regularizar, reativar ou renovar (sem cobrança nesta etapa)',
+    'Regularizar, reativar ou renovar (assinatura mensal preparada, sem gateway nesta etapa)',
   ];
   return {
     leitura: true,
@@ -175,6 +192,9 @@ export type PlanoCatalogo = {
   nome: string;
   descricao: string;
   ordem: number;
+  preco_mensal: number;
+  preco_anual: number | null;
+  moeda: typeof MOEDA_PLANO;
   limites: LimitesPlano;
   recursos: RecursosPlano;
 };
@@ -185,6 +205,9 @@ export const PLANOS_CATALOGO: PlanoCatalogo[] = [
     nome: 'Básico',
     descricao: 'Operação inicial da confecção, com limites para cadastros e produção.',
     ordem: 1,
+    preco_mensal: 99.9,
+    preco_anual: null,
+    moeda: MOEDA_PLANO,
     limites: {
       usuarios: 3,
       clientes: 50,
@@ -206,6 +229,9 @@ export const PLANOS_CATALOGO: PlanoCatalogo[] = [
     nome: 'Profissional',
     descricao: 'Volume maior de cadastros, pedidos e relatórios avançados.',
     ordem: 2,
+    preco_mensal: 149.9,
+    preco_anual: null,
+    moeda: MOEDA_PLANO,
     limites: {
       usuarios: 15,
       clientes: 500,
@@ -227,6 +253,9 @@ export const PLANOS_CATALOGO: PlanoCatalogo[] = [
     nome: 'Enterprise',
     descricao: 'Sem limite prático de uso, com API e suporte prioritário.',
     ordem: 3,
+    preco_mensal: 199.9,
+    preco_anual: null,
+    moeda: MOEDA_PLANO,
     limites: {
       usuarios: null,
       clientes: null,
@@ -244,6 +273,39 @@ export const PLANOS_CATALOGO: PlanoCatalogo[] = [
     },
   },
 ];
+
+export function isCodigoPlano(valor: unknown): valor is CodigoPlano {
+  return typeof valor === 'string' && (CODIGOS_PLANO as readonly string[]).includes(valor);
+}
+
+export function planoDoCatalogo(codigo: CodigoPlano): PlanoCatalogo {
+  const plano = PLANOS_CATALOGO.find((item) => item.codigo === codigo);
+  if (!plano) throw new Error(`plano ${codigo} não cadastrado`);
+  return plano;
+}
+
+export function classificarMudancaPlano(de: CodigoPlano, para: CodigoPlano): TipoMudancaPlano {
+  const ordemDe = planoDoCatalogo(de).ordem;
+  const ordemPara = planoDoCatalogo(para).ordem;
+  if (ordemPara > ordemDe) return 'upgrade';
+  if (ordemPara < ordemDe) return 'downgrade';
+  return 'manter';
+}
+
+export function tipoEventoDaAcao(acao: AcaoAssinatura): TipoEventoAssinatura {
+  if (acao === 'ativar' || acao === 'reativar' || acao === 'renovar') return 'assinar';
+  if (acao === 'cancelar') return 'cancelar';
+  if (acao === 'regularizar') return 'regularizar';
+  if (acao === 'marcar_atraso') return 'marcar_atraso';
+  return 'expirar';
+}
+
+export function formatarPrecoMensal(valor: number | null, moeda: string = MOEDA_PLANO): string {
+  if (valor === null) return 'Preço sob consulta';
+  const [reais, centavos] = valor.toFixed(2).split('.');
+  const simbolo = moeda === 'BRL' ? 'R$' : moeda;
+  return `${simbolo} ${reais.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${centavos}/mês`;
+}
 
 const alterarAssinaturaSchema = z
   .object({
@@ -264,6 +326,24 @@ type PlanoRow = {
   ordem: number;
   limites_json: string;
   recursos_json: string;
+  preco_mensal: number | null;
+  moeda: string | null;
+};
+
+type EventoAssinaturaRow = {
+  id: number;
+  empresa_id: number;
+  tipo: string;
+  de_plano: string | null;
+  para_plano: string | null;
+  de_status: string | null;
+  para_status: string | null;
+  ciclo: string;
+  moeda: string;
+  valor_mensal: number | null;
+  cobranca: string;
+  gateway: string | null;
+  criado_em: string;
 };
 
 type AssinaturaRow = {
@@ -293,31 +373,67 @@ export function mapearPlano(row: {
   descricao: string;
   limites_json: string;
   recursos_json: string;
+  ordem?: number;
+  preco_mensal?: number | null;
+  moeda?: string | null;
 }) {
   const catalogo = PLANOS_CATALOGO.find((p) => p.codigo === row.codigo);
+  const precoCatalogo = catalogo?.preco_mensal;
+  const precoLinha = typeof row.preco_mensal === 'number' ? row.preco_mensal : null;
   return {
     codigo: row.codigo,
     nome: row.nome,
     descricao: row.descricao,
+    ordem: row.ordem ?? catalogo?.ordem ?? 0,
     limites: parseJson<LimitesPlano>(row.limites_json, catalogo?.limites ?? PLANOS_CATALOGO[0].limites),
     recursos: parseJson<RecursosPlano>(row.recursos_json, catalogo?.recursos ?? PLANOS_CATALOGO[0].recursos),
-    preco_mensal: null as number | null,
-    preco_anual: null as number | null,
+    preco_mensal: precoCatalogo ?? precoLinha,
+    preco_anual: catalogo?.preco_anual ?? null,
+    moeda: row.moeda || catalogo?.moeda || MOEDA_PLANO,
+    ciclo: CICLO_PADRAO,
+  };
+}
+
+export function mapearEventoAssinatura(row: EventoAssinaturaRow) {
+  return {
+    id: row.id,
+    tipo: row.tipo as TipoEventoAssinatura,
+    de_plano: row.de_plano,
+    para_plano: row.para_plano,
+    de_status: row.de_status,
+    para_status: row.para_status,
+    ciclo: row.ciclo,
+    moeda: row.moeda,
+    valor_mensal: row.valor_mensal,
+    cobranca: row.cobranca,
+    gateway: row.gateway,
+    criado_em: row.criado_em,
   };
 }
 
 export function mapearAssinatura(row: AssinaturaRow) {
   const status: StatusAssinatura = isStatusAssinatura(row.status) ? row.status : 'ativa';
   const politica = politicaDaAssinatura(status);
+  const plano = mapearPlano(row);
   return {
     status,
     status_label: STATUS_ASSINATURA_LABEL[status],
-    cobranca: row.cobranca,
-    ciclo: row.ciclo,
+    cobranca: COBRANCA_DESATIVADA,
+    ciclo: row.ciclo || CICLO_PADRAO,
     inicia_em: row.inicia_em,
     renova_em: row.renova_em,
-    gateway: row.gateway,
-    plano: mapearPlano(row),
+    gateway: null as string | null,
+    plano,
+    comercial: {
+      ciclo: CICLO_PADRAO,
+      moeda: plano.moeda,
+      valor_mensal: plano.preco_mensal,
+      preco_anual: plano.preco_anual,
+      gateway: null as string | null,
+      cobranca: COBRANCA_DESATIVADA,
+      pronta: false,
+      operacoes: [...TIPOS_OPERACAO_COMERCIAL],
+    },
     acesso: {
       leitura: politica.leitura,
       operacional: politica.operacional,
@@ -453,12 +569,22 @@ export function sincronizarAssinatura(db: AppDatabase, empresaId: number) {
     (status === 'trial' || status === 'past_due' || status === 'cancelada') &&
     vencidaEm(row.renova_em, agora);
   if (!deveExpirar) return;
+  const dePlano = isCodigoPlano(row.codigo) ? row.codigo : PLANO_PADRAO;
+  const valor = planoDoCatalogo(dePlano).preco_mensal;
   db.prepare(
     `UPDATE assinaturas
         SET status = 'expirada', cobranca = 'desativada', gateway = NULL, gateway_assinatura_id = NULL,
             atualizado_em = datetime('now')
       WHERE empresa_id = ?`,
   ).run(empresaId);
+  registrarEventoAssinatura(db, empresaId, {
+    tipo: 'expirar',
+    de_plano: dePlano,
+    para_plano: dePlano,
+    de_status: status,
+    para_status: 'expirada',
+    valor_mensal: valor,
+  });
 }
 
 export function aplicarAcaoAssinatura(
@@ -502,6 +628,15 @@ export function aplicarAcaoAssinatura(
             atualizado_em = datetime('now')
       WHERE empresa_id = ?`,
   ).run(proximo, proximo, empresaId);
+  const planoAtual = isCodigoPlano(row.codigo) ? row.codigo : PLANO_PADRAO;
+  registrarEventoAssinatura(db, empresaId, {
+    tipo: tipoEventoDaAcao(acao),
+    de_plano: planoAtual,
+    para_plano: planoAtual,
+    de_status: atual,
+    para_status: proximo,
+    valor_mensal: planoDoCatalogo(planoAtual).preco_mensal,
+  });
   return { ok: true };
 }
 
@@ -526,6 +661,44 @@ export function exigirAssinaturaOperacional(db: AppDatabase): RequestHandler {
   };
 }
 
+function garantirColuna(db: AppDatabase, tabela: string, coluna: string, ddl: string) {
+  const cols = db.prepare(`PRAGMA table_info(${tabela})`).all() as Array<{ name: string }>;
+  if (!cols.some((col) => col.name === coluna)) {
+    db.exec(ddl);
+  }
+}
+
+function registrarEventoAssinatura(
+  db: AppDatabase,
+  empresaId: number,
+  evento: {
+    tipo: TipoEventoAssinatura;
+    de_plano: string | null;
+    para_plano: string | null;
+    de_status: string | null;
+    para_status: string | null;
+    valor_mensal: number | null;
+  },
+) {
+  db.prepare(
+    `INSERT INTO eventos_assinatura (
+        empresa_id, tipo, de_plano, para_plano, de_status, para_status,
+        ciclo, moeda, valor_mensal, cobranca, gateway
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+  ).run(
+    empresaId,
+    evento.tipo,
+    evento.de_plano,
+    evento.para_plano,
+    evento.de_status,
+    evento.para_status,
+    CICLO_PADRAO,
+    MOEDA_PLANO,
+    evento.valor_mensal,
+    COBRANCA_DESATIVADA,
+  );
+}
+
 export function aplicarSchemaPlanos(db: AppDatabase) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS planos (
@@ -537,6 +710,8 @@ export function aplicarSchemaPlanos(db: AppDatabase) {
       ordem INTEGER NOT NULL DEFAULT 0,
       limites_json TEXT NOT NULL,
       recursos_json TEXT NOT NULL,
+      preco_mensal REAL,
+      moeda TEXT NOT NULL DEFAULT 'BRL',
       criado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -555,18 +730,41 @@ export function aplicarSchemaPlanos(db: AppDatabase) {
       atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS assinaturas_plano ON assinaturas (plano_id);
+
+    CREATE TABLE IF NOT EXISTS eventos_assinatura (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+      tipo TEXT NOT NULL,
+      de_plano TEXT,
+      para_plano TEXT,
+      de_status TEXT,
+      para_status TEXT,
+      ciclo TEXT NOT NULL DEFAULT 'mensal',
+      moeda TEXT NOT NULL DEFAULT 'BRL',
+      valor_mensal REAL,
+      cobranca TEXT NOT NULL DEFAULT 'desativada',
+      gateway TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS eventos_assinatura_empresa
+      ON eventos_assinatura (empresa_id, id);
   `);
 
+  garantirColuna(db, 'planos', 'preco_mensal', 'ALTER TABLE planos ADD COLUMN preco_mensal REAL');
+  garantirColuna(db, 'planos', 'moeda', `ALTER TABLE planos ADD COLUMN moeda TEXT NOT NULL DEFAULT 'BRL'`);
+
   const upsert = db.prepare(
-    `INSERT INTO planos (codigo, nome, descricao, ativo, ordem, limites_json, recursos_json)
-     VALUES (@codigo, @nome, @descricao, 1, @ordem, @limites_json, @recursos_json)
+    `INSERT INTO planos (codigo, nome, descricao, ativo, ordem, limites_json, recursos_json, preco_mensal, moeda)
+     VALUES (@codigo, @nome, @descricao, 1, @ordem, @limites_json, @recursos_json, @preco_mensal, @moeda)
      ON CONFLICT(codigo) DO UPDATE SET
        nome = excluded.nome,
        descricao = excluded.descricao,
        ativo = 1,
        ordem = excluded.ordem,
        limites_json = excluded.limites_json,
-       recursos_json = excluded.recursos_json`,
+       recursos_json = excluded.recursos_json,
+       preco_mensal = excluded.preco_mensal,
+       moeda = excluded.moeda`,
   );
   for (const plano of PLANOS_CATALOGO) {
     upsert.run({
@@ -576,6 +774,8 @@ export function aplicarSchemaPlanos(db: AppDatabase) {
       ordem: plano.ordem,
       limites_json: JSON.stringify(plano.limites),
       recursos_json: JSON.stringify(plano.recursos),
+      preco_mensal: plano.preco_mensal,
+      moeda: plano.moeda,
     });
   }
 
@@ -602,7 +802,8 @@ const ASSINATURA_SELECT = `
   SELECT
     a.id, a.empresa_id, a.status, a.cobranca, a.ciclo, a.inicia_em, a.renova_em,
     a.gateway, a.gateway_assinatura_id, a.atualizado_em,
-    p.id AS plano_pk, p.codigo, p.nome, p.descricao, p.ativo, p.ordem, p.limites_json, p.recursos_json
+    p.id AS plano_pk, p.codigo, p.nome, p.descricao, p.ativo, p.ordem, p.limites_json, p.recursos_json,
+    p.preco_mensal, p.moeda
     FROM assinaturas a
     JOIN planos p ON p.id = a.plano_id
 `;
@@ -623,17 +824,36 @@ export function obterAssinaturaDaEmpresa(db: AppDatabase, empresaId: number) {
 export function listarPlanos(db: AppDatabase) {
   const rows = db
     .prepare(
-      `SELECT codigo, nome, descricao, limites_json, recursos_json
+      `SELECT codigo, nome, descricao, ordem, limites_json, recursos_json, preco_mensal, moeda
          FROM planos WHERE ativo = 1 ORDER BY ordem, id`,
     )
     .all() as PlanoRow[];
   return rows.map(mapearPlano);
 }
 
+export function listarEventosAssinatura(db: AppDatabase, empresaId: number) {
+  const rows = db
+    .prepare(
+      `SELECT id, empresa_id, tipo, de_plano, para_plano, de_status, para_status,
+              ciclo, moeda, valor_mensal, cobranca, gateway, criado_em
+         FROM eventos_assinatura
+        WHERE empresa_id = ?
+        ORDER BY id DESC`,
+    )
+    .all(empresaId) as EventoAssinaturaRow[];
+  return rows.map(mapearEventoAssinatura);
+}
+
 export function createPlanosRouter(db: AppDatabase): Router {
   const router = Router();
   router.get('/', (_req, res) => {
-    res.json({ data: listarPlanos(db), cobranca: COBRANCA_DESATIVADA });
+    res.json({
+      data: listarPlanos(db),
+      cobranca: COBRANCA_DESATIVADA,
+      ciclo: CICLO_PADRAO,
+      moeda: MOEDA_PLANO,
+      gateway: null,
+    });
   });
   return router;
 }
@@ -643,6 +863,15 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
 
   router.get('/', (req, res) => {
     res.json(obterAssinaturaDaEmpresa(db, empresaDaSessao(req)));
+  });
+
+  router.get('/eventos', (req, res) => {
+    res.json({
+      data: listarEventosAssinatura(db, empresaDaSessao(req)),
+      cobranca: COBRANCA_DESATIVADA,
+      ciclo: CICLO_PADRAO,
+      gateway: null,
+    });
   });
 
   router.patch('/', (req, res) => {
@@ -667,9 +896,17 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
     if (!atual.acesso.trocar_plano) {
       return res.status(403).json(corpoAssinaturaBloqueada(atual.status));
     }
+    const codigoDestino = parsed.data.plano;
+    if (!codigoDestino) return res.status(400).json({ erro: 'Informe plano ou acao' });
+    const tipo = isCodigoPlano(atual.plano.codigo)
+      ? classificarMudancaPlano(atual.plano.codigo, codigoDestino)
+      : 'upgrade';
+    if (tipo === 'manter') {
+      return res.json(obterAssinaturaDaEmpresa(db, empresaId));
+    }
     const plano = db
       .prepare('SELECT id FROM planos WHERE codigo = ? AND ativo = 1')
-      .get(parsed.data.plano) as { id: number } | undefined;
+      .get(codigoDestino) as { id: number } | undefined;
     if (!plano) return res.status(404).json({ erro: 'Plano não encontrado' });
     db.prepare(
       `UPDATE assinaturas
@@ -677,6 +914,14 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
               atualizado_em = datetime('now')
         WHERE empresa_id = ?`,
     ).run(plano.id, empresaId);
+    registrarEventoAssinatura(db, empresaId, {
+      tipo,
+      de_plano: atual.plano.codigo,
+      para_plano: codigoDestino,
+      de_status: atual.status,
+      para_status: atual.status,
+      valor_mensal: planoDoCatalogo(codigoDestino).preco_mensal,
+    });
     res.json(obterAssinaturaDaEmpresa(db, empresaId));
   });
 

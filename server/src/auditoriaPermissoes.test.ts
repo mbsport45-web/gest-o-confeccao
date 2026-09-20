@@ -130,6 +130,7 @@ const ROTAS_PROTEGIDAS: Array<{ metodo: string; caminho: string }> = [
 
   { metodo: 'GET', caminho: '/api/planos' },
   { metodo: 'GET', caminho: '/api/assinatura' },
+  { metodo: 'GET', caminho: '/api/assinatura/eventos' },
   { metodo: 'PATCH', caminho: '/api/assinatura' },
 ];
 

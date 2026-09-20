@@ -19,6 +19,7 @@ import {
   obterSessao,
   PAPEL_LABEL,
   STATUS_ASSINATURA_LABEL,
+  formatarPrecoMensal,
   sair,
   temPermissao,
   moduloSomenteLeitura,
@@ -248,7 +249,12 @@ function AppAutenticado({
               {sessao.usuario.nome}
               <small>
                 {sessao.empresa.nome} · {PAPEL_LABEL[sessao.usuario.papel]} ·{' '}
-                {sessao.assinatura.plano.nome} · {statusLabel}
+                {sessao.assinatura.plano.nome} ·{' '}
+                {formatarPrecoMensal(
+                  sessao.assinatura.comercial?.valor_mensal ?? sessao.assinatura.plano.preco_mensal,
+                  sessao.assinatura.comercial?.moeda ?? sessao.assinatura.plano.moeda,
+                )}{' '}
+                · {statusLabel}
               </small>
             </span>
             <button
