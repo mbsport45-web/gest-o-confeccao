@@ -1715,6 +1715,8 @@ export interface ComercialAssinatura {
   gateway: string | null;
   cobranca: 'desativada' | string;
   pronta: boolean;
+  cobranca_real?: boolean;
+  ambiente?: 'sandbox' | null;
   operacoes: Array<'assinar' | 'upgrade' | 'downgrade' | 'cancelar'>;
 }
 
@@ -1738,6 +1740,7 @@ export interface EventoAssinatura {
   valor_mensal: number | null;
   cobranca: string;
   gateway: string | null;
+  referencia_externa?: string | null;
   imutavel?: boolean;
 }
 
@@ -1754,6 +1757,11 @@ export const EVENTO_ASSINATURA_LABEL: Record<string, string> = {
   regularizar: 'Regularização',
   marcar_atraso: 'Atraso',
   expirar: 'Expiração',
+  pagamento_confirmado: 'Pagamento confirmado',
+  pagamento_pendente: 'Pagamento pendente',
+  pagamento_vencido: 'Pagamento vencido',
+  pagamento_negado: 'Pagamento negado',
+  pagamento_cancelado: 'Pagamento cancelado',
 };
 
 export function podeVerHistoricoAssinatura(papel?: string): boolean {
@@ -1783,6 +1791,10 @@ export interface AssinaturaEmpresa {
   inicia_em: string;
   renova_em: string | null;
   gateway: string | null;
+  asaas_customer_id?: string | null;
+  asaas_subscription_id?: string | null;
+  payment_provider?: string | null;
+  payment_provider_status?: string | null;
   plano: PlanoEmpresa;
   comercial: ComercialAssinatura;
   uso: UsoPlano;

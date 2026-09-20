@@ -80,7 +80,9 @@ describe('papéis e permissões por módulo', () => {
     expect(moduloDaRota('/api/planos')).toBe('assinatura');
     expect(moduloDaRota('/api/assinatura')).toBe('assinatura');
     expect(moduloDaRota('/api/assinatura/eventos')).toBe('assinatura');
+    expect(moduloDaRota('/api/assinatura/pagamento')).toBe('assinatura');
     expect(moduloDaRota('/api/health')).toBeNull();
+    expect(moduloDaRota('/api/webhooks/asaas')).toBeNull();
 
     expect(acaoDoPedido('GET', '/api/clientes')).toBe('visualizar');
     expect(acaoDoPedido('POST', '/api/clientes')).toBe('criar');

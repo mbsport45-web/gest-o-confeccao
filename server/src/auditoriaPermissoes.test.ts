@@ -136,6 +136,7 @@ const ROTAS_PROTEGIDAS: Array<{ metodo: string; caminho: string }> = [
   { metodo: 'PUT', caminho: '/api/assinatura/eventos' },
   { metodo: 'DELETE', caminho: '/api/assinatura/eventos' },
   { metodo: 'PATCH', caminho: '/api/assinatura' },
+  { metodo: 'POST', caminho: '/api/assinatura/pagamento' },
 ];
 
 const ARQUIVOS_ROTAS = [
@@ -153,6 +154,7 @@ const ARQUIVOS_ROTAS = [
   'financeiro.ts',
   'relatorios.ts',
   'planos.ts',
+  'pagamentos/rotas.ts',
 ];
 
 function contarRotasNoFonte(): number {
