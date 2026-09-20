@@ -297,7 +297,8 @@ export function OrdemDetalhePage({ ordemId, onVoltar }: Props) {
                       </div>
                       <p className="fluxo__pct">{pct}%</p>
                       <div className="acoes">
-                        {etapa.status === 'pendente' && (
+                        {etapa.status === 'pendente' &&
+                          (i === 0 || passos[i - 1]?.etapa?.status === 'concluida') && (
                           <button
                             type="button"
                             disabled={atualizandoId === etapa.id}
