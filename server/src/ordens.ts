@@ -716,8 +716,6 @@ export function createOrdensRouter(db: AppDatabase): Router {
           materia_prima_id: i.materia_prima_id,
           quantidade: i.quantidade,
         }));
-      } else if (itens.length && vinculos.produtoId) {
-        gravarBom(vinculos.produtoId, vinculos.varianteId, itens);
       }
       if (itens.length) gravarRequisitos(id, data.quantidade, itens);
 
@@ -818,9 +816,6 @@ export function createOrdensRouter(db: AppDatabase): Router {
         });
 
         if (data.requisitos) {
-          if (vinculos.produtoId) {
-            gravarBom(vinculos.produtoId, vinculos.varianteId, data.requisitos);
-          }
           gravarRequisitos(id, quantidade, data.requisitos);
         } else if (data.quantidade && data.quantidade !== atual.quantidade) {
           const atuais = listRequisitosStmt.all(id) as Array<{

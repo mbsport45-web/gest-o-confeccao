@@ -250,8 +250,23 @@ describe('API de ordens de produção', () => {
       suficiente: true,
     });
 
-    const detalhe = await request(app).get(`/api/ordens/${op.body.id}`);
-    expect(detalhe.body.requisitos[0].nome).toBe('Malha OP');
+    const get = await request(app)
+      .get('/api/ordens/ficha-tecnica')
+      .query({ produto_id: produto.id, variante_id: variante.id });
+    expect(get.body.itens[0].quantidade).toBe(0.4);
+
+    await request(app).post('/api/ordens').send({
+      cliente: 'Loja BOM 2',
+      produto_id: produto.id,
+      variante_id: variante.id,
+      quantidade: 1,
+      status: 'planejada',
+      requisitos: [{ materia_prima_id: materia.id, quantidade: 9 }],
+    });
+    const fichaDepois = await request(app)
+      .get('/api/ordens/ficha-tecnica')
+      .query({ produto_id: produto.id, variante_id: variante.id });
+    expect(fichaDepois.body.itens[0].quantidade).toBe(0.4);
   });
 
   it('consome estoque ao ir para corte e estorna no cancelamento', async () => {
