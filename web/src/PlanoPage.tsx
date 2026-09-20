@@ -289,7 +289,7 @@ export function PlanoPage({
             })}
           </div>
         )}
-        {podeHistorico && <HistoricoComercial eventos={eventos} />}
+        {podeHistorico && !carregando && <HistoricoComercial eventos={eventos} />}
       </section>
     </main>
   );
