@@ -45,12 +45,13 @@ npm run dev:web
 | `npm test`           | Testes da API com Vitest + Supertest.            |
 | `npm run typecheck`  | Checagem de tipos nos dois workspaces.           |
 | `npm run lint`       | ESLint nos dois workspaces.                       |
+| `npm run asaas:sandbox-ping` | Teste GET /myAccount no Asaas Sandbox (sem cobrança; não imprime a chave). |
 
 ## API
 
 | Método   | Rota                | Descrição                        |
 | -------- | ------------------- | -------------------------------- |
-| `GET`    | `/api/health`       | Health check (público).          |
+| `GET`    | `/api/health`       | Health check (público). Inclui status do Asaas sandbox sem segredos. |
 | `POST`   | `/api/auth/registrar` | Sem convite: primeiro usuário na Empresa 1; cadastros seguintes criam empresa nova. Com `convite`: entra na empresa convidada. Cookie httpOnly. |
 | `POST`   | `/api/auth/login`   | Abre sessão.                     |
 | `POST`   | `/api/auth/logout`  | Encerra a sessão.                |
@@ -167,7 +168,7 @@ Cada empresa tem uma **assinatura** com um plano comercial (**Básico R$ 99,90/m
 
 Cadastro novo entra em **trial**. Transições inválidas respondem 409 (`transicao_invalida`). Operação bloqueada responde 403 (`assinatura_bloqueada`) — distinto do 403 de papel (`modulo`/`acao`). O navegador **não** altera `ativa` / `past_due` / `cancelada` / `expirada` diretamente: o backend aplica a máquina de estados e os webhooks Asaas.
 
-Há integração **somente sandbox** com o Asaas (`AsaasPaymentGateway`), desacoplada atrás de `PaymentGateway`. Preços saem do catálogo no servidor. Cada empresa guarda `asaas_customer_id`, `asaas_subscription_id`, `payment_provider` e `payment_provider_status`. Variáveis: `ASAAS_BASE_URL=https://api-sandbox.asaas.com/v3`, `ASAAS_API_KEY` e `ASAAS_WEBHOOK_TOKEN` (nunca a API Key; nunca produção). O webhook valida `asaas-access-token`, grava o `id` único do evento e é idempotente.
+Há integração **somente sandbox** com o Asaas (`AsaasPaymentGateway`), desacoplada atrás de `PaymentGateway`. Preços saem do catálogo no servidor. Cada empresa guarda `asaas_customer_id`, `asaas_subscription_id`, `payment_provider` e `payment_provider_status`. Variáveis oficiais: `ASAAS_BASE_URL` (somente `api-sandbox.asaas.com`), `ASAAS_API_KEY` e `ASAAS_WEBHOOK_TOKEN` (nunca a API Key; nunca produção). O webhook valida `asaas-access-token`, grava o `id` único do evento e é idempotente. A aplicação lê primeiro os nomes oficiais e, se vazios, os aliases `ASAAS_APi_KEY` e `ASSAS_BASE_URL`. `GET /api/health` reporta host/configurado sem expor a chave. `npm run asaas:sandbox-ping` faz só `GET /myAccount` no sandbox.
 
 Cada empresa tem um **histórico comercial imutável** (criação, início/fim do trial, upgrade, downgrade, cancelamento, reativação, mudanças de status e eventos de pagamento sandbox) com data, empresa, usuário responsável quando existir, plano anterior/novo, status e referência externa do Asaas. Só proprietário e administrador leem o histórico; usuários comuns não alteram os eventos. Trocar o plano (proprietário/administrador) só vale em `trial` ou `ativa`. Os dados continuam isolados pela empresa da sessão.
 

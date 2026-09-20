@@ -12,12 +12,15 @@ import {
   type TestApi,
 } from '../httpTest.js';
 import {
+  ASAAS_SANDBOX_BASE_PADRAO,
+  ASAAS_SANDBOX_HOST,
   ConfiguracaoAsaasInvalida,
   ehHostProducaoAsaas,
   lerConfiguracaoAsaas,
   normalizarBaseUrlAsaas,
+  statusConfiguracaoAsaas,
 } from './config.js';
-import { AsaasPaymentGateway } from './asaas.js';
+import { AsaasPaymentGateway, verificarAutenticacaoSandbox } from './asaas.js';
 import { MockPaymentGateway } from './mock.js';
 import { EVENTOS_ASAAS_CONHECIDOS } from './eventos.js';
 import { PLANOS_CATALOGO } from '../planos.js';
@@ -54,6 +57,41 @@ describe('configuração Asaas somente sandbox', () => {
     expect(normalizarBaseUrlAsaas('https://api-sandbox.asaas.com/v3')).toBe(
       'https://api-sandbox.asaas.com/v3',
     );
+  });
+
+  it('lê ASAAS_API_KEY e ASAAS_BASE_URL oficiais e aceita aliases do Cloud Agent', () => {
+    const oficial = lerConfiguracaoAsaas({
+      ASAAS_API_KEY: 'chave-oficial',
+      ASAAS_APi_KEY: 'chave-alias',
+      ASAAS_BASE_URL: ASAAS_SANDBOX_BASE_PADRAO,
+      ASSAS_BASE_URL: 'https://api.asaas.com/v3',
+    });
+    expect(oficial?.apiKey).toBe('chave-oficial');
+    expect(oficial?.baseUrl).toBe(ASAAS_SANDBOX_BASE_PADRAO);
+    expect(oficial?.ambiente).toBe('sandbox');
+
+    const alias = lerConfiguracaoAsaas({
+      ASAAS_APi_KEY: 'chave-alias',
+      ASSAS_BASE_URL: ASAAS_SANDBOX_BASE_PADRAO,
+    });
+    expect(alias?.apiKey).toBe('chave-alias');
+    expect(alias?.baseUrl).toBe(ASAAS_SANDBOX_BASE_PADRAO);
+
+    const status = statusConfiguracaoAsaas({
+      ASAAS_APi_KEY: 'chave-alias',
+      ASSAS_BASE_URL: ASAAS_SANDBOX_BASE_PADRAO,
+    });
+    expect(status).toMatchObject({
+      ambiente: 'sandbox',
+      cobranca_real: false,
+      configurado: true,
+      host: ASAAS_SANDBOX_HOST,
+      base_url: ASAAS_SANDBOX_BASE_PADRAO,
+      api_key_configurada: true,
+      origem_api_key: 'ASAAS_APi_KEY',
+      origem_base_url: 'ASSAS_BASE_URL',
+    });
+    expect(JSON.stringify(status)).not.toContain('chave-alias');
   });
 
   it('não aceita API Key como token de webhook', () => {
@@ -151,6 +189,41 @@ describe('AsaasPaymentGateway (HTTP mockado, sandbox)', () => {
     expect(urls.every((u) => u.includes('api-sandbox.asaas.com'))).toBe(true);
     expect(urls.some((u) => u.includes('https://api.asaas.com'))).toBe(false);
   });
+
+  it('autentica no sandbox com GET /myAccount sem criar cobrança', async () => {
+    const urls: string[] = [];
+    const metodos: Array<string | undefined> = [];
+    const http: typeof fetch = async (input, init) => {
+      urls.push(String(input));
+      metodos.push(init?.method);
+      expect(String(input).includes('/subscriptions')).toBe(false);
+      expect(String(input).includes('/payments')).toBe(false);
+      expect(String(input).includes('/checkouts')).toBe(false);
+      return new Response(JSON.stringify({ object: 'account', name: 'sandbox' }), { status: 200 });
+    };
+    const diagnostico = await verificarAutenticacaoSandbox(
+      {
+        baseUrl: ASAAS_SANDBOX_BASE_PADRAO,
+        apiKey: 'chave-sandbox-teste',
+        webhookToken: TOKEN,
+        provedor: 'asaas',
+        ambiente: 'sandbox',
+      },
+      http,
+    );
+    expect(diagnostico).toMatchObject({
+      ok: true,
+      autenticado: true,
+      statusHttp: 200,
+      host: ASAAS_SANDBOX_HOST,
+      ambiente: 'sandbox',
+      cobranca_real: false,
+      caminho: '/myAccount',
+    });
+    expect(urls).toEqual([`${ASAAS_SANDBOX_BASE_PADRAO}/myAccount`]);
+    expect(metodos).toEqual(['GET']);
+    expect(JSON.stringify(diagnostico)).not.toContain('chave-sandbox-teste');
+  });
 });
 
 describe('integração Asaas sandbox (sem cobrança real)', () => {
@@ -168,6 +241,33 @@ describe('integração Asaas sandbox (sem cobrança real)', () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it('expõe health e checkout sem segredo, com os preços oficiais do catálogo', async () => {
+    const health = await request(app).get('/api/health');
+    expect(health.status).toBe(200);
+    expect(health.body.asaas).toMatchObject({
+      ambiente: 'sandbox',
+      cobranca_real: false,
+      host: ASAAS_SANDBOX_HOST,
+      base_url: ASAAS_SANDBOX_BASE_PADRAO,
+    });
+    expect(JSON.stringify(health.body)).not.toContain('$aact_');
+
+    const checkout = await api.get('/api/assinatura/pagamento');
+    expect(checkout.status).toBe(200);
+    expect(checkout.body.gateway).toEqual({
+      configurado: true,
+      ambiente: 'sandbox',
+      cobranca_real: false,
+    });
+    expect(checkout.body.valor_mensal).toBe(99.9);
+
+    expect(PLANOS_CATALOGO.map((p) => [p.codigo, p.preco_mensal])).toEqual([
+      ['basico', 99.9],
+      ['profissional', 149.9],
+      ['enterprise', 199.9],
+    ]);
   });
 
   it('cria cliente e assinatura sandbox com o preço oficial do Básico', async () => {
@@ -440,7 +540,8 @@ describe('integração Asaas sandbox (sem cobrança real)', () => {
     expect(gateway.chamadas.some((c) => JSON.stringify(c).includes('creditCard'))).toBe(false);
 
     const exemplo = readFileSync(join(DIR, '../../../.env.example'), 'utf8');
-    expect(exemplo).toContain('ASAAS_BASE_URL=https://api-sandbox.asaas.com/v3');
+    expect(exemplo).toContain('ASAAS_BASE_URL=');
+    expect(exemplo).toContain('api-sandbox.asaas.com');
     expect(exemplo).toContain('ASAAS_API_KEY=');
     expect(exemplo).toContain('ASAAS_WEBHOOK_TOKEN=');
     expect(exemplo).not.toMatch(/\$aact_/);

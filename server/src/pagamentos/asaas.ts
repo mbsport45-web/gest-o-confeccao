@@ -1,4 +1,11 @@
-import { ASAAS_AMBIENTE, ASAAS_PROVEDOR, lerConfiguracaoAsaas, recusarUrlProducao, type ConfiguracaoAsaas } from './config.js';
+import {
+  ASAAS_AMBIENTE,
+  ASAAS_PROVEDOR,
+  ASAAS_SANDBOX_HOST,
+  lerConfiguracaoAsaas,
+  recusarUrlProducao,
+  type ConfiguracaoAsaas,
+} from './config.js';
 import type {
   AssinaturaGateway,
   CheckoutGateway,
@@ -194,6 +201,10 @@ export class AsaasPaymentGateway implements PaymentGateway {
     );
   }
 
+  async verificarAutenticacao(): Promise<DiagnosticoAutenticacaoAsaas> {
+    return verificarAutenticacaoSandbox(this.config, this.http);
+  }
+
   interpretarWebhook(corpo: unknown): EventoWebhookGateway {
     const obj = objetoDe(corpo) ?? {};
     return {
@@ -203,6 +214,70 @@ export class AsaasPaymentGateway implements PaymentGateway {
       payment: objetoDe(obj.payment),
       subscription: objetoDe(obj.subscription),
       checkout: objetoDe(obj.checkout),
+    };
+  }
+}
+
+export type DiagnosticoAutenticacaoAsaas = {
+  ok: boolean;
+  autenticado: boolean;
+  statusHttp: number | null;
+  host: typeof ASAAS_SANDBOX_HOST;
+  ambiente: typeof ASAAS_AMBIENTE;
+  cobranca_real: false;
+  caminho: '/myAccount';
+  erro?: string;
+};
+
+export async function verificarAutenticacaoSandbox(
+  configOuEnv: ConfiguracaoAsaas | NodeJS.ProcessEnv = process.env,
+  http: HttpFn = fetch,
+): Promise<DiagnosticoAutenticacaoAsaas> {
+  const cfg =
+    configOuEnv && typeof configOuEnv === 'object' && 'apiKey' in configOuEnv && 'baseUrl' in configOuEnv
+      ? (configOuEnv as ConfiguracaoAsaas)
+      : lerConfiguracaoAsaas(configOuEnv as NodeJS.ProcessEnv);
+
+  const base: DiagnosticoAutenticacaoAsaas = {
+    ok: false,
+    autenticado: false,
+    statusHttp: null,
+    host: ASAAS_SANDBOX_HOST,
+    ambiente: ASAAS_AMBIENTE,
+    cobranca_real: false,
+    caminho: '/myAccount',
+  };
+
+  if (!cfg) {
+    return { ...base, erro: 'ASAAS_API_KEY ausente' };
+  }
+
+  recusarUrlProducao(cfg.baseUrl);
+  const url = juntarUrl(cfg.baseUrl, '/myAccount');
+  recusarUrlProducao(url);
+
+  try {
+    const res = await http(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        access_token: cfg.apiKey,
+        'User-Agent': 'gestao-confeccao-sandbox/0.1.0',
+      },
+    });
+    // Consome o corpo sem devolvê-lo: /myAccount pode ter e-mail/CPF da conta sandbox.
+    await res.text();
+    return {
+      ...base,
+      ok: res.ok,
+      autenticado: res.status === 200,
+      statusHttp: res.status,
+      erro: res.ok ? undefined : `HTTP ${res.status}`,
+    };
+  } catch (erro) {
+    return {
+      ...base,
+      erro: erro instanceof Error ? erro.message : 'falha de rede no sandbox',
     };
   }
 }

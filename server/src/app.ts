@@ -19,6 +19,7 @@ import { createAssinaturaRouter, createPlanosRouter, exigirAssinaturaOperacional
 import { exigirPermissaoModulo } from './papeis.js';
 import type { AppDatabase } from './db.js';
 import { gatewayAsaasDoAmbiente } from './pagamentos/asaas.js';
+import { statusConfiguracaoAsaas } from './pagamentos/config.js';
 import { createPagamentoAssinaturaRouter } from './pagamentos/rotas.js';
 import {
   sincronizarCancelamentoGateway,
@@ -49,7 +50,21 @@ export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
   app.use(cookieParser());
 
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', servico: 'gestao-confeccao-api' });
+    const asaas = statusConfiguracaoAsaas();
+    res.json({
+      status: 'ok',
+      servico: 'gestao-confeccao-api',
+      asaas: {
+        ambiente: asaas.ambiente,
+        cobranca_real: asaas.cobranca_real,
+        configurado: asaas.configurado,
+        host: asaas.host,
+        base_url: asaas.base_url,
+        api_key_configurada: asaas.api_key_configurada,
+        origem_api_key: asaas.origem_api_key,
+        origem_base_url: asaas.origem_base_url,
+      },
+    });
   });
 
   app.post('/api/webhooks/asaas', createAsaasWebhookHandler(db, { token: webhookToken, gateway }));

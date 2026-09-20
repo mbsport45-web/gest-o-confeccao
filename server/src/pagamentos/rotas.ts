@@ -35,7 +35,14 @@ export function createPagamentoAssinaturaRouter(
 
   router.get('/pagamento', (req, res) => {
     const empresaId = empresaDaSessao(req);
-    res.json(obterCheckoutDaEmpresa(db, empresaId));
+    res.json({
+      ...obterCheckoutDaEmpresa(db, empresaId),
+      gateway: {
+        configurado: Boolean(gateway),
+        ambiente: 'sandbox' as const,
+        cobranca_real: false as const,
+      },
+    });
   });
 
   router.post('/pagamento', async (req, res) => {

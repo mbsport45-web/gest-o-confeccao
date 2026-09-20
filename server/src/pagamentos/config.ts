@@ -4,6 +4,10 @@ export const ASAAS_SANDBOX_HOST = 'api-sandbox.asaas.com';
 export const ASAAS_SANDBOX_BASE_PADRAO = `https://${ASAAS_SANDBOX_HOST}/v3`;
 export const ASAAS_WEBHOOK_HEADER = 'asaas-access-token';
 
+/** Nomes oficiais primeiro. Os aliases cobrem typos já injetados no Cloud Agent. */
+export const NOMES_ASAAS_API_KEY = ['ASAAS_API_KEY', 'ASAAS_APi_KEY'] as const;
+export const NOMES_ASAAS_BASE_URL = ['ASAAS_BASE_URL', 'ASSAS_BASE_URL'] as const;
+
 const HOSTS_PRODUCAO = new Set(['api.asaas.com', 'www.asaas.com', 'asaas.com']);
 
 export class ConfiguracaoAsaasInvalida extends Error {
@@ -71,12 +75,58 @@ export function recusarUrlProducao(url: string): void {
   }
 }
 
+export function primeiroEnv(
+  env: NodeJS.ProcessEnv,
+  nomes: readonly string[],
+): { nome: string; valor: string } | null {
+  for (const nome of nomes) {
+    const valor = env[nome]?.trim() ?? '';
+    if (valor) return { nome, valor };
+  }
+  return null;
+}
+
+export type StatusConfigAsaas = {
+  ambiente: typeof ASAAS_AMBIENTE;
+  cobranca_real: false;
+  configurado: boolean;
+  host: typeof ASAAS_SANDBOX_HOST;
+  base_url: string;
+  api_key_configurada: boolean;
+  origem_api_key: string | null;
+  origem_base_url: string;
+};
+
+export function statusConfiguracaoAsaas(env: NodeJS.ProcessEnv = process.env): StatusConfigAsaas {
+  const chave = primeiroEnv(env, NOMES_ASAAS_API_KEY);
+  const base = primeiroEnv(env, NOMES_ASAAS_BASE_URL);
+  let baseUrl = ASAAS_SANDBOX_BASE_PADRAO;
+  let origemBase = base?.nome ?? 'padrao';
+  try {
+    baseUrl = normalizarBaseUrlAsaas(base?.valor);
+  } catch {
+    origemBase = base?.nome ? `${base.nome}_invalida` : 'invalida';
+  }
+  return {
+    ambiente: ASAAS_AMBIENTE,
+    cobranca_real: false,
+    configurado: Boolean(chave),
+    host: ASAAS_SANDBOX_HOST,
+    base_url: baseUrl,
+    api_key_configurada: Boolean(chave),
+    origem_api_key: chave?.nome ?? null,
+    origem_base_url: origemBase,
+  };
+}
+
 export function lerConfiguracaoAsaas(
   env: NodeJS.ProcessEnv = process.env,
 ): ConfiguracaoAsaas | null {
-  const apiKey = env.ASAAS_API_KEY?.trim() ?? '';
+  const chave = primeiroEnv(env, NOMES_ASAAS_API_KEY);
+  const base = primeiroEnv(env, NOMES_ASAAS_BASE_URL);
   const webhookToken = env.ASAAS_WEBHOOK_TOKEN?.trim() ?? '';
-  const baseUrl = normalizarBaseUrlAsaas(env.ASAAS_BASE_URL);
+  const apiKey = chave?.valor ?? '';
+  const baseUrl = normalizarBaseUrlAsaas(base?.valor);
   if (!apiKey) return null;
   if (webhookToken && webhookToken === apiKey) {
     throw new ConfiguracaoAsaasInvalida(
