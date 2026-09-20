@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { ClientesPage } from './ClientesPage';
+import { EtapasPage } from './EtapasPage';
 import { EstoquePage } from './EstoquePage';
 import { MateriasPrimasPage } from './MateriasPrimasPage';
 import { OrdensPage } from './OrdensPage';
 import { ProdutosPage } from './ProdutosPage';
 
-type Pagina = 'ordens' | 'clientes' | 'produtos' | 'materias' | 'estoque';
+type Pagina = 'ordens' | 'etapas' | 'clientes' | 'produtos' | 'materias' | 'estoque';
 
 const SUBTITULO: Record<Pagina, string> = {
   ordens: 'Ordens de produção (OP)',
+  etapas: 'Etapas e fluxo de produção',
   clientes: 'Cadastro e gestão de clientes',
   produtos: 'Cadastro de produtos e variantes',
   materias: 'Cadastro de matérias-primas',
@@ -32,6 +34,13 @@ export function App() {
             onClick={() => setPagina('ordens')}
           >
             Ordens
+          </button>
+          <button
+            type="button"
+            className={pagina === 'etapas' ? 'nav__item nav__item--ativo' : 'nav__item'}
+            onClick={() => setPagina('etapas')}
+          >
+            Etapas
           </button>
           <button
             type="button"
@@ -73,6 +82,7 @@ export function App() {
       </header>
 
       {pagina === 'ordens' && <OrdensPage />}
+      {pagina === 'etapas' && <EtapasPage />}
       {pagina === 'clientes' && <ClientesPage />}
       {pagina === 'produtos' && <ProdutosPage />}
       {pagina === 'materias' && <MateriasPrimasPage />}

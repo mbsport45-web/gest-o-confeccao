@@ -800,3 +800,127 @@ export async function criarMovimentoEstoque(
   if (!res.ok) return parseError(res);
   return res.json();
 }
+
+export const TIPOS_ETAPA = [
+  'corte',
+  'costura',
+  'acabamento',
+  'qualidade',
+  'embalagem',
+] as const;
+export type TipoEtapa = (typeof TIPOS_ETAPA)[number];
+
+export const STATUS_ETAPA = [
+  'pendente',
+  'em_andamento',
+  'concluida',
+  'cancelada',
+] as const;
+export type StatusEtapa = (typeof STATUS_ETAPA)[number];
+
+export const TIPO_ETAPA_LABEL: Record<TipoEtapa, string> = {
+  corte: 'Corte',
+  costura: 'Costura',
+  acabamento: 'Acabamento',
+  qualidade: 'Controle de qualidade',
+  embalagem: 'Embalagem',
+};
+
+export const STATUS_ETAPA_LABEL: Record<StatusEtapa, string> = {
+  pendente: 'Pendente',
+  em_andamento: 'Em andamento',
+  concluida: 'Concluída',
+  cancelada: 'Cancelada',
+};
+
+export interface EtapaProducao {
+  id: number;
+  ordem_id: number;
+  tipo: TipoEtapa;
+  sequencia: number;
+  status: StatusEtapa;
+  responsavel: string | null;
+  iniciado_em: string | null;
+  finalizado_em: string | null;
+  observacoes: string | null;
+  criado_em: string;
+  atualizado_em: string;
+  ordem_codigo: string | null;
+  cliente: string;
+  produto: string;
+  tamanho: string;
+  ordem_quantidade: number;
+}
+
+export interface ListaEtapas {
+  data: EtapaProducao[];
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+export interface FiltrosEtapas {
+  q?: string;
+  status?: string;
+  tipo?: string;
+  ordem_id?: number;
+  pagina?: number;
+  por_pagina?: number;
+}
+
+export async function listarEtapas(
+  filtros: FiltrosEtapas = {},
+): Promise<ListaEtapas> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.status) params.set('status', filtros.status);
+  if (filtros.tipo) params.set('tipo', filtros.tipo);
+  if (filtros.ordem_id) params.set('ordem_id', String(filtros.ordem_id));
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await fetch(`/api/etapas?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterEtapa(id: number): Promise<EtapaProducao> {
+  const res = await fetch(`/api/etapas/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function gerarFluxoEtapas(
+  ordemId: number,
+  responsavel?: string,
+): Promise<{ ordem_id: number; data: EtapaProducao[] }> {
+  const res = await fetch('/api/etapas/fluxo', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ordem_id: ordemId, responsavel }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarEtapa(
+  id: number,
+  dados: {
+    status?: StatusEtapa;
+    responsavel?: string;
+    observacoes?: string;
+  },
+): Promise<EtapaProducao> {
+  const res = await fetch(`/api/etapas/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerEtapa(id: number): Promise<void> {
+  const res = await fetch(`/api/etapas/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}

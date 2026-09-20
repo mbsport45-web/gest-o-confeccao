@@ -60,13 +60,15 @@ body {
 .app__main--produtos,
 .app__main--materias,
 .app__main--estoque,
-.app__main--ordens {
+.app__main--ordens,
+.app__main--etapas {
   grid-template-columns: 1fr 400px;
 }
 
 .nav {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .nav__item {
@@ -433,6 +435,10 @@ button {
   grid-template-columns: 1.6fr 1fr 1fr;
 }
 
+.filtros--etapas {
+  grid-template-columns: 1.6fr 1fr 1fr;
+}
+
 .card__head-acoes {
   display: flex;
   align-items: center;
@@ -459,11 +465,13 @@ button {
   .app__main--materias,
   .app__main--estoque,
   .app__main--ordens,
+  .app__main--etapas,
   .filtros,
   .filtros--produtos,
   .filtros--materias,
   .filtros--estoque,
-  .filtros--ordens {
+  .filtros--ordens,
+  .filtros--etapas {
     grid-template-columns: 1fr;
   }
 }

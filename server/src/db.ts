@@ -212,6 +212,23 @@ export function createDatabase(location: string) {
       movimento_id INTEGER REFERENCES estoque_movimentos(id),
       UNIQUE (ordem_id, materia_prima_id)
     );
+
+    -- Etapas do fluxo de produção vinculadas a uma OP.
+    CREATE TABLE IF NOT EXISTS etapas_producao (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id) ON DELETE CASCADE,
+      tipo TEXT NOT NULL,
+      sequencia INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      responsavel TEXT,
+      iniciado_em TEXT,
+      finalizado_em TEXT,
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (ordem_id, sequencia),
+      UNIQUE (ordem_id, tipo)
+    );
   `);
 
   const ordemCols = db

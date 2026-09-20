@@ -1,6 +1,6 @@
 # gestão de confecção
 
-Sistema de gestão de confecção para controle de **ordens de produção**, **clientes**, **produtos** (com variantes de cor e tamanho), **matérias-primas** e **estoque**.
+Sistema de gestão de confecção para controle de **ordens de produção**, **etapas/fluxo**, **clientes**, **produtos** (com variantes de cor e tamanho), **matérias-primas** e **estoque**.
 
 Monorepo full-stack em TypeScript:
 
@@ -83,10 +83,18 @@ npm run dev:web
 | `GET`    | `/api/estoque/:id` | Detalha saldo e histórico de movimentos. |
 | `GET`    | `/api/estoque/movimentos` | Histórico de entradas, saídas e ajustes. |
 | `POST`   | `/api/estoque/movimentos` | Lança entrada, saída ou ajuste (variante, produto ou matéria-prima). |
+| `GET`    | `/api/etapas` | Lista etapas do fluxo (busca, filtros, paginação). |
+| `POST`   | `/api/etapas/fluxo` | Gera Corte → Costura → Acabamento → Qualidade → Embalagem para uma OP. |
+| `POST`   | `/api/etapas` | Cria uma etapa avulsa. |
+| `GET`    | `/api/etapas/:id` | Detalha uma etapa (operador, início, término). |
+| `PATCH`  | `/api/etapas/:id` | Atualiza status, operador ou timestamps. |
+| `DELETE` | `/api/etapas/:id` | Remove etapa pendente ou cancelada. |
 
 Cada variante possui SKU e código de barras únicos. O cadastro de produtos fica pronto para ficha técnica/BOM, matérias-primas, estoque, pedidos de venda e OPs (`produto_id` / `variante_id`). Matérias-primas usam `materias_primas.id` para os mesmos vínculos futuros. O estoque guarda saldo atual em `estoque_saldos` e o histórico em `estoque_movimentos`.
 
 Ordens de produção têm código (`OP-0001`), prioridade, data prevista, responsável, observações e status de chão de fábrica (`planejada`, `corte`, `costura`, `acabamento`, `qualidade`, `embalagem`, `concluida`, `cancelada`). A ficha técnica/BOM do produto ou variante vira requisito da OP; ao avançar para corte o sistema dá saída no estoque das matérias (e estorna se a OP for cancelada). O contrato antigo (`cliente`/`produto`/`tamanho` + `pendente`/`em_producao`) continua válido.
+
+O fluxo de produção vive em `etapas_producao`, vinculado à OP: Corte, Costura, Acabamento, Controle de qualidade e Embalagem, com sequência, status, operador e horários de início/término. A etapa seguinte só inicia depois que a anterior for concluída.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).
