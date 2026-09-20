@@ -58,7 +58,8 @@ body {
 
 .app__main--clientes,
 .app__main--produtos,
-.app__main--materias {
+.app__main--materias,
+.app__main--estoque {
   grid-template-columns: 1fr 400px;
 }
 
@@ -414,13 +415,34 @@ button {
   grid-template-columns: 1.6fr 0.8fr 0.9fr 1fr;
 }
 
+.filtros--estoque {
+  grid-template-columns: 1.6fr 0.9fr auto;
+  align-items: center;
+}
+
+.filtro-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.estoque-lado {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
 @media (max-width: 900px) {
   .app__main--clientes,
   .app__main--produtos,
   .app__main--materias,
+  .app__main--estoque,
   .filtros,
   .filtros--produtos,
-  .filtros--materias {
+  .filtros--materias,
+  .filtros--estoque {
     grid-template-columns: 1fr;
   }
 }

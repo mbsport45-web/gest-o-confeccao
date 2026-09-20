@@ -1,6 +1,6 @@
 # gestão de confecção
 
-Sistema de gestão de confecção para controle de **ordens de produção**, **clientes**, **produtos** (com variantes de cor e tamanho) e **matérias-primas**.
+Sistema de gestão de confecção para controle de **ordens de produção**, **clientes**, **produtos** (com variantes de cor e tamanho), **matérias-primas** e **estoque**.
 
 Monorepo full-stack em TypeScript:
 
@@ -77,8 +77,12 @@ npm run dev:web
 | `PATCH`  | `/api/materias-primas/:id` | Atualiza uma matéria-prima. |
 | `PATCH`  | `/api/materias-primas/:id/status` | Ativa ou inativa. |
 | `DELETE` | `/api/materias-primas/:id` | Remove se não houver vínculos de BOM/estoque/compras. |
+| `GET`    | `/api/estoque` | Lista saldos atuais (busca, filtros, paginação). |
+| `GET`    | `/api/estoque/:id` | Detalha saldo e histórico de movimentos. |
+| `GET`    | `/api/estoque/movimentos` | Histórico de entradas, saídas e ajustes. |
+| `POST`   | `/api/estoque/movimentos` | Lança entrada, saída ou ajuste (variante, produto ou matéria-prima). |
 
-Cada variante possui SKU e código de barras únicos. O cadastro de produtos fica pronto para ficha técnica/BOM, matérias-primas, estoque, pedidos de venda e OPs (`produto_id` / `variante_id`). Matérias-primas usam `materias_primas.id` para os mesmos vínculos futuros.
+Cada variante possui SKU e código de barras únicos. O cadastro de produtos fica pronto para ficha técnica/BOM, matérias-primas, estoque, pedidos de venda e OPs (`produto_id` / `variante_id`). Matérias-primas usam `materias_primas.id` para os mesmos vínculos futuros. O estoque guarda saldo atual em `estoque_saldos` e o histórico em `estoque_movimentos`.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

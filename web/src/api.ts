@@ -541,3 +541,133 @@ export async function removerMateriaPrima(id: number): Promise<void> {
   const res = await fetch(`/api/materias-primas/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
+
+export const TIPOS_MOVIMENTO = ['entrada', 'saida', 'ajuste'] as const;
+export type TipoMovimento = (typeof TIPOS_MOVIMENTO)[number];
+
+export const TIPO_MOVIMENTO_LABEL: Record<TipoMovimento, string> = {
+  entrada: 'Entrada',
+  saida: 'Saída',
+  ajuste: 'Ajuste',
+};
+
+export interface EstoqueSaldo {
+  id: number;
+  tipo: 'variante' | 'produto' | 'materia';
+  produto_id: number | null;
+  variante_id: number | null;
+  materia_prima_id: number | null;
+  quantidade: number;
+  criado_em: string;
+  atualizado_em: string;
+  nome: string;
+  codigo: string | null;
+  detalhe: string | null;
+  unidade: string;
+  estoque_minimo: number;
+  abaixo_minimo: boolean;
+  movimentos?: EstoqueMovimento[];
+}
+
+export interface EstoqueMovimento {
+  id: number;
+  saldo_id: number;
+  tipo: TipoMovimento;
+  quantidade: number;
+  saldo_anterior: number;
+  saldo_posterior: number;
+  motivo: string | null;
+  observacoes: string | null;
+  produto_id: number | null;
+  variante_id: number | null;
+  materia_prima_id: number | null;
+  criado_em: string;
+  nome?: string;
+  codigo?: string | null;
+}
+
+export interface ListaEstoque {
+  data: EstoqueSaldo[];
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+export interface ListaMovimentos {
+  data: EstoqueMovimento[];
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+export interface FiltrosEstoque {
+  q?: string;
+  tipo?: string;
+  abaixo_minimo?: boolean;
+  pagina?: number;
+  por_pagina?: number;
+}
+
+export interface NovoMovimento {
+  tipo: TipoMovimento;
+  quantidade: number;
+  variante_id?: number;
+  produto_id?: number;
+  materia_prima_id?: number;
+  motivo?: string;
+  observacoes?: string;
+}
+
+export async function listarEstoque(
+  filtros: FiltrosEstoque = {},
+): Promise<ListaEstoque> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.tipo) params.set('tipo', filtros.tipo);
+  if (filtros.abaixo_minimo) params.set('abaixo_minimo', 'true');
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await fetch(`/api/estoque?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterEstoque(id: number): Promise<EstoqueSaldo> {
+  const res = await fetch(`/api/estoque/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarMovimentosEstoque(
+  filtros: {
+    q?: string;
+    tipo?: string;
+    saldo_id?: number;
+    pagina?: number;
+    por_pagina?: number;
+  } = {},
+): Promise<ListaMovimentos> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.tipo) params.set('tipo', filtros.tipo);
+  if (filtros.saldo_id) params.set('saldo_id', String(filtros.saldo_id));
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await fetch(`/api/estoque/movimentos?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarMovimentoEstoque(
+  dados: NovoMovimento,
+): Promise<{ movimento: EstoqueMovimento; saldo: EstoqueSaldo }> {
+  const res = await fetch('/api/estoque/movimentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}

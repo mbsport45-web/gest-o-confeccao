@@ -142,6 +142,46 @@ export function createDatabase(location: string) {
     CREATE UNIQUE INDEX IF NOT EXISTS materias_primas_codigo_unique
       ON materias_primas (codigo)
       WHERE codigo IS NOT NULL AND codigo != '';
+
+    -- Saldos atuais. Um registro por variante, produto simples ou matéria-prima.
+    CREATE TABLE IF NOT EXISTS estoque_saldos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tipo TEXT NOT NULL,
+      produto_id INTEGER REFERENCES produtos(id),
+      variante_id INTEGER REFERENCES produto_variantes(id),
+      materia_prima_id INTEGER REFERENCES materias_primas(id),
+      quantidade REAL NOT NULL DEFAULT 0,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS estoque_saldos_variante_unique
+      ON estoque_saldos (variante_id)
+      WHERE variante_id IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS estoque_saldos_produto_unique
+      ON estoque_saldos (produto_id)
+      WHERE tipo = 'produto' AND produto_id IS NOT NULL AND variante_id IS NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS estoque_saldos_materia_unique
+      ON estoque_saldos (materia_prima_id)
+      WHERE materia_prima_id IS NOT NULL;
+
+    -- Histórico de entradas, saídas e ajustes.
+    CREATE TABLE IF NOT EXISTS estoque_movimentos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      saldo_id INTEGER NOT NULL REFERENCES estoque_saldos(id),
+      tipo TEXT NOT NULL,
+      quantidade REAL NOT NULL,
+      saldo_anterior REAL NOT NULL,
+      saldo_posterior REAL NOT NULL,
+      motivo TEXT,
+      observacoes TEXT,
+      produto_id INTEGER REFERENCES produtos(id),
+      variante_id INTEGER REFERENCES produto_variantes(id),
+      materia_prima_id INTEGER REFERENCES materias_primas(id),
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   const ordemCols = db

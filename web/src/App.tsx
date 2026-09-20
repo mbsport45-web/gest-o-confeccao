@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { ClientesPage } from './ClientesPage';
+import { EstoquePage } from './EstoquePage';
 import { MateriasPrimasPage } from './MateriasPrimasPage';
 import { OrdensPage } from './OrdensPage';
 import { ProdutosPage } from './ProdutosPage';
 
-type Pagina = 'ordens' | 'clientes' | 'produtos' | 'materias';
+type Pagina = 'ordens' | 'clientes' | 'produtos' | 'materias' | 'estoque';
 
 const SUBTITULO: Record<Pagina, string> = {
   ordens: 'Controle de ordens de produção',
   clientes: 'Cadastro e gestão de clientes',
   produtos: 'Cadastro de produtos e variantes',
   materias: 'Cadastro de matérias-primas',
+  estoque: 'Saldos e movimentos de estoque',
 };
 
 export function App() {
@@ -58,6 +60,15 @@ export function App() {
           >
             Matérias-primas
           </button>
+          <button
+            type="button"
+            className={
+              pagina === 'estoque' ? 'nav__item nav__item--ativo' : 'nav__item'
+            }
+            onClick={() => setPagina('estoque')}
+          >
+            Estoque
+          </button>
         </nav>
       </header>
 
@@ -65,6 +76,7 @@ export function App() {
       {pagina === 'clientes' && <ClientesPage />}
       {pagina === 'produtos' && <ProdutosPage />}
       {pagina === 'materias' && <MateriasPrimasPage />}
+      {pagina === 'estoque' && <EstoquePage />}
     </div>
   );
 }
