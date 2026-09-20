@@ -13,7 +13,9 @@ import {
   type ProdutoPayload,
   type ProdutoVariante,
   type StatusProduto,
+  type AssinaturaEmpresa,
 } from './api';
+import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 
@@ -111,7 +113,7 @@ function payloadDeForm(form: FormProduto): ProdutoPayload {
   };
 }
 
-export function ProdutosPage() {
+export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa } }) {
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -176,6 +178,7 @@ export function ProdutosPage() {
   );
 
   function abrirCriar() {
+    if (!podeCriarNoPlano(sessao.assinatura, 'produtos')) return;
     setForm(FORM_VAZIO);
     setEditandoId(null);
     setDetalhe(null);
@@ -286,10 +289,16 @@ export function ProdutosPage() {
       <section className="card card--wide">
         <div className="card__head">
           <h2>Produtos</h2>
-          <button type="button" className="btn-secundario" onClick={abrirCriar}>
+          <button
+            type="button"
+            className="btn-secundario"
+            onClick={abrirCriar}
+            disabled={!podeCriarNoPlano(sessao.assinatura, 'produtos')}
+          >
             Novo produto
           </button>
         </div>
+        <AvisoLimite assinatura={sessao.assinatura} chave="produtos" />
 
         <div className="filtros filtros--produtos">
           <input

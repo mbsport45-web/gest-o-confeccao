@@ -7,11 +7,13 @@ import {
   criarConvite,
   listarConvites,
   listarMembros,
+  mensagemLimitePlano,
   type ConviteEmpresa,
   type MembroEmpresa,
   type PapelConvite,
   type SessaoAtual,
 } from './api';
+import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
 
 export function EquipePage({ sessao }: { sessao: SessaoAtual }) {
   const [membros, setMembros] = useState<MembroEmpresa[]>([]);
@@ -47,6 +49,10 @@ export function EquipePage({ sessao }: { sessao: SessaoAtual }) {
 
   async function convidar(e: FormEvent) {
     e.preventDefault();
+    if (!podeCriarNoPlano(sessao.assinatura, 'usuarios')) {
+      setErro(mensagemLimitePlano(sessao.assinatura, 'usuarios'));
+      return;
+    }
     setErro(null);
     setAviso(null);
     setLink(null);
@@ -147,10 +153,11 @@ export function EquipePage({ sessao }: { sessao: SessaoAtual }) {
               ))}
             </select>
           </label>
-          <button type="submit" disabled={salvando}>
+          <button type="submit" disabled={salvando || !podeCriarNoPlano(sessao.assinatura, 'usuarios')}>
             {salvando ? 'Enviando…' : 'Convidar'}
           </button>
         </form>
+        <AvisoLimite assinatura={sessao.assinatura} chave="usuarios" />
 
         {link && (
           <p className="equipe__link">

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { hashToken } from './auth.js';
 import type { AppDatabase } from './db.js';
 import { PAPEIS_CONVITE, requireGerenciarEquipe } from './papeis.js';
+import { exigirLimite } from './planos.js';
 import { empresaDaSessao } from './tenant.js';
 
 const CONVITE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -133,7 +134,7 @@ export function createConvitesRouter(db: AppDatabase): Router {
     res.json({ data, total: data.length });
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', exigirLimite(db, 'usuarios'), (req, res) => {
     const parsed = conviteSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({

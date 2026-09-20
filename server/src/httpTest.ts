@@ -45,7 +45,16 @@ export async function autenticarPapel(
 ): Promise<TestApi> {
   const email = opts?.email ?? `${papel}-${crypto.randomUUID()}@gestao.local`;
   const senha = opts?.senha ?? 'senha-teste-2';
-  const convite = await admin.post('/api/convites').send({ email, papel });
+  let convite = await admin.post('/api/convites').send({ email, papel });
+  if (convite.status === 409 && convite.body?.codigo === 'limite_plano') {
+    const upgrade = await admin.patch('/api/assinatura').send({ plano: 'enterprise' });
+    if (upgrade.status !== 200) {
+      throw new Error(
+        `falha ao ampliar plano de teste: ${upgrade.status} ${JSON.stringify(upgrade.body)}`,
+      );
+    }
+    convite = await admin.post('/api/convites').send({ email, papel });
+  }
   if (convite.status !== 201) {
     throw new Error(`falha ao convidar ${papel}: ${convite.status} ${JSON.stringify(convite.body)}`);
   }

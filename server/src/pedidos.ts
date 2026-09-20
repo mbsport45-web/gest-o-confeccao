@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { arredondarDinheiro, sincronizarContaReceberPedido } from './financeiro.js';
+import { avaliarLimite, exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_PEDIDO = [
@@ -590,7 +591,7 @@ export function createPedidosRouter(db: AppDatabase): Router {
     res.json(pedido);
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', exigirLimite(db, 'pedidos_mes'), (req, res) => {
     const parsed = pedidoBaseSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -892,11 +893,26 @@ export function createPedidosRouter(db: AppDatabase): Router {
       return res.status(400).json({ erro: 'Nenhum item para gerar OP' });
     }
 
+    const forcar = Boolean(parsed.data.forcar);
+    const novas = escolhidos.filter((item) => {
+      const existente = db
+        .prepare(
+          `SELECT id FROM ordens_producao
+            WHERE pedido_item_id = ? AND empresa_id = ? AND status != 'cancelada'`,
+        )
+        .get(item.id, pedido.empresa_id);
+      return !existente || forcar;
+    }).length;
+    if (novas > 0) {
+      const limite = avaliarLimite(db, pedido.empresa_id, 'ordens_mes', novas);
+      if (!limite.ok) return res.status(409).json(limite.corpo);
+    }
+
     try {
       const geradas: Array<{ id: number; codigo: string }> = [];
       db.transaction(() => {
         for (const item of escolhidos) {
-          geradas.push(criarOpDoItem(pedido, item, Boolean(parsed.data.forcar)));
+          geradas.push(criarOpDoItem(pedido, item, forcar));
         }
         if (pedido.status === 'confirmado') {
           db.prepare(

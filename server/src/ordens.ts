@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { sincronizarStatusPedidoFromOps } from './pedidos.js';
+import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_OP = [
@@ -733,7 +734,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
     res.json(ordem);
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', exigirLimite(db, 'ordens_mes'), (req, res) => {
     const parsed = criarOrdemSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({

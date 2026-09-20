@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_PRODUTO = ['ativo', 'inativo'] as const;
@@ -580,7 +581,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
     res.json(produto);
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', exigirLimite(db, 'produtos'), (req, res) => {
     const parsed = criarProdutoSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({

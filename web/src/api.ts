@@ -1614,6 +1614,41 @@ export interface LimitesPlano {
   ordens_mes: number | null;
 }
 
+export type ChaveLimite = keyof LimitesPlano;
+
+export interface UsoLimite {
+  atual: number;
+  maximo: number | null;
+  atingido: boolean;
+}
+
+export type UsoPlano = Record<ChaveLimite, UsoLimite>;
+
+export const LIMITE_LABEL: Record<ChaveLimite, string> = {
+  usuarios: 'Usuários',
+  clientes: 'Clientes',
+  produtos: 'Produtos',
+  materiais: 'Materiais',
+  pedidos_mes: 'Pedidos / mês',
+  ordens_mes: 'Ordens / mês',
+};
+
+export function limiteAtingido(
+  assinatura: AssinaturaEmpresa | undefined,
+  chave: ChaveLimite,
+): boolean {
+  return Boolean(assinatura?.uso?.[chave]?.atingido);
+}
+
+export function mensagemLimitePlano(
+  assinatura: AssinaturaEmpresa,
+  chave: ChaveLimite,
+): string | null {
+  const item = assinatura.uso?.[chave];
+  if (!item?.atingido || item.maximo === null) return null;
+  return `Limite do plano ${assinatura.plano.nome} atingido: ${LIMITE_LABEL[chave]} (${item.atual}/${item.maximo}). Faça upgrade do plano para continuar.`;
+}
+
 export interface RecursosPlano {
   expedicao: boolean;
   financeiro: boolean;
@@ -1640,6 +1675,7 @@ export interface AssinaturaEmpresa {
   renova_em: string | null;
   gateway: string | null;
   plano: PlanoEmpresa;
+  uso: UsoPlano;
 }
 
 export interface SessaoAtual {

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { empresaDaSessao } from './tenant.js';
@@ -17,6 +17,35 @@ export type LimitesPlano = {
   pedidos_mes: number | null;
   ordens_mes: number | null;
 };
+
+export const CHAVES_LIMITE = [
+  'usuarios',
+  'clientes',
+  'produtos',
+  'materiais',
+  'pedidos_mes',
+  'ordens_mes',
+] as const;
+export type ChaveLimite = (typeof CHAVES_LIMITE)[number];
+
+export const LIMITE_LABEL: Record<ChaveLimite, string> = {
+  usuarios: 'usuários',
+  clientes: 'clientes',
+  produtos: 'produtos',
+  materiais: 'matérias-primas',
+  pedidos_mes: 'pedidos deste mês',
+  ordens_mes: 'ordens de produção deste mês',
+};
+
+export type UsoLimite = {
+  atual: number;
+  maximo: number | null;
+  atingido: boolean;
+};
+
+export type UsoPlano = Record<ChaveLimite, UsoLimite>;
+
+export const CODIGO_LIMITE_PLANO = 'limite_plano' as const;
 
 export type RecursosPlano = {
   expedicao: boolean;
@@ -170,6 +199,116 @@ export function mapearAssinatura(row: AssinaturaRow) {
   };
 }
 
+function contar(db: AppDatabase, sql: string, empresaId: number): number {
+  return (db.prepare(sql).get(empresaId) as { n: number }).n;
+}
+
+export function contarUso(db: AppDatabase, empresaId: number): Record<ChaveLimite, number> {
+  const usuarios = contar(db, 'SELECT COUNT(*) AS n FROM usuarios WHERE empresa_id = ?', empresaId);
+  const convitesPendentes = contar(
+    db,
+    `SELECT COUNT(*) AS n FROM convites WHERE empresa_id = ? AND status = 'pendente'`,
+    empresaId,
+  );
+  return {
+    usuarios: usuarios + convitesPendentes,
+    clientes: contar(db, 'SELECT COUNT(*) AS n FROM clientes WHERE empresa_id = ?', empresaId),
+    produtos: contar(db, 'SELECT COUNT(*) AS n FROM produtos WHERE empresa_id = ?', empresaId),
+    materiais: contar(db, 'SELECT COUNT(*) AS n FROM materias_primas WHERE empresa_id = ?', empresaId),
+    pedidos_mes: contar(
+      db,
+      `SELECT COUNT(*) AS n FROM pedidos
+        WHERE empresa_id = ? AND strftime('%Y-%m', criado_em) = strftime('%Y-%m', 'now')`,
+      empresaId,
+    ),
+    ordens_mes: contar(
+      db,
+      `SELECT COUNT(*) AS n FROM ordens_producao
+        WHERE empresa_id = ? AND strftime('%Y-%m', criado_em) = strftime('%Y-%m', 'now')`,
+      empresaId,
+    ),
+  };
+}
+
+export function montarUso(db: AppDatabase, empresaId: number, limites: LimitesPlano): UsoPlano {
+  const atual = contarUso(db, empresaId);
+  const uso = {} as UsoPlano;
+  for (const chave of CHAVES_LIMITE) {
+    const maximo = limites[chave];
+    const n = atual[chave];
+    uso[chave] = {
+      atual: n,
+      maximo,
+      atingido: maximo !== null && n >= maximo,
+    };
+  }
+  return uso;
+}
+
+export function mensagemLimiteAtingido(
+  planoNome: string,
+  chave: ChaveLimite,
+  atual: number,
+  maximo: number,
+): string {
+  return `Limite do plano ${planoNome} atingido: ${LIMITE_LABEL[chave]} (${atual}/${maximo}). Faça upgrade do plano para continuar.`;
+}
+
+export type BloqueioLimite = {
+  erro: string;
+  codigo: typeof CODIGO_LIMITE_PLANO;
+  limite: { chave: ChaveLimite; atual: number; maximo: number; plano: string };
+  upgrade: true;
+};
+
+export type ResultadoLimite =
+  | { ok: true }
+  | { ok: false; corpo: BloqueioLimite };
+
+export function avaliarLimite(
+  db: AppDatabase,
+  empresaId: number,
+  chave: ChaveLimite,
+  incremento = 1,
+  ocupacao?: number,
+): ResultadoLimite {
+  garantirAssinatura(db, empresaId);
+  const row = db.prepare(`${ASSINATURA_SELECT} WHERE a.empresa_id = ?`).get(empresaId) as
+    | AssinaturaRow
+    | undefined;
+  if (!row) throw new Error('assinatura não encontrada');
+  const plano = mapearPlano(row);
+  const maximo = plano.limites[chave];
+  if (maximo === null) return { ok: true };
+  const atual = ocupacao ?? contarUso(db, empresaId)[chave];
+  if (atual + incremento > maximo) {
+    return {
+      ok: false,
+      corpo: {
+        erro: mensagemLimiteAtingido(plano.nome, chave, atual, maximo),
+        codigo: CODIGO_LIMITE_PLANO,
+        limite: { chave, atual, maximo, plano: plano.codigo },
+        upgrade: true,
+      },
+    };
+  }
+  return { ok: true };
+}
+
+export function exigirLimite(
+  db: AppDatabase,
+  chave: ChaveLimite,
+  incremento = 1,
+): RequestHandler {
+  return (req, res, next) => {
+    const resultado = avaliarLimite(db, empresaDaSessao(req), chave, incremento);
+    if (!resultado.ok) {
+      return res.status(409).json(resultado.corpo);
+    }
+    next();
+  };
+}
+
 export function aplicarSchemaPlanos(db: AppDatabase) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS planos (
@@ -257,7 +396,11 @@ export function obterAssinaturaDaEmpresa(db: AppDatabase, empresaId: number) {
     | AssinaturaRow
     | undefined;
   if (!row) throw new Error('assinatura não encontrada');
-  return mapearAssinatura(row);
+  const assinatura = mapearAssinatura(row);
+  return {
+    ...assinatura,
+    uso: montarUso(db, empresaId, assinatura.plano.limites),
+  };
 }
 
 export function listarPlanos(db: AppDatabase) {

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_MATERIA = ['ativo', 'inativo'] as const;
@@ -253,7 +254,7 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
     res.json(materia);
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', exigirLimite(db, 'materiais'), (req, res) => {
     const parsed = criarMateriaSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({

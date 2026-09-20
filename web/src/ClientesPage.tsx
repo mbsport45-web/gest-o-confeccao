@@ -10,7 +10,9 @@ import {
   type Cliente,
   type ClientePayload,
   type StatusCliente,
+  type AssinaturaEmpresa,
 } from './api';
+import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 
@@ -82,7 +84,7 @@ const moeda = new Intl.NumberFormat('pt-BR', {
   currency: 'BRL',
 });
 
-export function ClientesPage() {
+export function ClientesPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa } }) {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -139,6 +141,7 @@ export function ClientesPage() {
   }, [recarregar]);
 
   function abrirCriar() {
+    if (!podeCriarNoPlano(sessao.assinatura, 'clientes')) return;
     setForm(FORM_VAZIO);
     setEditandoId(null);
     setDetalhe(null);
@@ -209,15 +212,18 @@ export function ClientesPage() {
     }
   }
 
+  const podeCriar = podeCriarNoPlano(sessao.assinatura, 'clientes');
+
   return (
     <main className="app__main app__main--clientes">
       <section className="card card--wide">
         <div className="card__head">
           <h2>Clientes</h2>
-          <button type="button" className="btn-secundario" onClick={abrirCriar}>
+          <button type="button" className="btn-secundario" onClick={abrirCriar} disabled={!podeCriar}>
             Novo cliente
           </button>
         </div>
+        <AvisoLimite assinatura={sessao.assinatura} chave="clientes" />
 
         <div className="filtros">
           <input

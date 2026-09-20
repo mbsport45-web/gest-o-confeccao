@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { apenasDigitos, cpfCnpjValido } from './cpfCnpj.js';
+import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_CLIENTE = ['ativo', 'inativo'] as const;
@@ -236,7 +237,7 @@ export function createClientesRouter(db: AppDatabase): Router {
     res.json(cliente);
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', exigirLimite(db, 'clientes'), (req, res) => {
     const parsed = criarClienteSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({

@@ -272,13 +272,13 @@ function AppAutenticado({
                   onIr={(p) => ir(p as Pagina)}
                 />
               )}
-              {paginaAtual === 'clientes' && <ClientesPage />}
-              {paginaAtual === 'produtos' && <ProdutosPage />}
-              {paginaAtual === 'materiais' && <MateriasPrimasPage />}
+              {paginaAtual === 'clientes' && <ClientesPage sessao={sessao} />}
+              {paginaAtual === 'produtos' && <ProdutosPage sessao={sessao} />}
+              {paginaAtual === 'materiais' && <MateriasPrimasPage sessao={sessao} />}
               {paginaAtual === 'estoque' && <EstoquePage />}
-              {paginaAtual === 'pedidos' && <PedidosPage onAbrirOp={abrirOp} />}
+              {paginaAtual === 'pedidos' && <PedidosPage sessao={sessao} onAbrirOp={abrirOp} />}
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
-              {paginaAtual === 'ordens' && <OrdensPage />}
+              {paginaAtual === 'ordens' && <OrdensPage sessao={sessao} />}
               {paginaAtual === 'etapas' && <EtapasPage />}
               {paginaAtual === 'compras' && <ComprasPage />}
               {paginaAtual === 'financeiro' && <FinanceiroPage />}

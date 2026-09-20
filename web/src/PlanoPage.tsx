@@ -2,8 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   alterarPlano,
   listarPlanos,
+  obterAssinatura,
   temPermissao,
+  LIMITE_LABEL,
   type AssinaturaEmpresa,
+  type ChaveLimite,
   type PlanoEmpresa,
   type SessaoAtual,
 } from './api';
@@ -16,17 +19,12 @@ const RECURSO_LABEL: Record<string, string> = {
   suporte_prioritario: 'Suporte prioritário',
 };
 
-const LIMITE_LABEL: Record<string, string> = {
-  usuarios: 'Usuários',
-  clientes: 'Clientes',
-  produtos: 'Produtos',
-  materiais: 'Materiais',
-  pedidos_mes: 'Pedidos / mês',
-  ordens_mes: 'Ordens / mês',
-};
-
 function formatarLimite(valor: number | null): string {
   return valor === null ? 'Ilimitado' : String(valor);
+}
+
+function formatarUso(atual: number, maximo: number | null): string {
+  return maximo === null ? `${atual} · ilimitado` : `${atual} de ${maximo}`;
 }
 
 export function PlanoPage({
@@ -44,8 +42,9 @@ export function PlanoPage({
   const podeEditar = temPermissao(sessao.permissoes, 'assinatura', 'editar');
 
   const recarregar = useCallback(async () => {
-    const lista = await listarPlanos();
+    const [lista, assinatura] = await Promise.all([listarPlanos(), obterAssinatura()]);
     setPlanos(lista.data);
+    setAtual(assinatura);
   }, []);
 
   useEffect(() => {
@@ -77,6 +76,8 @@ export function PlanoPage({
     }
   }
 
+  const algumAtingido = Object.values(atual.uso ?? {}).some((item) => item.atingido);
+
   return (
     <main className="app__main app__main--equipe">
       <section className="card card--wide">
@@ -84,12 +85,31 @@ export function PlanoPage({
           <h2>Plano da empresa</h2>
         </div>
         <p className="dica">
-          Cobrança desativada. Nenhum pagamento é processado nesta etapa — o plano só define
-          limites e recursos para o futuro.
+          Cobrança desativada. Nenhum pagamento é processado nesta etapa. Os limites do plano
+          valem na API e na interface — ultrapassar exige upgrade.
         </p>
         <p>
           Plano atual: <strong>{atual.plano.nome}</strong> · cobrança {atual.cobranca}
         </p>
+        {algumAtingido && (
+          <p className="aviso-limite">
+            Um ou mais limites do plano {atual.plano.nome} foram atingidos. Faça upgrade para
+            continuar criando cadastros, pedidos ou usuários.
+          </p>
+        )}
+        {atual.uso && (
+          <ul className="plano__uso">
+            {(Object.keys(LIMITE_LABEL) as ChaveLimite[]).map((chave) => {
+              const item = atual.uso[chave];
+              return (
+                <li key={chave} className={item.atingido ? 'plano__uso-item plano__uso-item--atingido' : 'plano__uso-item'}>
+                  {LIMITE_LABEL[chave]}: {formatarUso(item.atual, item.maximo)}
+                  {item.atingido ? ' — limite atingido' : ''}
+                </li>
+              );
+            })}
+          </ul>
+        )}
         {erro && <p className="erro">{erro}</p>}
         {carregando ? (
           <p className="vazio">Carregando planos…</p>
@@ -105,9 +125,9 @@ export function PlanoPage({
                   <h3>{plano.nome}</h3>
                   <p className="dica">{plano.descricao}</p>
                   <ul className="plano__lista">
-                    {Object.entries(plano.limites).map(([chave, valor]) => (
+                    {(Object.keys(plano.limites) as ChaveLimite[]).map((chave) => (
                       <li key={chave}>
-                        {LIMITE_LABEL[chave] ?? chave}: {formatarLimite(valor)}
+                        {LIMITE_LABEL[chave]}: {formatarLimite(plano.limites[chave])}
                       </li>
                     ))}
                   </ul>
