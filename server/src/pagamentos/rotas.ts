@@ -4,7 +4,13 @@ import type { AppDatabase } from '../db.js';
 import { CODIGOS_PLANO, isCodigoPlano, obterAssinaturaDaEmpresa } from '../planos.js';
 import { empresaDaSessao } from '../tenant.js';
 import { ErroAsaas } from './asaas.js';
-import { CODIGO_GATEWAY_ERRO, CODIGO_GATEWAY_INDISPONIVEL, contratarAssinaturaSandbox } from './servico.js';
+import {
+  CODIGO_GATEWAY_ERRO,
+  CODIGO_GATEWAY_INDISPONIVEL,
+  contratarAssinaturaSandbox,
+  montarCheckout,
+  obterCheckoutDaEmpresa,
+} from './servico.js';
 import { FORMAS_COBRANCA_SANDBOX, type PaymentGateway } from './tipos.js';
 
 const contratarSchema = z
@@ -14,16 +20,28 @@ const contratarSchema = z
   })
   .strict();
 
+function erroGatewayAmigavel() {
+  return {
+    erro: 'Não foi possível iniciar o pagamento de teste. Tente novamente.',
+    codigo: CODIGO_GATEWAY_ERRO,
+  };
+}
+
 export function createPagamentoAssinaturaRouter(
   db: AppDatabase,
   gateway: PaymentGateway | null,
 ): Router {
   const router = Router();
 
+  router.get('/pagamento', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    res.json(obterCheckoutDaEmpresa(db, empresaId));
+  });
+
   router.post('/pagamento', async (req, res) => {
     if (!gateway) {
       return res.status(503).json({
-        erro: 'Gateway Asaas sandbox não configurado. Defina ASAAS_API_KEY e ASAAS_BASE_URL do sandbox.',
+        erro: 'Pagamento de teste indisponível no momento.',
         codigo: CODIGO_GATEWAY_INDISPONIVEL,
       });
     }
@@ -55,14 +73,17 @@ export function createPagamentoAssinaturaRouter(
           valor_mensal: resultado.valor,
           plano: resultado.plano,
           cobranca_real: false,
+          billingType: resultado.assinatura.billingType,
         },
+        checkout: montarCheckout('pendente', {
+          plano: resultado.plano,
+          valor_mensal: resultado.valor,
+          billingType: parsed.data.billingType ?? 'BOLETO',
+        }),
       });
     } catch (erro) {
       const status = erro instanceof ErroAsaas ? erro.statusHttp : 502;
-      return res.status(status).json({
-        erro: erro instanceof Error ? erro.message : 'Falha no gateway sandbox',
-        codigo: CODIGO_GATEWAY_ERRO,
-      });
+      return res.status(status).json(erroGatewayAmigavel());
     }
   });
 

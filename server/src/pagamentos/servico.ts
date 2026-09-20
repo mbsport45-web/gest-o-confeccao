@@ -6,6 +6,8 @@ import {
   garantirAssinatura,
   isCodigoPlano,
   isStatusAssinatura,
+  listarEventosAssinatura,
+  obterAssinaturaDaEmpresa,
   PLANO_PADRAO,
   planoDoCatalogo,
   registrarEventoAssinatura,
@@ -28,6 +30,63 @@ import type { EventoWebhookGateway, FormaCobrancaSandbox, PaymentGateway } from 
 
 export const CODIGO_GATEWAY_INDISPONIVEL = 'gateway_indisponivel' as const;
 export const CODIGO_GATEWAY_ERRO = 'gateway_erro' as const;
+
+export const ESTADOS_CHECKOUT = [
+  'nenhum',
+  'pendente',
+  'confirmado',
+  'falhou',
+  'cancelada',
+] as const;
+export type EstadoCheckout = (typeof ESTADOS_CHECKOUT)[number];
+
+export const MSG_CHECKOUT = {
+  pendente: 'Pagamento aguardando confirmação.',
+  confirmado: 'Pagamento confirmado. Sua assinatura está ativa.',
+  falhou: 'Não foi possível confirmar o pagamento. Tente novamente ou escolha outro meio.',
+  cancelada: 'Assinatura cancelada.',
+  nenhum: 'Nenhum pagamento sandbox em andamento.',
+} as const;
+
+export function montarCheckout(estado: EstadoCheckout, extras: Record<string, unknown> = {}) {
+  return {
+    confirmado: estado === 'confirmado',
+    estado,
+    mensagem: MSG_CHECKOUT[estado],
+    ambiente: 'sandbox' as const,
+    cobranca_real: false as const,
+    meios: ['PIX', 'BOLETO'] as const,
+    ...extras,
+  };
+}
+
+export function obterEstadoCheckout(db: AppDatabase, empresaId: number): EstadoCheckout {
+  const assinatura = obterAssinaturaDaEmpresa(db, empresaId);
+  const eventos = listarEventosAssinatura(db, empresaId);
+  const ultimoPagamento = eventos.find((evento) => String(evento.tipo).startsWith('pagamento_'));
+  if (assinatura.status === 'cancelada') return 'cancelada';
+  if (ultimoPagamento?.tipo === 'pagamento_negado' && assinatura.status !== 'ativa') return 'falhou';
+  if (assinatura.status === 'ativa') return 'confirmado';
+  if (
+    assinatura.asaas_subscription_id &&
+    (assinatura.status === 'trial' || assinatura.status === 'past_due')
+  ) {
+    return 'pendente';
+  }
+  return 'nenhum';
+}
+
+export function obterCheckoutDaEmpresa(db: AppDatabase, empresaId: number) {
+  const assinatura = obterAssinaturaDaEmpresa(db, empresaId);
+  const estado = obterEstadoCheckout(db, empresaId);
+  return {
+    ...montarCheckout(estado, {
+      plano: assinatura.plano.codigo,
+      valor_mensal: assinatura.plano.preco_mensal,
+    }),
+    assinatura,
+  };
+}
 
 export type LinhaPagamentoAssinatura = {
   empresa_id: number;

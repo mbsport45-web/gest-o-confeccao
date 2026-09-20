@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AssinaturaEmpresa, EventoAssinatura, PlanoEmpresa, SessaoAtual } from './api';
 
@@ -11,16 +11,71 @@ vi.mock('./api', async () => {
     listarEventosAssinatura: vi.fn(),
     alterarPlano: vi.fn(),
     alterarAssinatura: vi.fn(),
+    iniciarPagamentoSandbox: vi.fn(),
+    obterCheckoutPagamento: vi.fn(),
   };
 });
 
 import {
+  iniciarPagamentoSandbox,
   listarEventosAssinatura,
   listarPlanos,
   obterAssinatura,
   temPermissao,
 } from './api';
 import { PlanoPage } from './PlanoPage';
+
+const planoProfissional: PlanoEmpresa = {
+  codigo: 'profissional',
+  nome: 'Profissional',
+  descricao: 'Volume maior de cadastros',
+  ordem: 2,
+  limites: {
+    usuarios: 15,
+    clientes: 500,
+    produtos: 200,
+    materiais: 300,
+    pedidos_mes: 500,
+    ordens_mes: 200,
+  },
+  recursos: {
+    expedicao: true,
+    financeiro: true,
+    relatorios_avancados: true,
+    api_externa: false,
+    suporte_prioritario: false,
+  },
+  preco_mensal: 149.9,
+  preco_anual: null,
+  moeda: 'BRL',
+  ciclo: 'mensal',
+};
+
+const planoEnterprise: PlanoEmpresa = {
+  codigo: 'enterprise',
+  nome: 'Enterprise',
+  descricao: 'Sem limite prático',
+  ordem: 3,
+  limites: {
+    usuarios: null,
+    clientes: null,
+    produtos: null,
+    materiais: null,
+    pedidos_mes: null,
+    ordens_mes: null,
+  },
+  recursos: {
+    expedicao: true,
+    financeiro: true,
+    relatorios_avancados: true,
+    api_externa: true,
+    suporte_prioritario: true,
+  },
+  preco_mensal: 199.9,
+  preco_anual: null,
+  moeda: 'BRL',
+  ciclo: 'mensal',
+};
 
 const planoBasico: PlanoEmpresa = {
   codigo: 'basico',
@@ -151,7 +206,7 @@ describe('PlanoPage histórico comercial', () => {
 
   beforeEach(() => {
     vi.mocked(listarPlanos).mockResolvedValue({
-      data: [planoBasico],
+      data: [planoBasico, planoProfissional, planoEnterprise],
       cobranca: 'desativada',
       ciclo: 'mensal',
       moeda: 'BRL',
@@ -192,5 +247,34 @@ describe('PlanoPage histórico comercial', () => {
     expect(screen.queryByRole('heading', { name: 'Histórico comercial' })).toBeNull();
     expect(listarEventosAssinatura).not.toHaveBeenCalled();
     expect(temPermissao(sessao('vendas').permissoes, 'assinatura', 'visualizar')).toBe(true);
+  });
+
+  it('renderiza os três planos com preços e marca o atual', async () => {
+    render(<PlanoPage sessao={sessao('proprietario')} onAssinatura={() => undefined} />);
+    await waitFor(() => expect(screen.getByText('R$ 199,90/mês')).toBeTruthy());
+    expect(screen.getAllByText('Básico').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Profissional').length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { name: 'Enterprise' })).toBeTruthy();
+    expect(screen.getAllByText('R$ 99,90/mês').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('R$ 149,90/mês').length).toBeGreaterThan(0);
+    expect(document.querySelector('.plano--atual')?.getAttribute('data-codigo')).toBe('basico');
+    expect(screen.getAllByText('Plano atual').length).toBeGreaterThan(0);
+    expect(screen.getByText(/Ambiente de teste \(Asaas Sandbox\)/)).toBeTruthy();
+  });
+
+  it('abre a revisão ao escolher um plano, sem iniciar pagamento ainda', async () => {
+    render(<PlanoPage sessao={sessao('proprietario')} onAssinatura={() => undefined} />);
+    await waitFor(() => expect(screen.getByText('Profissional')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Assinar \/ upgrade · R\$ 149,90\/mês/ }));
+    expect(screen.getByText('Revisar plano e preço')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Iniciar pagamento' })).toBeTruthy();
+    expect(iniciarPagamentoSandbox).not.toHaveBeenCalled();
+  });
+
+  it('usuário sem permissão só visualiza o plano atual', async () => {
+    render(<PlanoPage sessao={sessao('vendas')} onAssinatura={() => undefined} />);
+    await waitFor(() => expect(screen.getByText('Profissional')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /Assinar/ })).toBeNull();
+    expect(screen.getByText('Este é o plano da sua empresa.')).toBeTruthy();
   });
 });

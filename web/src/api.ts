@@ -1990,6 +1990,97 @@ export async function alterarAssinatura(body: {
   return res.json();
 }
 
+export const MEIOS_PAGAMENTO_SANDBOX = ['PIX', 'BOLETO'] as const;
+export type MeioPagamentoSandbox = (typeof MEIOS_PAGAMENTO_SANDBOX)[number];
+
+export type EstadoCheckoutPagamento =
+  | 'nenhum'
+  | 'pendente'
+  | 'confirmado'
+  | 'falhou'
+  | 'cancelada';
+
+export interface CheckoutPagamento {
+  confirmado: boolean;
+  estado: EstadoCheckoutPagamento;
+  mensagem: string;
+  ambiente: 'sandbox';
+  cobranca_real: false;
+  meios?: MeioPagamentoSandbox[];
+  plano?: string;
+  valor_mensal?: number | null;
+  billingType?: MeioPagamentoSandbox | string;
+  assinatura?: AssinaturaEmpresa;
+}
+
+export interface InicioPagamentoSandbox extends AssinaturaEmpresa {
+  sandbox: {
+    provedor: string;
+    ambiente: 'sandbox' | string;
+    customer_id: string;
+    subscription_id: string;
+    valor_mensal: number;
+    plano: string;
+    cobranca_real: false;
+    billingType?: string;
+  };
+  checkout: CheckoutPagamento;
+}
+
+export function corpoInicioPagamento(
+  plano: string,
+  billingType: MeioPagamentoSandbox,
+): { plano: string; billingType: MeioPagamentoSandbox } {
+  return { plano, billingType };
+}
+
+export function mensagemErroPagamento(corpo: { erro?: string; codigo?: string } | null): string {
+  if (corpo?.codigo === 'gateway_indisponivel') {
+    return 'Pagamento de teste indisponível no momento.';
+  }
+  if (corpo?.codigo === 'gateway_erro') {
+    return 'Não foi possível iniciar o pagamento de teste. Tente novamente.';
+  }
+  const texto = corpo?.erro ?? '';
+  if (
+    texto &&
+    !texto.includes('ASAAS') &&
+    !texto.includes('API_KEY') &&
+    !texto.includes('access_token')
+  ) {
+    return texto;
+  }
+  return 'Não foi possível comunicar com o pagamento de teste. Tente novamente.';
+}
+
+export async function iniciarPagamentoSandbox(input: {
+  plano: string;
+  billingType: MeioPagamentoSandbox;
+}): Promise<InicioPagamentoSandbox> {
+  const corpo = corpoInicioPagamento(input.plano, input.billingType);
+  const res = await apiFetch('/api/assinatura/pagamento', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(corpo),
+  });
+  if (!res.ok) {
+    let parsed: { erro?: string; codigo?: string } | null = null;
+    try {
+      parsed = (await res.json()) as { erro?: string; codigo?: string };
+    } catch {
+      parsed = null;
+    }
+    throw new Error(mensagemErroPagamento(parsed));
+  }
+  return res.json();
+}
+
+export async function obterCheckoutPagamento(): Promise<CheckoutPagamento> {
+  const res = await apiFetch('/api/assinatura/pagamento');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function entrar(dados: { email: string; senha: string }): Promise<SessaoAtual> {
   const res = await apiFetch('/api/auth/login', {
     method: 'POST',

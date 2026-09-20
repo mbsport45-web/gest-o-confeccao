@@ -182,6 +182,10 @@ describe('integração Asaas sandbox (sem cobrança real)', () => {
     expect(res.body.cobranca).toBe('sandbox');
     expect(res.body.comercial.pronta).toBe(true);
     expect(res.body.comercial.cobranca_real).toBe(false);
+    expect(res.body.checkout.confirmado).toBe(false);
+    expect(res.body.checkout.estado).toBe('pendente');
+    expect(res.body.checkout.cobranca_real).toBe(false);
+    expect(res.body.checkout.mensagem).toBe('Pagamento aguardando confirmação.');
     const criar = gateway.chamadas.find((c) => c.metodo === 'criarAssinatura');
     expect(criar?.payload).toMatchObject({ valor: 99.9, billingType: 'BOLETO' });
     const tipos = (await api.get('/api/assinatura/eventos')).body.data.map((e: { tipo: string }) => e.tipo);
@@ -227,6 +231,15 @@ describe('integração Asaas sandbox (sem cobrança real)', () => {
     const hijack = await api.post('/api/assinatura/pagamento').send({ empresa_id: empresaId, plano: 'basico' });
     expect(hijack.status).toBe(400);
 
+    const checkout1 = await api.get('/api/assinatura/pagamento');
+    const checkout2 = await empresa2.get('/api/assinatura/pagamento');
+    expect(checkout1.status).toBe(200);
+    expect(checkout1.body.assinatura.asaas_subscription_id).toBe(a.body.asaas_subscription_id);
+    expect(checkout2.body.assinatura.asaas_subscription_id).toBe(b.body.asaas_subscription_id);
+    expect(checkout1.body.assinatura.asaas_subscription_id).not.toBe(
+      checkout2.body.assinatura.asaas_subscription_id,
+    );
+
     const evt = await webhook(app, {
       id: 'evt_pago_empresa1',
       event: 'PAYMENT_CONFIRMED',
@@ -240,6 +253,8 @@ describe('integração Asaas sandbox (sem cobrança real)', () => {
     expect(evt.status).toBe(200);
     expect((await api.get('/api/assinatura')).body.status).toBe('ativa');
     expect((await empresa2.get('/api/assinatura')).body.status).toBe('trial');
+    expect((await api.get('/api/assinatura/pagamento')).body.estado).toBe('confirmado');
+    expect((await empresa2.get('/api/assinatura/pagamento')).body.estado).toBe('pendente');
   });
 
   it('webhook válido persiste o evento e responde 200', async () => {
