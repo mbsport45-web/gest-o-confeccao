@@ -3,11 +3,11 @@ import {
   ACAO_ASSINATURA_LABEL,
   alterarAssinatura,
   alterarPlano,
-  EVENTO_ASSINATURA_LABEL,
   formatarPrecoMensal,
   listarEventosAssinatura,
   listarPlanos,
   obterAssinatura,
+  podeVerHistoricoAssinatura,
   temPermissao,
   LIMITE_LABEL,
   type AcaoAssinatura,
@@ -17,6 +17,7 @@ import {
   type PlanoEmpresa,
   type SessaoAtual,
 } from './api';
+import { HistoricoComercial } from './HistoricoComercial';
 
 const RECURSO_LABEL: Record<string, string> = {
   expedicao: 'Expedição',
@@ -55,17 +56,19 @@ export function PlanoPage({
   const [salvando, setSalvando] = useState<string | null>(null);
   const podeEditar = temPermissao(sessao.permissoes, 'assinatura', 'editar');
   const podeVer = temPermissao(sessao.permissoes, 'assinatura', 'visualizar');
+  const podeHistorico = podeVerHistoricoAssinatura(sessao.usuario.papel);
 
   const recarregar = useCallback(async () => {
-    const [lista, assinatura, historico] = await Promise.all([
-      listarPlanos(),
-      obterAssinatura(),
-      listarEventosAssinatura(),
-    ]);
+    const [lista, assinatura] = await Promise.all([listarPlanos(), obterAssinatura()]);
     setPlanos(lista.data);
     setAtual(assinatura);
-    setEventos(historico.data);
-  }, []);
+    if (podeHistorico) {
+      const historico = await listarEventosAssinatura();
+      setEventos(historico.data);
+    } else {
+      setEventos([]);
+    }
+  }, [podeHistorico]);
 
   useEffect(() => {
     let vivo = true;
@@ -89,7 +92,7 @@ export function PlanoPage({
       const proxima = await alterarPlano(codigo);
       setAtual(proxima);
       onAssinatura(proxima);
-      const historico = await listarEventosAssinatura();
+      const historico = podeHistorico ? await listarEventosAssinatura() : { data: [] as EventoAssinatura[] };
       setEventos(historico.data);
     } catch (err) {
       setErro((err as Error).message);
@@ -106,7 +109,7 @@ export function PlanoPage({
       const proxima = await alterarAssinatura({ acao });
       setAtual(proxima);
       onAssinatura(proxima);
-      const historico = await listarEventosAssinatura();
+      const historico = podeHistorico ? await listarEventosAssinatura() : { data: [] as EventoAssinatura[] };
       setEventos(historico.data);
     } catch (err) {
       setErro((err as Error).message);
@@ -286,32 +289,7 @@ export function PlanoPage({
             })}
           </div>
         )}
-        {podeVer && eventos.length > 0 && (
-          <div className="plano__eventos">
-            <h3>Histórico comercial</h3>
-            <p className="dica">
-              Eventos de assinatura mensal, upgrade, downgrade e cancelamento — sem cobrança
-              real nesta etapa.
-            </p>
-            <ul>
-              {eventos.slice(0, 8).map((evento) => (
-                <li key={evento.id}>
-                  <strong>{EVENTO_ASSINATURA_LABEL[evento.tipo] ?? evento.tipo}</strong>
-                  {evento.de_plano && evento.para_plano && evento.de_plano !== evento.para_plano
-                    ? ` · ${evento.de_plano} → ${evento.para_plano}`
-                    : evento.para_plano
-                      ? ` · ${evento.para_plano}`
-                      : ''}
-                  {evento.valor_mensal !== null
-                    ? ` · ${formatarPrecoMensal(evento.valor_mensal, evento.moeda)}`
-                    : ''}
-                  {' · '}
-                  cobrança {evento.cobranca}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {podeHistorico && <HistoricoComercial eventos={eventos} />}
       </section>
     </main>
   );

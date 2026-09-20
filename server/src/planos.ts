@@ -1,4 +1,4 @@
-import { Router, type RequestHandler } from 'express';
+import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { empresaDaSessao } from './tenant.js';
@@ -19,16 +19,45 @@ export const TIPOS_OPERACAO_COMERCIAL = ['assinar', 'upgrade', 'downgrade', 'can
 export type TipoOperacaoComercial = (typeof TIPOS_OPERACAO_COMERCIAL)[number];
 
 export const TIPOS_EVENTO_ASSINATURA = [
+  'criacao',
+  'trial_inicio',
+  'trial_fim',
   'assinar',
   'upgrade',
   'downgrade',
   'cancelar',
+  'reativar',
+  'renovar',
   'regularizar',
   'marcar_atraso',
   'expirar',
 ] as const;
 export type TipoEventoAssinatura = (typeof TIPOS_EVENTO_ASSINATURA)[number];
 export type TipoMudancaPlano = 'upgrade' | 'downgrade' | 'manter';
+
+export const CODIGO_HISTORICO_RESTRITO = 'historico_restrito' as const;
+export const CODIGO_HISTORICO_IMUTAVEL = 'historico_imutavel' as const;
+
+export type AtorAssinatura = { id: number; nome: string } | null;
+
+export const EVENTO_ASSINATURA_LABEL: Record<TipoEventoAssinatura, string> = {
+  criacao: 'Criação da assinatura',
+  trial_inicio: 'Início do trial',
+  trial_fim: 'Fim do trial',
+  assinar: 'Assinatura mensal',
+  upgrade: 'Upgrade',
+  downgrade: 'Downgrade',
+  cancelar: 'Cancelamento',
+  reativar: 'Reativação',
+  renovar: 'Renovação',
+  regularizar: 'Regularização',
+  marcar_atraso: 'Atraso',
+  expirar: 'Expiração',
+};
+
+export function podeVerHistoricoAssinatura(papel?: string): boolean {
+  return papel === 'proprietario' || papel === 'administrador';
+}
 
 export const STATUS_ASSINATURA = [
   'trial',
@@ -293,11 +322,18 @@ export function classificarMudancaPlano(de: CodigoPlano, para: CodigoPlano): Tip
 }
 
 export function tipoEventoDaAcao(acao: AcaoAssinatura): TipoEventoAssinatura {
-  if (acao === 'ativar' || acao === 'reativar' || acao === 'renovar') return 'assinar';
+  if (acao === 'ativar') return 'assinar';
+  if (acao === 'reativar') return 'reativar';
+  if (acao === 'renovar') return 'renovar';
   if (acao === 'cancelar') return 'cancelar';
   if (acao === 'regularizar') return 'regularizar';
   if (acao === 'marcar_atraso') return 'marcar_atraso';
   return 'expirar';
+}
+
+export function nomeDoPlano(codigo: string | null): string | null {
+  if (!codigo) return null;
+  return PLANOS_CATALOGO.find((item) => item.codigo === codigo)?.nome ?? codigo;
 }
 
 export function formatarPrecoMensal(valor: number | null, moeda: string = MOEDA_PLANO): string {
@@ -344,6 +380,9 @@ type EventoAssinaturaRow = {
   cobranca: string;
   gateway: string | null;
   criado_em: string;
+  usuario_id: number | null;
+  usuario_nome: string | null;
+  usuario_atual?: string | null;
 };
 
 type AssinaturaRow = {
@@ -395,19 +434,36 @@ export function mapearPlano(row: {
 }
 
 export function mapearEventoAssinatura(row: EventoAssinaturaRow) {
+  const deStatus = isStatusAssinatura(row.de_status) ? row.de_status : row.de_status;
+  const paraStatus = isStatusAssinatura(row.para_status) ? row.para_status : row.para_status;
+  const nomeUsuario = row.usuario_nome || row.usuario_atual || null;
   return {
     id: row.id,
     tipo: row.tipo as TipoEventoAssinatura,
+    tipo_label: EVENTO_ASSINATURA_LABEL[row.tipo as TipoEventoAssinatura] ?? row.tipo,
+    criado_em: row.criado_em,
+    empresa_id: row.empresa_id,
+    usuario: row.usuario_id
+      ? { id: row.usuario_id, nome: nomeUsuario ?? 'Usuário' }
+      : nomeUsuario
+        ? { id: null as number | null, nome: nomeUsuario }
+        : null,
     de_plano: row.de_plano,
     para_plano: row.para_plano,
+    de_plano_nome: nomeDoPlano(row.de_plano),
+    para_plano_nome: nomeDoPlano(row.para_plano),
     de_status: row.de_status,
     para_status: row.para_status,
+    de_status_label: isStatusAssinatura(deStatus) ? STATUS_ASSINATURA_LABEL[deStatus] : row.de_status,
+    para_status_label: isStatusAssinatura(paraStatus)
+      ? STATUS_ASSINATURA_LABEL[paraStatus]
+      : row.para_status,
     ciclo: row.ciclo,
     moeda: row.moeda,
     valor_mensal: row.valor_mensal,
     cobranca: row.cobranca,
     gateway: row.gateway,
-    criado_em: row.criado_em,
+    imutavel: true as const,
   };
 }
 
@@ -557,8 +613,8 @@ function vencidaEm(renovaEm: string | null, agora: string): boolean {
   return Boolean(renovaEm && renovaEm <= agora);
 }
 
-export function sincronizarAssinatura(db: AppDatabase, empresaId: number) {
-  garantirAssinatura(db, empresaId);
+export function sincronizarAssinatura(db: AppDatabase, empresaId: number, ator: AtorAssinatura = null) {
+  garantirAssinatura(db, empresaId, PLANO_PADRAO, ator);
   const row = db.prepare(`${ASSINATURA_SELECT} WHERE a.empresa_id = ?`).get(empresaId) as
     | AssinaturaRow
     | undefined;
@@ -577,6 +633,17 @@ export function sincronizarAssinatura(db: AppDatabase, empresaId: number) {
             atualizado_em = datetime('now')
       WHERE empresa_id = ?`,
   ).run(empresaId);
+  if (status === 'trial') {
+    registrarEventoAssinatura(db, empresaId, {
+      tipo: 'trial_fim',
+      de_plano: dePlano,
+      para_plano: dePlano,
+      de_status: status,
+      para_status: 'expirada',
+      valor_mensal: valor,
+      ator,
+    });
+  }
   registrarEventoAssinatura(db, empresaId, {
     tipo: 'expirar',
     de_plano: dePlano,
@@ -584,6 +651,7 @@ export function sincronizarAssinatura(db: AppDatabase, empresaId: number) {
     de_status: status,
     para_status: 'expirada',
     valor_mensal: valor,
+    ator,
   });
 }
 
@@ -591,8 +659,9 @@ export function aplicarAcaoAssinatura(
   db: AppDatabase,
   empresaId: number,
   acao: AcaoAssinatura,
+  ator: AtorAssinatura = null,
 ): { ok: true } | { ok: false; statusHttp: number; corpo: Record<string, unknown> } {
-  sincronizarAssinatura(db, empresaId);
+  sincronizarAssinatura(db, empresaId, ator);
   const row = db.prepare(`${ASSINATURA_SELECT} WHERE a.empresa_id = ?`).get(empresaId) as
     | AssinaturaRow
     | undefined;
@@ -629,13 +698,26 @@ export function aplicarAcaoAssinatura(
       WHERE empresa_id = ?`,
   ).run(proximo, proximo, empresaId);
   const planoAtual = isCodigoPlano(row.codigo) ? row.codigo : PLANO_PADRAO;
+  const valor = planoDoCatalogo(planoAtual).preco_mensal;
+  if (atual === 'trial') {
+    registrarEventoAssinatura(db, empresaId, {
+      tipo: 'trial_fim',
+      de_plano: planoAtual,
+      para_plano: planoAtual,
+      de_status: atual,
+      para_status: proximo,
+      valor_mensal: valor,
+      ator,
+    });
+  }
   registrarEventoAssinatura(db, empresaId, {
     tipo: tipoEventoDaAcao(acao),
     de_plano: planoAtual,
     para_plano: planoAtual,
     de_status: atual,
     para_status: proximo,
-    valor_mensal: planoDoCatalogo(planoAtual).preco_mensal,
+    valor_mensal: valor,
+    ator,
   });
   return { ok: true };
 }
@@ -678,13 +760,14 @@ function registrarEventoAssinatura(
     de_status: string | null;
     para_status: string | null;
     valor_mensal: number | null;
+    ator?: AtorAssinatura;
   },
 ) {
   db.prepare(
     `INSERT INTO eventos_assinatura (
         empresa_id, tipo, de_plano, para_plano, de_status, para_status,
-        ciclo, moeda, valor_mensal, cobranca, gateway
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        ciclo, moeda, valor_mensal, cobranca, gateway, usuario_id, usuario_nome
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
   ).run(
     empresaId,
     evento.tipo,
@@ -696,7 +779,59 @@ function registrarEventoAssinatura(
     MOEDA_PLANO,
     evento.valor_mensal,
     COBRANCA_DESATIVADA,
+    evento.ator?.id ?? null,
+    evento.ator?.nome ?? null,
   );
+}
+
+function proprietarioDaEmpresa(db: AppDatabase, empresaId: number): AtorAssinatura {
+  const row = db
+    .prepare(
+      `SELECT id, nome FROM usuarios
+        WHERE empresa_id = ? AND papel = 'proprietario' AND status = 'ativo'
+        ORDER BY id LIMIT 1`,
+    )
+    .get(empresaId) as { id: number; nome: string } | undefined;
+  return row ?? null;
+}
+
+function registrarCriacaoTrialSeNecessario(
+  db: AppDatabase,
+  empresaId: number,
+  ator: AtorAssinatura = null,
+) {
+  const n = (
+    db.prepare('SELECT COUNT(*) AS n FROM eventos_assinatura WHERE empresa_id = ?').get(empresaId) as {
+      n: number;
+    }
+  ).n;
+  if (n > 0) return;
+  const row = db.prepare(`${ASSINATURA_SELECT} WHERE a.empresa_id = ?`).get(empresaId) as
+    | AssinaturaRow
+    | undefined;
+  if (!row) return;
+  const plano = isCodigoPlano(row.codigo) ? row.codigo : PLANO_PADRAO;
+  const valor = planoDoCatalogo(plano).preco_mensal;
+  const quem = ator ?? proprietarioDaEmpresa(db, empresaId);
+  if (!quem) return;
+  registrarEventoAssinatura(db, empresaId, {
+    tipo: 'criacao',
+    de_plano: null,
+    para_plano: plano,
+    de_status: null,
+    para_status: isStatusAssinatura(row.status) ? row.status : 'trial',
+    valor_mensal: valor,
+    ator: quem,
+  });
+  registrarEventoAssinatura(db, empresaId, {
+    tipo: 'trial_inicio',
+    de_plano: null,
+    para_plano: plano,
+    de_status: null,
+    para_status: 'trial',
+    valor_mensal: valor,
+    ator: quem,
+  });
 }
 
 export function aplicarSchemaPlanos(db: AppDatabase) {
@@ -744,6 +879,8 @@ export function aplicarSchemaPlanos(db: AppDatabase) {
       valor_mensal REAL,
       cobranca TEXT NOT NULL DEFAULT 'desativada',
       gateway TEXT,
+      usuario_id INTEGER,
+      usuario_nome TEXT,
       criado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS eventos_assinatura_empresa
@@ -752,6 +889,8 @@ export function aplicarSchemaPlanos(db: AppDatabase) {
 
   garantirColuna(db, 'planos', 'preco_mensal', 'ALTER TABLE planos ADD COLUMN preco_mensal REAL');
   garantirColuna(db, 'planos', 'moeda', `ALTER TABLE planos ADD COLUMN moeda TEXT NOT NULL DEFAULT 'BRL'`);
+  garantirColuna(db, 'eventos_assinatura', 'usuario_id', 'ALTER TABLE eventos_assinatura ADD COLUMN usuario_id INTEGER');
+  garantirColuna(db, 'eventos_assinatura', 'usuario_nome', 'ALTER TABLE eventos_assinatura ADD COLUMN usuario_nome TEXT');
 
   const upsert = db.prepare(
     `INSERT INTO planos (codigo, nome, descricao, ativo, ordem, limites_json, recursos_json, preco_mensal, moeda)
@@ -785,17 +924,24 @@ export function aplicarSchemaPlanos(db: AppDatabase) {
   }
 }
 
-export function garantirAssinatura(db: AppDatabase, empresaId: number, codigo: CodigoPlano = PLANO_PADRAO) {
+export function garantirAssinatura(
+  db: AppDatabase,
+  empresaId: number,
+  codigo: CodigoPlano = PLANO_PADRAO,
+  ator: AtorAssinatura = null,
+) {
   const atual = db.prepare('SELECT id FROM assinaturas WHERE empresa_id = ?').get(empresaId);
-  if (atual) return;
-  const plano = db
-    .prepare('SELECT id FROM planos WHERE codigo = ?')
-    .get(codigo) as { id: number } | undefined;
-  if (!plano) throw new Error(`plano ${codigo} não cadastrado`);
-  db.prepare(
-    `INSERT INTO assinaturas (empresa_id, plano_id, status, cobranca, ciclo, renova_em)
-     VALUES (?, ?, 'trial', 'desativada', 'mensal', datetime('now', '+${TRIAL_DIAS} days'))`,
-  ).run(empresaId, plano.id);
+  if (!atual) {
+    const plano = db
+      .prepare('SELECT id FROM planos WHERE codigo = ?')
+      .get(codigo) as { id: number } | undefined;
+    if (!plano) throw new Error(`plano ${codigo} não cadastrado`);
+    db.prepare(
+      `INSERT INTO assinaturas (empresa_id, plano_id, status, cobranca, ciclo, renova_em)
+       VALUES (?, ?, 'trial', 'desativada', 'mensal', datetime('now', '+${TRIAL_DIAS} days'))`,
+    ).run(empresaId, plano.id);
+  }
+  registrarCriacaoTrialSeNecessario(db, empresaId, ator);
 }
 
 const ASSINATURA_SELECT = `
@@ -834,14 +980,28 @@ export function listarPlanos(db: AppDatabase) {
 export function listarEventosAssinatura(db: AppDatabase, empresaId: number) {
   const rows = db
     .prepare(
-      `SELECT id, empresa_id, tipo, de_plano, para_plano, de_status, para_status,
-              ciclo, moeda, valor_mensal, cobranca, gateway, criado_em
-         FROM eventos_assinatura
-        WHERE empresa_id = ?
-        ORDER BY id DESC`,
+      `SELECT e.id, e.empresa_id, e.tipo, e.de_plano, e.para_plano, e.de_status, e.para_status,
+              e.ciclo, e.moeda, e.valor_mensal, e.cobranca, e.gateway, e.criado_em,
+              e.usuario_id, e.usuario_nome, u.nome AS usuario_atual
+         FROM eventos_assinatura e
+         LEFT JOIN usuarios u ON u.id = e.usuario_id
+        WHERE e.empresa_id = ?
+        ORDER BY e.id DESC`,
     )
     .all(empresaId) as EventoAssinaturaRow[];
   return rows.map(mapearEventoAssinatura);
+}
+
+function atorDaRequisicao(req: { usuario?: { id: number; nome: string } }): AtorAssinatura {
+  if (!req.usuario) return null;
+  return { id: req.usuario.id, nome: req.usuario.nome };
+}
+
+function recusarMutacaoHistorico(_req: Request, res: Response) {
+  return res.status(403).json({
+    erro: 'O histórico comercial é permanente e não pode ser alterado',
+    codigo: CODIGO_HISTORICO_IMUTAVEL,
+  });
 }
 
 export function createPlanosRouter(db: AppDatabase): Router {
@@ -866,13 +1026,25 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
   });
 
   router.get('/eventos', (req, res) => {
+    if (!podeVerHistoricoAssinatura(req.usuario?.papel)) {
+      return res.status(403).json({
+        erro: 'Apenas proprietário e administrador podem ver o histórico comercial',
+        codigo: CODIGO_HISTORICO_RESTRITO,
+      });
+    }
     res.json({
       data: listarEventosAssinatura(db, empresaDaSessao(req)),
       cobranca: COBRANCA_DESATIVADA,
       ciclo: CICLO_PADRAO,
       gateway: null,
+      imutavel: true,
     });
   });
+
+  router.post('/eventos', recusarMutacaoHistorico);
+  router.patch('/eventos', recusarMutacaoHistorico);
+  router.put('/eventos', recusarMutacaoHistorico);
+  router.delete('/eventos', recusarMutacaoHistorico);
 
   router.patch('/', (req, res) => {
     const parsed = alterarAssinaturaSchema.safeParse(req.body);
@@ -884,10 +1056,11 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
       });
     }
     const empresaId = empresaDaSessao(req);
-    sincronizarAssinatura(db, empresaId);
+    const ator = atorDaRequisicao(req);
+    sincronizarAssinatura(db, empresaId, ator);
 
     if (parsed.data.acao) {
-      const resultado = aplicarAcaoAssinatura(db, empresaId, parsed.data.acao);
+      const resultado = aplicarAcaoAssinatura(db, empresaId, parsed.data.acao, ator);
       if (!resultado.ok) return res.status(resultado.statusHttp).json(resultado.corpo);
       return res.json(obterAssinaturaDaEmpresa(db, empresaId));
     }
@@ -921,6 +1094,7 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
       de_status: atual.status,
       para_status: atual.status,
       valor_mensal: planoDoCatalogo(codigoDestino).preco_mensal,
+      ator,
     });
     res.json(obterAssinaturaDaEmpresa(db, empresaId));
   });

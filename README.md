@@ -63,7 +63,7 @@ npm run dev:web
 | `DELETE` | `/api/convites/:id` | Cancela convite pendente. |
 | `GET`    | `/api/planos` | Catálogo comercial Básico (R$ 99,90/mês), Profissional (R$ 149,90/mês) e Enterprise (R$ 199,90/mês), com limites e recursos. Cobrança desativada. |
 | `GET`    | `/api/assinatura` | Plano, uso, preço mensal e **status** da assinatura da sessão (`trial`, `ativa`, `past_due`, `cancelada`, `expirada`). |
-| `GET`    | `/api/assinatura/eventos` | Histórico comercial da empresa da sessão (assinar, upgrade, downgrade, cancelar). Sem gateway. |
+| `GET`    | `/api/assinatura/eventos` | Histórico/auditoria comercial da empresa da sessão (criação, trial, upgrade, downgrade, cancelamento, reativação e status). Somente proprietário/administrador. Imutável. |
 | `PATCH`  | `/api/assinatura` | Troca o plano (**upgrade**/**downgrade**) **ou** aplica uma ação de status (`ativar`/`reativar`/`renovar` preparam assinatura mensal, `cancelar`, `regularizar`, `marcar_atraso`, `expirar`), sem pagamento. |
 | `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
 | `POST`   | `/api/ordens`       | Cria uma ordem de produção (código, produto/variante, BOM). |
@@ -162,7 +162,7 @@ Cada empresa tem uma **assinatura** com um plano comercial (**Básico R$ 99,90/m
 | `cancelada` | Login e leitura dos dados | Criar/editar/excluir operação e trocar plano |
 | `expirada` | Login e leitura dos dados | Criar/editar/excluir operação e trocar plano |
 
-Cadastro novo entra em **trial**. Transições inválidas respondem 409 (`transicao_invalida`). Operação bloqueada responde 403 (`assinatura_bloqueada`) — distinto do 403 de papel (`modulo`/`acao`). A cobrança fica **desativada**: não há gateway nem pagamento real. Os preços mensais já estão no catálogo e cada troca de plano ou ação comercial gera um evento (`assinar`, `upgrade`, `downgrade`, `cancelar`) para o faturamento futuro. Trocar o plano (proprietário/administrador) só vale em `trial` ou `ativa`. Os dados continuam isolados pela empresa da sessão.
+Cadastro novo entra em **trial**. Transições inválidas respondem 409 (`transicao_invalida`). Operação bloqueada responde 403 (`assinatura_bloqueada`) — distinto do 403 de papel (`modulo`/`acao`). A cobrança fica **desativada**: não há gateway nem pagamento real. Os preços mensais já estão no catálogo. Cada empresa tem um **histórico comercial imutável** (criação, início/fim do trial, upgrade, downgrade, cancelamento, reativação e mudanças de status) com data, empresa, usuário responsável, plano anterior/novo e status. Só proprietário e administrador leem o histórico; usuários comuns não alteram os eventos. Trocar o plano (proprietário/administrador) só vale em `trial` ou `ativa`. Os dados continuam isolados pela empresa da sessão.
 
 Os limites são **aplicados de verdade** na API (e refletidos na interface). Criar além do teto responde **409** com `codigo: "limite_plano"`, o uso atual, o máximo e um aviso de upgrade. A contagem usa só a empresa da sessão — `empresa_id` no body não contorna o limite. Convites pendentes ocupam vaga de usuário. Pedidos e OPs contam no mês calendário (`criado_em`). PostgreSQL/RLS ainda não entra nesta etapa.
 

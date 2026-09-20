@@ -1720,28 +1720,53 @@ export interface ComercialAssinatura {
 
 export interface EventoAssinatura {
   id: number;
-  tipo: 'assinar' | 'upgrade' | 'downgrade' | 'cancelar' | 'regularizar' | 'marcar_atraso' | 'expirar' | string;
+  tipo: string;
+  tipo_label?: string;
+  criado_em: string;
+  empresa_id?: number;
+  usuario: { id: number | null; nome: string } | null;
   de_plano: string | null;
   para_plano: string | null;
+  de_plano_nome?: string | null;
+  para_plano_nome?: string | null;
   de_status: string | null;
   para_status: string | null;
+  de_status_label?: string | null;
+  para_status_label?: string | null;
   ciclo: string;
   moeda: string;
   valor_mensal: number | null;
   cobranca: string;
   gateway: string | null;
-  criado_em: string;
+  imutavel?: boolean;
 }
 
 export const EVENTO_ASSINATURA_LABEL: Record<string, string> = {
+  criacao: 'Criação da assinatura',
+  trial_inicio: 'Início do trial',
+  trial_fim: 'Fim do trial',
   assinar: 'Assinatura mensal',
   upgrade: 'Upgrade',
   downgrade: 'Downgrade',
   cancelar: 'Cancelamento',
+  reativar: 'Reativação',
+  renovar: 'Renovação',
   regularizar: 'Regularização',
-  marcar_atraso: 'Atraso simulado',
+  marcar_atraso: 'Atraso',
   expirar: 'Expiração',
 };
+
+export function podeVerHistoricoAssinatura(papel?: string): boolean {
+  return papel === 'proprietario' || papel === 'administrador';
+}
+
+export function formatarDataHora(valor: string): string {
+  const normalizado = valor.replace('T', ' ').slice(0, 19);
+  const [data, hora = ''] = normalizado.split(' ');
+  const [ano, mes, dia] = data.split('-');
+  if (!ano || !mes || !dia) return valor;
+  return `${dia}/${mes}/${ano}${hora ? ` ${hora}` : ''}`;
+}
 
 export function formatarPrecoMensal(valor: number | null, moeda = 'BRL'): string {
   if (valor === null) return 'Preço sob consulta';

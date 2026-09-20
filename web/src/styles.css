@@ -1304,6 +1304,30 @@ a.btn-secundario {
   margin: 0 0 0.4rem;
 }
 
+.plano__eventos-tabela-wrap {
+  overflow-x: auto;
+}
+
+.plano__eventos-tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.plano__eventos-tabela th,
+.plano__eventos-tabela td {
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--borda, #2a3548);
+  vertical-align: top;
+}
+
+.plano__eventos-tabela th {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: #94a3b8;
+}
+
 .plano__eventos ul {
   margin: 0.6rem 0 0;
   padding-left: 1.1rem;
