@@ -12,8 +12,9 @@ import { PedidosPage } from './PedidosPage';
 import { ProdutosPage } from './ProdutosPage';
 import { RelatoriosPage } from './RelatoriosPage';
 import { ExpedicaoPage } from './ExpedicaoPage';
+import { EquipePage } from './EquipePage';
 import { LoginPage } from './LoginPage';
-import { obterSessao, sair, type SessaoAtual } from './api';
+import { obterSessao, PAPEL_LABEL, sair, type SessaoAtual } from './api';
 
 type Pagina =
   | 'dashboard'
@@ -27,7 +28,8 @@ type Pagina =
   | 'etapas'
   | 'compras'
   | 'financeiro'
-  | 'relatorios';
+  | 'relatorios'
+  | 'equipe';
 
 const NAV: Array<{ id: Pagina; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -42,6 +44,7 @@ const NAV: Array<{ id: Pagina; label: string }> = [
   { id: 'compras', label: 'Compras' },
   { id: 'financeiro', label: 'Financeiro' },
   { id: 'relatorios', label: 'Relatórios' },
+  { id: 'equipe', label: 'Equipe' },
 ];
 
 const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
@@ -93,6 +96,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
     titulo: 'Relatórios',
     sub: 'Indicadores da confecção',
   },
+  equipe: {
+    titulo: 'Equipe',
+    sub: 'Membros, convites e papéis',
+  },
 };
 
 export function App() {
@@ -142,16 +149,21 @@ function AppAutenticado({
   const titulo = ordemId
     ? { titulo: 'Detalhe da OP', sub: 'Fluxo visual de produção' }
     : TITULOS[pagina];
+  const podeEquipe = sessao.permissoes.equipe;
+  const somenteLeitura = !sessao.permissoes.escrever;
+  const nav = NAV.filter((item) => item.id !== 'equipe' || podeEquipe);
 
   return (
-    <div className={`shell${menuAberto ? ' shell--menu' : ''}`}>
+    <div
+      className={`shell${menuAberto ? ' shell--menu' : ''}${somenteLeitura ? ' shell--leitura' : ''}`}
+    >
       <aside className="shell__sidebar" id="menu-lateral">
         <div className="shell__marca">
           <strong>Gestão de Confecção</strong>
           <span>Chão de fábrica</span>
         </div>
         <nav className="menu" aria-label="Navegação principal">
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -194,7 +206,9 @@ function AppAutenticado({
           <div className="shell__sessao">
             <span>
               {sessao.usuario.nome}
-              <small>{sessao.empresa.nome}</small>
+              <small>
+                {sessao.empresa.nome} · {PAPEL_LABEL[sessao.usuario.papel]}
+              </small>
             </span>
             <button
               type="button"
@@ -209,6 +223,9 @@ function AppAutenticado({
         </header>
 
         <div className="shell__conteudo">
+          {somenteLeitura && (
+            <p className="aviso-leitura">Seu perfil é somente leitura nesta empresa.</p>
+          )}
           {ordemId ? (
             <OrdemDetalhePage
               ordemId={ordemId}
@@ -230,6 +247,7 @@ function AppAutenticado({
               {pagina === 'compras' && <ComprasPage />}
               {pagina === 'financeiro' && <FinanceiroPage />}
               {pagina === 'relatorios' && <RelatoriosPage />}
+              {pagina === 'equipe' && podeEquipe && <EquipePage sessao={sessao} />}
             </>
           )}
         </div>

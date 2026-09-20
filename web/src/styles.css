@@ -1117,3 +1117,48 @@ a.btn-secundario {
     padding-right: 1rem;
   }
 }
+
+.aviso-leitura {
+  background: #1e3a5f;
+  border: 1px solid #3b82f6;
+  color: #dbeafe;
+  border-radius: 10px;
+  padding: 0.7rem 0.95rem;
+  margin: 0 0 1rem;
+}
+
+.equipe__link {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+
+.equipe__link code {
+  flex: 1;
+  min-width: 12rem;
+  word-break: break-all;
+  font-size: 0.8rem;
+}
+
+.card h3 {
+  margin: 1.4rem 0 0.7rem;
+  font-size: 1.02rem;
+}
+
+.shell--leitura main .form > button,
+.shell--leitura main .card__head > button,
+.shell--leitura main td.acoes {
+  display: none;
+}
+
+.shell--leitura main .form input,
+.shell--leitura main .form select,
+.shell--leitura main .form textarea {
+  pointer-events: none;
+  opacity: 0.8;
+}

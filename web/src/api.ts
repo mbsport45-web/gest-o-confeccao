@@ -1562,8 +1562,50 @@ export async function marcarEntrega(
 }
 
 export interface SessaoAtual {
-  usuario: { id: number; nome: string; email: string };
+  usuario: { id: number; nome: string; email: string; papel: PapelUsuario };
   empresa: { id: number; nome: string; status: string };
+  permissoes: { escrever: boolean; equipe: boolean };
+}
+
+export const PAPEIS_USUARIO = ['dono', 'admin', 'operador', 'consulta'] as const;
+export type PapelUsuario = (typeof PAPEIS_USUARIO)[number];
+export const PAPEIS_CONVITE = ['admin', 'operador', 'consulta'] as const;
+export type PapelConvite = (typeof PAPEIS_CONVITE)[number];
+
+export const PAPEL_LABEL: Record<PapelUsuario, string> = {
+  dono: 'Dono',
+  admin: 'Administrador',
+  operador: 'Operador',
+  consulta: 'Consulta',
+};
+
+export interface MembroEmpresa {
+  id: number;
+  nome: string;
+  email: string;
+  papel: PapelUsuario;
+  status: 'ativo' | 'inativo';
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface ConviteEmpresa {
+  id: number;
+  email: string;
+  papel: PapelConvite;
+  status: 'pendente' | 'aceito' | 'cancelado' | 'expirado';
+  expira_em: string;
+  criado_em: string;
+  aceito_em: string | null;
+  token?: string;
+  caminho?: string;
+}
+
+export interface ConvitePublico {
+  email: string;
+  papel: PapelConvite;
+  empresa: { id: number; nome: string };
+  expira_em: string;
 }
 
 export async function obterSessao(): Promise<SessaoAtual | null> {
@@ -1578,6 +1620,7 @@ export async function registrarUsuario(dados: {
   email: string;
   senha: string;
   empresa?: string;
+  convite?: string;
 }): Promise<SessaoAtual> {
   const res = await apiFetch('/api/auth/registrar', {
     method: 'POST',
@@ -1586,6 +1629,55 @@ export async function registrarUsuario(dados: {
   });
   if (!res.ok) return parseError(res);
   return res.json();
+}
+
+export async function obterConvitePublico(token: string): Promise<ConvitePublico> {
+  const res = await apiFetch(`/api/auth/convite/${encodeURIComponent(token)}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarMembros(): Promise<{ data: MembroEmpresa[]; total: number }> {
+  const res = await apiFetch('/api/membros');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarMembro(
+  id: number,
+  dados: { papel?: PapelConvite; status?: 'ativo' | 'inativo' },
+): Promise<MembroEmpresa> {
+  const res = await apiFetch(`/api/membros/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarConvites(): Promise<{ data: ConviteEmpresa[]; total: number }> {
+  const res = await apiFetch('/api/convites');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarConvite(dados: {
+  email: string;
+  papel: PapelConvite;
+}): Promise<ConviteEmpresa> {
+  const res = await apiFetch('/api/convites', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function cancelarConvite(id: number): Promise<void> {
+  const res = await apiFetch(`/api/convites/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
 }
 
 export async function entrar(dados: { email: string; senha: string }): Promise<SessaoAtual> {
