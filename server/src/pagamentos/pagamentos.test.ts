@@ -3,24 +3,24 @@ import request from 'supertest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApp } from './app.js';
-import { createDatabase, type AppDatabase } from './db.js';
+import { createApp } from '../app.js';
+import { createDatabase, type AppDatabase } from '../db.js';
 import {
   autenticar,
   autenticarNovaEmpresa,
   autenticarPapel,
   type TestApi,
-} from './httpTest.js';
+} from '../httpTest.js';
 import {
   ConfiguracaoAsaasInvalida,
   ehHostProducaoAsaas,
   lerConfiguracaoAsaas,
   normalizarBaseUrlAsaas,
-} from './pagamentos/config.js';
-import { AsaasPaymentGateway } from './pagamentos/asaas.js';
-import { MockPaymentGateway } from './pagamentos/mock.js';
-import { EVENTOS_ASAAS_CONHECIDOS } from './pagamentos/eventos.js';
-import { PLANOS_CATALOGO } from './planos.js';
+} from './config.js';
+import { AsaasPaymentGateway } from './asaas.js';
+import { MockPaymentGateway } from './mock.js';
+import { EVENTOS_ASAAS_CONHECIDOS } from './eventos.js';
+import { PLANOS_CATALOGO } from '../planos.js';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'whsec_test_asaas_sandbox_token_32ch_ok';
@@ -424,7 +424,7 @@ describe('integração Asaas sandbox (sem cobrança real)', () => {
     expect(gateway.ambiente).toBe('sandbox');
     expect(gateway.chamadas.some((c) => JSON.stringify(c).includes('creditCard'))).toBe(false);
 
-    const exemplo = readFileSync(join(DIR, '../../.env.example'), 'utf8');
+    const exemplo = readFileSync(join(DIR, '../../../.env.example'), 'utf8');
     expect(exemplo).toContain('ASAAS_BASE_URL=https://api-sandbox.asaas.com/v3');
     expect(exemplo).toContain('ASAAS_API_KEY=');
     expect(exemplo).toContain('ASAAS_WEBHOOK_TOKEN=');
@@ -432,9 +432,9 @@ describe('integração Asaas sandbox (sem cobrança real)', () => {
     expect(exemplo).not.toMatch(/api\.asaas\.com\/v3/);
 
     const fontes = [
-      readFileSync(join(DIR, 'pagamentos/asaas.ts'), 'utf8'),
-      readFileSync(join(DIR, 'pagamentos/config.ts'), 'utf8'),
-      readFileSync(join(DIR, 'pagamentos/webhooks.ts'), 'utf8'),
+      readFileSync(join(DIR, 'asaas.ts'), 'utf8'),
+      readFileSync(join(DIR, 'config.ts'), 'utf8'),
+      readFileSync(join(DIR, 'webhooks.ts'), 'utf8'),
     ].join('\n');
     expect(fontes).not.toMatch(/\$aact_/);
     expect(fontes).toContain('api-sandbox.asaas.com');

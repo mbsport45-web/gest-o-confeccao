@@ -181,12 +181,13 @@ export class AsaasPaymentGateway implements PaymentGateway {
     return mapearAssinatura(json);
   }
 
-  async criarCheckout(_input: {
+  async criarCheckout(input: {
     customerId: string;
     valor: number;
     descricao: string;
     referenciaExterna: string;
   }): Promise<CheckoutGateway> {
+    void input;
     throw new ErroAsaas(
       'Checkout público Asaas ainda não está habilitado; use a assinatura recorrente no sandbox.',
       501,
