@@ -9,6 +9,7 @@ import {
   corpoAssinaturaBloqueada,
   garantirAssinatura,
   obterAssinaturaDaEmpresa,
+  PLANO_PADRAO,
 } from './planos.js';
 
 export const COOKIE_SESSAO = 'gc_sessao';
@@ -276,7 +277,6 @@ export function createAuthRouter(db: AppDatabase): Router {
             .run(data.empresa ?? 'Minha empresa');
           empresaId = Number(nova.lastInsertRowid);
         }
-        garantirAssinatura(db, empresaId);
         const criado = db
           .prepare(
             `INSERT INTO usuarios (empresa_id, nome, email, senha_hash, papel)
@@ -289,6 +289,14 @@ export function createAuthRouter(db: AppDatabase): Router {
             senha_hash: senhaHash,
             papel,
           });
+        garantirAssinatura(
+          db,
+          empresaId,
+          PLANO_PADRAO,
+          papel === 'proprietario'
+            ? { id: Number(criado.lastInsertRowid), nome: data.nome }
+            : null,
+        );
         if (conviteInfo?.ok) {
           db.prepare(
             `UPDATE convites SET status = 'aceito', aceito_em = datetime('now') WHERE id = ?`,

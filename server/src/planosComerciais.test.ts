@@ -62,10 +62,10 @@ describe('classificação comercial dos planos', () => {
     expect(classificarMudancaPlano('basico', 'basico')).toBe('manter');
   });
 
-  it('mapeia ações de status para a operação comercial futura', () => {
+  it('mapeia ações de status para o histórico comercial', () => {
     expect(tipoEventoDaAcao('ativar')).toBe('assinar');
-    expect(tipoEventoDaAcao('reativar')).toBe('assinar');
-    expect(tipoEventoDaAcao('renovar')).toBe('assinar');
+    expect(tipoEventoDaAcao('reativar')).toBe('reativar');
+    expect(tipoEventoDaAcao('renovar')).toBe('renovar');
     expect(tipoEventoDaAcao('cancelar')).toBe('cancelar');
     expect(tipoEventoDaAcao('regularizar')).toBe('regularizar');
     expect(tipoEventoDaAcao('marcar_atraso')).toBe('marcar_atraso');
@@ -152,18 +152,43 @@ describe('catálogo comercial Básico, Profissional e Enterprise', () => {
     expect(eventos.body.cobranca).toBe('desativada');
     expect(eventos.body.gateway).toBeNull();
     const tipos = eventos.body.data.map((e: { tipo: string }) => e.tipo);
-    expect(tipos).toEqual(['cancelar', 'downgrade', 'upgrade', 'upgrade']);
+    expect(tipos).toEqual([
+      'cancelar',
+      'trial_fim',
+      'downgrade',
+      'upgrade',
+      'upgrade',
+      'trial_inicio',
+      'criacao',
+    ]);
 
-    const [cancelado, descida, subidaEnterprise, subidaProf] = eventos.body.data;
+    const [cancelado, fimTrial, descida, subidaEnterprise, subidaProf, inicio, criacao] =
+      eventos.body.data;
+    expect(criacao).toMatchObject({
+      tipo: 'criacao',
+      para_plano: 'basico',
+      para_status: 'trial',
+      usuario: { nome: 'Operador Teste' },
+      imutavel: true,
+    });
+    expect(inicio).toMatchObject({ tipo: 'trial_inicio', para_status: 'trial' });
+    expect(fimTrial).toMatchObject({
+      tipo: 'trial_fim',
+      de_status: 'trial',
+      para_status: 'cancelada',
+    });
     expect(cancelado).toMatchObject({
       tipo: 'cancelar',
       de_plano: 'basico',
       para_plano: 'basico',
+      de_status: 'trial',
+      para_status: 'cancelada',
       ciclo: 'mensal',
       moeda: 'BRL',
       valor_mensal: 99.9,
       cobranca: 'desativada',
       gateway: null,
+      usuario: { nome: 'Operador Teste' },
     });
     expect(descida).toMatchObject({
       tipo: 'downgrade',
@@ -218,9 +243,13 @@ describe('catálogo comercial Básico, Profissional e Enterprise', () => {
     const tipos = (await api.get('/api/assinatura/eventos')).body.data.map(
       (e: { tipo: string }) => e.tipo,
     );
-    expect(tipos.filter((tipo: string) => tipo === 'assinar')).toHaveLength(3);
+    expect(tipos.filter((tipo: string) => tipo === 'assinar')).toHaveLength(1);
+    expect(tipos.filter((tipo: string) => tipo === 'reativar')).toHaveLength(1);
+    expect(tipos.filter((tipo: string) => tipo === 'renovar')).toHaveLength(1);
     expect(tipos).toContain('cancelar');
     expect(tipos).toContain('expirar');
+    expect(tipos).toContain('trial_fim');
+    expect(tipos).toContain('criacao');
   });
 
   it('eventos ficam isolados por empresa e vendas só lê', async () => {
@@ -233,23 +262,28 @@ describe('catálogo comercial Básico, Profissional e Enterprise', () => {
 
     const daEmpresa1 = await api.get('/api/assinatura/eventos');
     const daEmpresa2 = await empresa2.get('/api/assinatura/eventos');
-    expect(daEmpresa1.body.data).toHaveLength(1);
-    expect(daEmpresa1.body.data[0]).toMatchObject({
+    expect(daEmpresa1.body.data.some((e: { tipo: string }) => e.tipo === 'upgrade')).toBe(true);
+    expect(daEmpresa1.body.data.every((e: { empresa_id: number }) => e.empresa_id === 1)).toBe(true);
+    expect(daEmpresa1.body.data.filter((e: { tipo: string }) => e.tipo === 'upgrade')).toHaveLength(1);
+    expect(daEmpresa1.body.data.find((e: { tipo: string }) => e.tipo === 'upgrade')).toMatchObject({
       tipo: 'upgrade',
       de_plano: 'basico',
       para_plano: 'profissional',
       valor_mensal: 149.9,
     });
-    expect(daEmpresa2.body.data).toHaveLength(1);
-    expect(daEmpresa2.body.data[0]).toMatchObject({
+    expect(daEmpresa2.body.data.filter((e: { tipo: string }) => e.tipo === 'upgrade')).toHaveLength(1);
+    expect(daEmpresa2.body.data.find((e: { tipo: string }) => e.tipo === 'upgrade')).toMatchObject({
       tipo: 'upgrade',
       para_plano: 'enterprise',
       valor_mensal: 199.9,
     });
+    expect(daEmpresa2.body.data.some((e: { para_plano: string }) => e.para_plano === 'profissional')).toBe(
+      false,
+    );
 
     const vista = await vendas.get('/api/assinatura/eventos');
-    expect(vista.status).toBe(200);
-    expect(vista.body.data[0].para_plano).toBe('profissional');
+    expect(vista.status).toBe(403);
+    expect(vista.body.codigo).toBe('historico_restrito');
 
     const negar = await vendas.patch('/api/assinatura').send({ plano: 'enterprise' });
     expect(negar.status).toBe(403);
