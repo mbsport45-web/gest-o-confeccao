@@ -193,3 +193,195 @@ export async function removerCliente(id: number): Promise<void> {
   const res = await fetch(`/api/clientes/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
+
+export const STATUS_PRODUTO = ['ativo', 'inativo'] as const;
+export type StatusProduto = (typeof STATUS_PRODUTO)[number];
+
+export const GENEROS_PRODUTO = [
+  'masculino',
+  'feminino',
+  'unissex',
+  'infantil',
+] as const;
+export type GeneroProduto = (typeof GENEROS_PRODUTO)[number];
+
+export const UNIDADES_PRODUTO = ['UN', 'PC', 'PAR', 'KG', 'MT', 'CX'] as const;
+
+export interface ProdutoVariante {
+  id: number;
+  produto_id: number;
+  cor: string;
+  tamanho: string;
+  sku: string;
+  codigo_barras: string | null;
+  preco_venda: number | null;
+  preco_atacado: number | null;
+  preco_custo: number | null;
+  estoque_minimo: number | null;
+  status: StatusProduto;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface Produto {
+  id: number;
+  sku: string | null;
+  nome: string;
+  descricao: string | null;
+  categoria: string | null;
+  subcategoria: string | null;
+  marca: string | null;
+  genero: string | null;
+  colecao: string | null;
+  cores: string[];
+  tamanhos: string[];
+  codigo_barras: string | null;
+  unidade: string;
+  preco_venda: number;
+  preco_atacado: number;
+  preco_custo: number;
+  status: StatusProduto;
+  estoque_minimo: number;
+  imagem: string | null;
+  observacoes: string | null;
+  criado_em: string;
+  atualizado_em: string;
+  variantes: ProdutoVariante[];
+}
+
+export type ProdutoPayload = {
+  sku?: string;
+  nome: string;
+  descricao?: string;
+  categoria?: string;
+  subcategoria?: string;
+  marca?: string;
+  genero?: string;
+  colecao?: string;
+  cores?: string[];
+  tamanhos?: string[];
+  codigo_barras?: string;
+  unidade?: string;
+  preco_venda?: number;
+  preco_atacado?: number;
+  preco_custo?: number;
+  status?: StatusProduto;
+  estoque_minimo?: number;
+  imagem?: string;
+  observacoes?: string;
+  variantes?: Array<{
+    id?: number;
+    cor: string;
+    tamanho: string;
+    sku?: string;
+    codigo_barras?: string;
+    status?: StatusProduto;
+  }>;
+};
+
+export interface ListaProdutos {
+  data: Produto[];
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+export interface FiltrosProdutos {
+  q?: string;
+  status?: StatusProduto | '';
+  categoria?: string;
+  marca?: string;
+  genero?: string;
+  colecao?: string;
+  pagina?: number;
+  por_pagina?: number;
+}
+
+export async function listarProdutos(
+  filtros: FiltrosProdutos = {},
+): Promise<ListaProdutos> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.status) params.set('status', filtros.status);
+  if (filtros.categoria) params.set('categoria', filtros.categoria);
+  if (filtros.marca) params.set('marca', filtros.marca);
+  if (filtros.genero) params.set('genero', filtros.genero);
+  if (filtros.colecao) params.set('colecao', filtros.colecao);
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await fetch(`/api/produtos?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterProduto(id: number): Promise<Produto> {
+  const res = await fetch(`/api/produtos/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarProduto(dados: ProdutoPayload): Promise<Produto> {
+  const res = await fetch('/api/produtos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarProduto(
+  id: number,
+  dados: Partial<ProdutoPayload>,
+): Promise<Produto> {
+  const res = await fetch(`/api/produtos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarStatusProduto(
+  id: number,
+  status: StatusProduto,
+): Promise<Produto> {
+  const res = await fetch(`/api/produtos/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerProduto(id: number): Promise<void> {
+  const res = await fetch(`/api/produtos/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function atualizarVarianteProduto(
+  produtoId: number,
+  varianteId: number,
+  dados: Partial<ProdutoVariante>,
+): Promise<Produto> {
+  const res = await fetch(`/api/produtos/${produtoId}/variantes/${varianteId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerVarianteProduto(
+  produtoId: number,
+  varianteId: number,
+): Promise<void> {
+  const res = await fetch(`/api/produtos/${produtoId}/variantes/${varianteId}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}

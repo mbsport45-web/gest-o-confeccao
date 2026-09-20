@@ -21,7 +21,7 @@ body {
 }
 
 .app {
-  max-width: 1180px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 2rem 1.5rem 4rem;
 }
@@ -56,8 +56,9 @@ body {
   align-items: start;
 }
 
-.app__main--clientes {
-  grid-template-columns: 1fr 380px;
+.app__main--clientes,
+.app__main--produtos {
+  grid-template-columns: 1fr 400px;
 }
 
 .nav {
@@ -359,9 +360,60 @@ button {
   margin-top: 0.5rem;
 }
 
+.filtros--produtos {
+  grid-template-columns: 1.6fr 0.8fr 0.9fr 0.9fr 0.9fr;
+}
+
+.produto-nome {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.produto-foto {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+}
+
+.subtitulo {
+  margin: 1.1rem 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+.dica {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.tabela--compacta input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.4rem;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
 @media (max-width: 900px) {
   .app__main--clientes,
-  .filtros {
+  .app__main--produtos,
+  .filtros,
+  .filtros--produtos {
     grid-template-columns: 1fr;
   }
 }

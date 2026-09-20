@@ -39,8 +39,11 @@ export function createOrdensRouter(db: AppDatabase): Router {
   );
   const getStmt = db.prepare('SELECT * FROM ordens_producao WHERE id = ?');
   const insertStmt = db.prepare(
-    `INSERT INTO ordens_producao (cliente, produto, tamanho, quantidade, status, cliente_id)
-     VALUES (@cliente, @produto, @tamanho, @quantidade, @status, @cliente_id)`,
+    `INSERT INTO ordens_producao (
+       cliente, produto, tamanho, quantidade, status, cliente_id, produto_id, variante_id
+     ) VALUES (
+       @cliente, @produto, @tamanho, @quantidade, @status, @cliente_id, @produto_id, @variante_id
+     )`,
   );
   const updateStatusStmt = db.prepare(
     'UPDATE ordens_producao SET status = @status WHERE id = @id',
@@ -75,6 +78,21 @@ export function createOrdensRouter(db: AppDatabase): Router {
         `SELECT id FROM clientes WHERE lower(trim(nome)) = lower(trim(?)) ORDER BY id DESC LIMIT 1`,
       )
       .get(cliente) as { id: number } | undefined;
+    const produtoRow = db
+      .prepare(
+        `SELECT id FROM produtos WHERE lower(trim(nome)) = lower(trim(?)) ORDER BY id DESC LIMIT 1`,
+      )
+      .get(produto) as { id: number } | undefined;
+    const varianteRow = produtoRow
+      ? (db
+          .prepare(
+            `SELECT id FROM produto_variantes
+             WHERE produto_id = ?
+               AND lower(trim(tamanho)) = lower(trim(?))
+             ORDER BY id ASC LIMIT 1`,
+          )
+          .get(produtoRow.id, tamanho) as { id: number } | undefined)
+      : undefined;
     const info = insertStmt.run({
       cliente,
       produto,
@@ -82,6 +100,8 @@ export function createOrdensRouter(db: AppDatabase): Router {
       quantidade,
       status: status ?? 'pendente',
       cliente_id: vinculado?.id ?? null,
+      produto_id: produtoRow?.id ?? null,
+      variante_id: varianteRow?.id ?? null,
     });
 
     const ordem = getStmt.get(info.lastInsertRowid) as OrdemProducao;

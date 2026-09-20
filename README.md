@@ -1,6 +1,6 @@
 # gestão de confecção
 
-Sistema de gestão de confecção para controle de **ordens de produção** (clientes, produtos, tamanhos, quantidades e status).
+Sistema de gestão de confecção para controle de **ordens de produção**, **clientes** e **produtos** (com variantes de cor e tamanho).
 
 Monorepo full-stack em TypeScript:
 
@@ -62,6 +62,17 @@ npm run dev:web
 | `PATCH`  | `/api/clientes/:id` | Atualiza um cliente.             |
 | `PATCH`  | `/api/clientes/:id/status` | Ativa ou inativa.         |
 | `DELETE` | `/api/clientes/:id` | Remove se não houver OPs vinculadas. |
+| `GET`    | `/api/produtos`     | Lista produtos (busca, filtros, paginação). |
+| `POST`   | `/api/produtos`     | Cria produto e gera variantes cor × tamanho. |
+| `GET`    | `/api/produtos/:id` | Detalha produto com variantes. |
+| `PATCH`  | `/api/produtos/:id` | Atualiza produto e inclui novas combinações. |
+| `PATCH`  | `/api/produtos/:id/status` | Ativa ou inativa. |
+| `DELETE` | `/api/produtos/:id` | Remove se não houver OPs vinculadas. |
+| `POST`   | `/api/produtos/:id/variantes` | Inclui variante avulsa. |
+| `PATCH`  | `/api/produtos/:id/variantes/:vid` | Atualiza SKU/barcode da variante. |
+| `DELETE` | `/api/produtos/:id/variantes/:vid` | Remove variante sem vínculo de OP. |
+
+Cada variante possui SKU e código de barras únicos. O cadastro de produtos fica pronto para ficha técnica/BOM, matérias-primas, estoque, pedidos de venda e OPs (`produto_id` / `variante_id`).
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).
