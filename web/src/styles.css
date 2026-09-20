@@ -210,6 +210,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 1.5rem;
+  overflow-x: auto;
 }
 
 .card h2 {
