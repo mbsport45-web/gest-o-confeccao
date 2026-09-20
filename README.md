@@ -61,6 +61,9 @@ npm run dev:web
 | `GET`    | `/api/convites` | Lista convites (padrão: pendentes). |
 | `POST`   | `/api/convites` | Convida e-mail com papel; devolve o token uma vez. |
 | `DELETE` | `/api/convites/:id` | Cancela convite pendente. |
+| `GET`    | `/api/planos` | Catálogo Básico, Profissional e Enterprise (limites e recursos). Cobrança desativada. |
+| `GET`    | `/api/assinatura` | Plano da empresa da sessão. |
+| `PATCH`  | `/api/assinatura` | Troca o plano (`basico`/`profissional`/`enterprise`) sem pagamento. |
 | `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
 | `POST`   | `/api/ordens`       | Cria uma ordem de produção (código, produto/variante, BOM). |
 | `GET`    | `/api/ordens/ficha-tecnica` | Lê a ficha técnica/BOM do produto ou variante. |
@@ -146,7 +149,9 @@ Papéis por empresa, com permissões de visualizar/criar/editar/excluir por mód
 - **estoque**: CRUD em materiais, estoque, compras e fornecedores; visualiza produtos.
 - **produção**: CRUD em ordens e etapas; visualiza produtos, materiais, estoque e clientes.
 
-A API recusa (403) ação fora do papel e responde 404 quando o registro é de outra empresa. `/api/health` continua público. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query. Planos, cobrança e PostgreSQL/RLS ainda não entram nesta etapa.
+A API recusa (403) ação fora do papel e responde 404 quando o registro é de outra empresa. `/api/health` continua público. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query.
+
+Cada empresa tem uma **assinatura** com um plano (**Básico**, **Profissional** ou **Enterprise**), limites e recursos. A cobrança fica **desativada**: não há gateway, preço nem pagamento. Trocar o plano (proprietário/administrador) só atualiza a associação. PostgreSQL/RLS ainda não entra nesta etapa.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

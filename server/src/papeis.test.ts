@@ -50,6 +50,9 @@ describe('papéis e permissões por módulo', () => {
     expect(temPermissao('financeiro', 'ordens', 'visualizar')).toBe(false);
     expect(temPermissao('financeiro', 'equipe', 'visualizar')).toBe(false);
 
+    expect(temPermissao('financeiro', 'assinatura', 'visualizar')).toBe(true);
+    expect(temPermissao('financeiro', 'assinatura', 'editar')).toBe(false);
+
     expect(temPermissao('vendas', 'pedidos', 'excluir')).toBe(true);
     expect(temPermissao('vendas', 'expedicao', 'editar')).toBe(true);
     expect(temPermissao('vendas', 'relatorios', 'visualizar')).toBe(true);
@@ -74,6 +77,8 @@ describe('papéis e permissões por módulo', () => {
     expect(moduloDaRota('/api/materias-primas/3')).toBe('materiais');
     expect(moduloDaRota('/api/membros/1')).toBe('equipe');
     expect(moduloDaRota('/api/convites')).toBe('equipe');
+    expect(moduloDaRota('/api/planos')).toBe('assinatura');
+    expect(moduloDaRota('/api/assinatura')).toBe('assinatura');
     expect(moduloDaRota('/api/health')).toBeNull();
 
     expect(acaoDoPedido('GET', '/api/clientes')).toBe('visualizar');

@@ -4,6 +4,7 @@ import { hashSync, compareSync } from 'bcryptjs';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { isPapel, permissoesDoPapel, type Papel } from './papeis.js';
+import { garantirAssinatura, obterAssinaturaDaEmpresa } from './planos.js';
 
 export const COOKIE_SESSAO = 'gc_sessao';
 const SESSAO_MS = 7 * 24 * 60 * 60 * 1000;
@@ -61,19 +62,23 @@ function cookieOpcoes() {
   };
 }
 
-function mapUsuario(row: {
-  id: number;
-  nome: string;
-  email: string;
-  empresa_id: number;
-  empresa_nome: string;
-  empresa_status: string;
-  papel: string;
-}) {
+function mapUsuario(
+  db: AppDatabase,
+  row: {
+    id: number;
+    nome: string;
+    email: string;
+    empresa_id: number;
+    empresa_nome: string;
+    empresa_status: string;
+    papel: string;
+  },
+) {
   const papel: Papel = isPapel(row.papel) ? row.papel : 'producao';
   return {
     usuario: { id: row.id, nome: row.nome, email: row.email, papel },
     empresa: { id: row.empresa_id, nome: row.empresa_nome, status: row.empresa_status },
+    assinatura: obterAssinaturaDaEmpresa(db, row.empresa_id),
     permissoes: permissoesDoPapel(papel),
   };
 }
@@ -253,6 +258,7 @@ export function createAuthRouter(db: AppDatabase): Router {
             .run(data.empresa ?? 'Minha empresa');
           empresaId = Number(nova.lastInsertRowid);
         }
+        garantirAssinatura(db, empresaId);
         const criado = db
           .prepare(
             `INSERT INTO usuarios (empresa_id, nome, email, senha_hash, papel)
@@ -283,7 +289,7 @@ export function createAuthRouter(db: AppDatabase): Router {
     const usuario = buscarUsuarioPorId(db, id);
     if (!usuario) return res.status(500).json({ erro: 'Falha ao criar usuário' });
     res.cookie(COOKIE_SESSAO, token, cookieOpcoes());
-    res.status(201).json(mapUsuario(usuario));
+    res.status(201).json(mapUsuario(db, usuario));
   });
 
   router.post('/login', (req, res) => {
@@ -307,7 +313,7 @@ export function createAuthRouter(db: AppDatabase): Router {
     const row = buscarUsuarioPorId(db, usuario.id);
     if (!row) return res.status(500).json({ erro: 'Falha ao autenticar' });
     res.cookie(COOKIE_SESSAO, token, cookieOpcoes());
-    res.json(mapUsuario(row));
+    res.json(mapUsuario(db, row));
   });
 
   router.post('/logout', (req, res) => {
@@ -328,6 +334,6 @@ export function handleMe(db: AppDatabase): RequestHandler {
   return (req, res) => {
     const row = buscarUsuarioPorId(db, req.usuario!.id);
     if (!row) return res.status(401).json({ erro: 'Não autenticado' });
-    res.json(mapUsuario(row));
+    res.json(mapUsuario(db, row));
   };
 }

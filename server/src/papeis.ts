@@ -33,6 +33,7 @@ export const MODULOS = [
   'compras',
   'financeiro',
   'relatorios',
+  'assinatura',
 ] as const;
 export type Modulo = (typeof MODULOS)[number];
 
@@ -65,6 +66,7 @@ export const MODULO_LABEL: Record<Modulo, string> = {
   compras: 'compras',
   financeiro: 'o financeiro',
   relatorios: 'relatórios',
+  assinatura: 'o plano da empresa',
 };
 
 export const ACAO_LABEL: Record<Acao, string> = {
@@ -93,6 +95,8 @@ export const PREFIXOS_MODULO: Array<{ prefixo: string; modulo: Modulo }> = [
   { prefixo: '/api/compras', modulo: 'compras' },
   { prefixo: '/api/financeiro', modulo: 'financeiro' },
   { prefixo: '/api/relatorios', modulo: 'relatorios' },
+  { prefixo: '/api/planos', modulo: 'assinatura' },
+  { prefixo: '/api/assinatura', modulo: 'assinatura' },
 ];
 
 function vazio(): MatrizModulos {
@@ -117,18 +121,22 @@ export const PERMISSOES: Record<Papel, MatrizModulos> = {
     'fornecedores',
     'pedidos',
     'clientes',
+    'assinatura',
   ], LER),
   vendas: marcar(marcar(vazio(), ['clientes', 'produtos', 'pedidos', 'expedicao'], CRUD), [
     'relatorios',
+    'assinatura',
   ], LER),
   estoque: marcar(marcar(vazio(), ['materiais', 'estoque', 'compras', 'fornecedores'], CRUD), [
     'produtos',
+    'assinatura',
   ], LER),
   producao: marcar(marcar(vazio(), ['ordens', 'etapas'], CRUD), [
     'produtos',
     'materiais',
     'estoque',
     'clientes',
+    'assinatura',
   ], LER),
 };
 

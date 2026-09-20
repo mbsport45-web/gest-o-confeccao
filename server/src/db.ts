@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { aplicarSchemaPlanos } from './planos.js';
 
 export type AppDatabase = ReturnType<typeof createDatabase>;
 
@@ -495,6 +496,7 @@ export function createDatabase(location: string) {
 
   aplicarColunaEmpresaId(db);
   aplicarSchemaEquipe(db);
+  aplicarSchemaPlanos(db);
 
   return db;
 }
