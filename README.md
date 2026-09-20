@@ -56,6 +56,12 @@ npm run dev:web
 | `GET`    | `/api/ordens/:id`   | Detalha uma ordem.               |
 | `PATCH`  | `/api/ordens/:id`   | Atualiza o status de uma ordem.  |
 | `DELETE` | `/api/ordens/:id`   | Remove uma ordem.                |
+| `GET`    | `/api/clientes`     | Lista clientes (busca, filtros, paginação). |
+| `POST`   | `/api/clientes`     | Cria um cliente.                 |
+| `GET`    | `/api/clientes/:id` | Detalha um cliente.              |
+| `PATCH`  | `/api/clientes/:id` | Atualiza um cliente.             |
+| `PATCH`  | `/api/clientes/:id/status` | Ativa ou inativa.         |
+| `DELETE` | `/api/clientes/:id` | Remove se não houver OPs vinculadas. |
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).
