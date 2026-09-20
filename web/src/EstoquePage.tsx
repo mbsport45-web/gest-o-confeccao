@@ -325,7 +325,7 @@ export function EstoquePage() {
               <input
                 required
                 type="number"
-                min={form.tipo === 'ajuste' ? 0 : 0.0001}
+                min={form.tipo === 'ajuste' ? 0 : 0.01}
                 step="0.01"
                 value={form.quantidade}
                 onChange={(e) =>
