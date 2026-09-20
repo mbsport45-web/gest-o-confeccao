@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_PRODUTO = ['ativo', 'inativo'] as const;
 export const GENEROS_PRODUTO = [
@@ -232,63 +233,71 @@ function isConflito(err: unknown): err is ConflitoCadastro {
 
 function skuUsado(
   db: AppDatabase,
+  empresaId: number,
   sku: string,
   ignore?: { produtoId?: number; varianteId?: number },
 ): boolean {
   const produto = db
     .prepare(
-      `SELECT id FROM produtos WHERE lower(sku) = lower(?) AND id != ? LIMIT 1`,
+      `SELECT id FROM produtos WHERE empresa_id = ? AND lower(sku) = lower(?) AND id != ? LIMIT 1`,
     )
-    .get(sku, ignore?.produtoId ?? 0) as { id: number } | undefined;
+    .get(empresaId, sku, ignore?.produtoId ?? 0) as { id: number } | undefined;
   if (produto) return true;
   const variante = db
     .prepare(
-      `SELECT id FROM produto_variantes WHERE lower(sku) = lower(?) AND id != ? LIMIT 1`,
+      `SELECT v.id FROM produto_variantes v
+        JOIN produtos p ON p.id = v.produto_id
+       WHERE p.empresa_id = ? AND lower(v.sku) = lower(?) AND v.id != ? LIMIT 1`,
     )
-    .get(sku, ignore?.varianteId ?? 0) as { id: number } | undefined;
+    .get(empresaId, sku, ignore?.varianteId ?? 0) as { id: number } | undefined;
   return Boolean(variante);
 }
 
 function barcodeUsado(
   db: AppDatabase,
+  empresaId: number,
   codigo: string,
   ignore?: { produtoId?: number; varianteId?: number },
 ): boolean {
   const produto = db
     .prepare(
-      `SELECT id FROM produtos WHERE codigo_barras = ? AND id != ? LIMIT 1`,
+      `SELECT id FROM produtos WHERE empresa_id = ? AND codigo_barras = ? AND id != ? LIMIT 1`,
     )
-    .get(codigo, ignore?.produtoId ?? 0) as { id: number } | undefined;
+    .get(empresaId, codigo, ignore?.produtoId ?? 0) as { id: number } | undefined;
   if (produto) return true;
   const variante = db
     .prepare(
-      `SELECT id FROM produto_variantes WHERE codigo_barras = ? AND id != ? LIMIT 1`,
+      `SELECT v.id FROM produto_variantes v
+        JOIN produtos p ON p.id = v.produto_id
+       WHERE p.empresa_id = ? AND v.codigo_barras = ? AND v.id != ? LIMIT 1`,
     )
-    .get(codigo, ignore?.varianteId ?? 0) as { id: number } | undefined;
+    .get(empresaId, codigo, ignore?.varianteId ?? 0) as { id: number } | undefined;
   return Boolean(variante);
 }
 
 function skuUnico(
   db: AppDatabase,
+  empresaId: number,
   candidato: string,
   ignore?: { produtoId?: number; varianteId?: number },
 ): string {
   const sku = candidato || 'PROD';
-  if (!skuUsado(db, sku, ignore)) return sku;
+  if (!skuUsado(db, empresaId, sku, ignore)) return sku;
   let n = 2;
-  while (skuUsado(db, `${candidato}${n}`, ignore)) n += 1;
+  while (skuUsado(db, empresaId, `${candidato}${n}`, ignore)) n += 1;
   return `${candidato}${n}`;
 }
 
 function barcodeUnico(
   db: AppDatabase,
+  empresaId: number,
   candidato: string | undefined,
   ignore?: { produtoId?: number; varianteId?: number },
 ): string | null {
   if (!candidato) return null;
-  if (!barcodeUsado(db, candidato, ignore)) return candidato;
+  if (!barcodeUsado(db, empresaId, candidato, ignore)) return candidato;
   let n = 2;
-  while (barcodeUsado(db, `${candidato}-${n}`, ignore)) n += 1;
+  while (barcodeUsado(db, empresaId, `${candidato}-${n}`, ignore)) n += 1;
   return `${candidato}-${n}`;
 }
 
@@ -306,7 +315,7 @@ function combinacoes(cores: string[], tamanhos: string[]): { cor: string; tamanh
 export function createProdutosRouter(db: AppDatabase): Router {
   const router = Router();
 
-  const getStmt = db.prepare('SELECT * FROM produtos WHERE id = ?');
+  const getStmt = db.prepare('SELECT * FROM produtos WHERE id = ? AND empresa_id = ?');
   const listVariantesStmt = db.prepare(
     `SELECT * FROM produto_variantes WHERE produto_id = ? ORDER BY cor, tamanho, id`,
   );
@@ -331,8 +340,8 @@ export function createProdutosRouter(db: AppDatabase): Router {
       + (SELECT COUNT(*) FROM pedido_itens WHERE variante_id = ?) AS n`,
   );
 
-  function carregarProduto(id: number): Produto | undefined {
-    const row = getStmt.get(id) as ProdutoRow | undefined;
+  function carregarProduto(id: number, empresaId: number): Produto | undefined {
+    const row = getStmt.get(id, empresaId) as ProdutoRow | undefined;
     if (!row) return undefined;
     return mapProduto(row, listVariantesStmt.all(id) as ProdutoVariante[]);
   }
@@ -384,6 +393,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
 
   function gerarVariantes(
     produtoId: number,
+    empresaId: number,
     cores: string[],
     tamanhos: string[],
     baseSku: string | undefined,
@@ -397,10 +407,10 @@ export function createProdutosRouter(db: AppDatabase): Router {
 
     const insert = db.prepare(
       `INSERT INTO produto_variantes (
-         produto_id, cor, tamanho, sku, codigo_barras, preco_venda, preco_atacado,
+         empresa_id, produto_id, cor, tamanho, sku, codigo_barras, preco_venda, preco_atacado,
          preco_custo, estoque_minimo, status
        ) VALUES (
-         @produto_id, @cor, @tamanho, @sku, @codigo_barras, @preco_venda, @preco_atacado,
+         @empresa_id, @produto_id, @cor, @tamanho, @sku, @codigo_barras, @preco_venda, @preco_atacado,
          @preco_custo, @estoque_minimo, @status
        )`,
     );
@@ -429,10 +439,10 @@ export function createProdutosRouter(db: AppDatabase): Router {
         override?.sku ||
         atual?.sku ||
         [baseSku || 'PROD', slug(combo.cor) || 'COR', slug(combo.tamanho) || 'TAM'].join('-');
-      if (override?.sku && skuUsado(db, override.sku, { produtoId, varianteId: atual?.id })) {
+      if (override?.sku && skuUsado(db, empresaId, override.sku, { produtoId, varianteId: atual?.id })) {
         throw new ConflitoCadastro('SKU já cadastrado');
       }
-      const sku = skuUnico(db, skuCand, {
+      const sku = skuUnico(db, empresaId, skuCand, {
         produtoId,
         varianteId: atual?.id,
       });
@@ -444,11 +454,11 @@ export function createProdutosRouter(db: AppDatabase): Router {
           : undefined);
       if (
         override?.codigo_barras &&
-        barcodeUsado(db, override.codigo_barras, { produtoId, varianteId: atual?.id })
+        barcodeUsado(db, empresaId, override.codigo_barras, { produtoId, varianteId: atual?.id })
       ) {
         throw new ConflitoCadastro('Código de barras já cadastrado');
       }
-      const codigo_barras = barcodeUnico(db, barcodeCand || undefined, {
+      const codigo_barras = barcodeUnico(db, empresaId, barcodeCand || undefined, {
         produtoId,
         varianteId: atual?.id,
       });
@@ -467,6 +477,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
         });
       } else {
         insert.run({
+          empresa_id: empresaId,
           produto_id: produtoId,
           cor: combo.cor,
           tamanho: combo.tamanho,
@@ -497,6 +508,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'p.empresa_id');
 
     if (q) {
       where.push(
@@ -561,7 +573,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
   });
 
   router.get('/:id', (req, res) => {
-    const produto = carregarProduto(Number(req.params.id));
+    const produto = carregarProduto(Number(req.params.id), empresaDaSessao(req));
     if (!produto) {
       return res.status(404).json({ erro: 'Produto não encontrado' });
     }
@@ -578,10 +590,11 @@ export function createProdutosRouter(db: AppDatabase): Router {
     }
 
     const data = parsed.data;
-    if (data.sku && skuUsado(db, data.sku)) {
+    const empresaId = empresaDaSessao(req);
+    if (data.sku && skuUsado(db, empresaId, data.sku)) {
       return res.status(409).json({ erro: 'SKU já cadastrado' });
     }
-    if (data.codigo_barras && barcodeUsado(db, data.codigo_barras)) {
+    if (data.codigo_barras && barcodeUsado(db, empresaId, data.codigo_barras)) {
       return res.status(409).json({ erro: 'Código de barras já cadastrado' });
     }
 
@@ -590,21 +603,22 @@ export function createProdutosRouter(db: AppDatabase): Router {
       const info = db
         .prepare(
           `INSERT INTO produtos (
-             sku, nome, descricao, categoria, subcategoria, marca, genero, colecao,
+             empresa_id, sku, nome, descricao, categoria, subcategoria, marca, genero, colecao,
              cores, tamanhos, codigo_barras, unidade, preco_venda, preco_atacado,
              preco_custo, status, estoque_minimo, imagem, observacoes
            ) VALUES (
-             @sku, @nome, @descricao, @categoria, @subcategoria, @marca, @genero, @colecao,
+             @empresa_id, @sku, @nome, @descricao, @categoria, @subcategoria, @marca, @genero, @colecao,
              @cores, @tamanhos, @codigo_barras, @unidade, @preco_venda, @preco_atacado,
              @preco_custo, @status, @estoque_minimo, @imagem, @observacoes
            )`,
         )
-        .run(row);
+        .run({ ...row, empresa_id: empresaId });
       const id = Number(info.lastInsertRowid);
       const cores = data.cores ?? [];
       const tamanhos = data.tamanhos ?? [];
       gerarVariantes(
         id,
+        empresaId,
         cores,
         tamanhos,
         data.sku || slug(data.nome),
@@ -616,7 +630,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
 
     try {
       const id = criar();
-      res.status(201).json(carregarProduto(id));
+      res.status(201).json(carregarProduto(id, empresaId));
     } catch (err) {
       if (isConflito(err)) {
         return res.status(409).json({ erro: err.message });
@@ -637,15 +651,17 @@ export function createProdutosRouter(db: AppDatabase): Router {
       });
     }
     const id = Number(req.params.id);
+    const empresaId = empresaDaSessao(req);
     const info = db
       .prepare(
-        `UPDATE produtos SET status = @status, atualizado_em = datetime('now') WHERE id = @id`,
+        `UPDATE produtos SET status = @status, atualizado_em = datetime('now')
+          WHERE id = @id AND empresa_id = @empresa_id`,
       )
-      .run({ id, status: parsed.data.status });
+      .run({ id, empresa_id: empresaId, status: parsed.data.status });
     if (info.changes === 0) {
       return res.status(404).json({ erro: 'Produto não encontrado' });
     }
-    res.json(carregarProduto(id));
+    res.json(carregarProduto(id, empresaId));
   });
 
   router.post('/:id/variantes', (req, res) => {
@@ -656,7 +672,8 @@ export function createProdutosRouter(db: AppDatabase): Router {
         detalhes: parsed.error.flatten().fieldErrors,
       });
     }
-    const produto = carregarProduto(Number(req.params.id));
+    const empresaId = empresaDaSessao(req);
+    const produto = carregarProduto(Number(req.params.id), empresaId);
     if (!produto) {
       return res.status(404).json({ erro: 'Produto não encontrado' });
     }
@@ -675,17 +692,18 @@ export function createProdutosRouter(db: AppDatabase): Router {
       [produto.sku || slug(produto.nome), slug(data.cor) || 'COR', slug(data.tamanho) || 'TAM'].join(
         '-',
       );
-    if (skuUsado(db, data.sku || skuCand, { produtoId: produto.id })) {
+    if (skuUsado(db, empresaId, data.sku || skuCand, { produtoId: produto.id })) {
       if (data.sku) return res.status(409).json({ erro: 'SKU já cadastrado' });
     }
-    if (data.codigo_barras && barcodeUsado(db, data.codigo_barras, { produtoId: produto.id })) {
+    if (data.codigo_barras && barcodeUsado(db, empresaId, data.codigo_barras, { produtoId: produto.id })) {
       return res.status(409).json({ erro: 'Código de barras já cadastrado' });
     }
 
     try {
-      const sku = skuUnico(db, skuCand, { produtoId: produto.id });
+      const sku = skuUnico(db, empresaId, skuCand, { produtoId: produto.id });
       const codigo_barras = barcodeUnico(
         db,
+        empresaId,
         data.codigo_barras ||
           (produto.codigo_barras
             ? `${produto.codigo_barras}-${slug(data.cor)}${slug(data.tamanho)}`
@@ -694,10 +712,11 @@ export function createProdutosRouter(db: AppDatabase): Router {
       );
       db.prepare(
         `INSERT INTO produto_variantes (
-           produto_id, cor, tamanho, sku, codigo_barras, preco_venda, preco_atacado,
+           empresa_id, produto_id, cor, tamanho, sku, codigo_barras, preco_venda, preco_atacado,
            preco_custo, estoque_minimo, status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
+        empresaId,
         produto.id,
         data.cor,
         data.tamanho,
@@ -719,10 +738,11 @@ export function createProdutosRouter(db: AppDatabase): Router {
         ? produto.tamanhos
         : [...produto.tamanhos, data.tamanho];
       db.prepare(
-        `UPDATE produtos SET cores = ?, tamanhos = ?, atualizado_em = datetime('now') WHERE id = ?`,
-      ).run(JSON.stringify(cores), JSON.stringify(tamanhos), produto.id);
+        `UPDATE produtos SET cores = ?, tamanhos = ?, atualizado_em = datetime('now')
+          WHERE id = ? AND empresa_id = ?`,
+      ).run(JSON.stringify(cores), JSON.stringify(tamanhos), produto.id, empresaId);
 
-      res.status(201).json(carregarProduto(produto.id));
+      res.status(201).json(carregarProduto(produto.id, empresaId));
     } catch (err) {
       if (erroDuplicidade(err)) {
         return res.status(409).json({ erro: 'SKU ou código de barras já cadastrado' });
@@ -741,6 +761,10 @@ export function createProdutosRouter(db: AppDatabase): Router {
     }
     const produtoId = Number(req.params.id);
     const varianteId = Number(req.params.varianteId);
+    const empresaId = empresaDaSessao(req);
+    if (!carregarProduto(produtoId, empresaId)) {
+      return res.status(404).json({ erro: 'Produto não encontrado' });
+    }
     const atual = getVarianteStmt.get(varianteId, produtoId) as ProdutoVariante | undefined;
     if (!atual) {
       return res.status(404).json({ erro: 'Variante não encontrada' });
@@ -749,10 +773,10 @@ export function createProdutosRouter(db: AppDatabase): Router {
     const sku = data.sku ?? atual.sku;
     const codigo_barras =
       data.codigo_barras !== undefined ? nulo(data.codigo_barras) : atual.codigo_barras;
-    if (skuUsado(db, sku, { produtoId, varianteId })) {
+    if (skuUsado(db, empresaId, sku, { produtoId, varianteId })) {
       return res.status(409).json({ erro: 'SKU já cadastrado' });
     }
-    if (codigo_barras && barcodeUsado(db, codigo_barras, { produtoId, varianteId })) {
+    if (codigo_barras && barcodeUsado(db, empresaId, codigo_barras, { produtoId, varianteId })) {
       return res.status(409).json({ erro: 'Código de barras já cadastrado' });
     }
 
@@ -773,12 +797,13 @@ export function createProdutosRouter(db: AppDatabase): Router {
 
     try {
       db.prepare(
-        `UPDATE produto_variantes SET ${sets}, atualizado_em = datetime('now') WHERE id = @id`,
-      ).run(row);
-      db.prepare(`UPDATE produtos SET atualizado_em = datetime('now') WHERE id = ?`).run(
-        produtoId,
-      );
-      res.json(carregarProduto(produtoId));
+        `UPDATE produto_variantes SET ${sets}, atualizado_em = datetime('now')
+          WHERE id = @id AND empresa_id = @empresa_id`,
+      ).run({ ...row, empresa_id: empresaId });
+      db.prepare(
+        `UPDATE produtos SET atualizado_em = datetime('now') WHERE id = ? AND empresa_id = ?`,
+      ).run(produtoId, empresaId);
+      res.json(carregarProduto(produtoId, empresaId));
     } catch (err) {
       if (erroDuplicidade(err)) {
         return res.status(409).json({ erro: 'SKU, código de barras ou combinação já cadastrada' });
@@ -790,6 +815,10 @@ export function createProdutosRouter(db: AppDatabase): Router {
   router.delete('/:id/variantes/:varianteId', (req, res) => {
     const produtoId = Number(req.params.id);
     const varianteId = Number(req.params.varianteId);
+    const empresaId = empresaDaSessao(req);
+    if (!carregarProduto(produtoId, empresaId)) {
+      return res.status(404).json({ erro: 'Produto não encontrado' });
+    }
     const atual = getVarianteStmt.get(varianteId, produtoId) as ProdutoVariante | undefined;
     if (!atual) {
       return res.status(404).json({ erro: 'Variante não encontrada' });
@@ -803,8 +832,13 @@ export function createProdutosRouter(db: AppDatabase): Router {
         vinculos: vinculos.n,
       });
     }
-    db.prepare('DELETE FROM produto_variantes WHERE id = ?').run(varianteId);
-    db.prepare(`UPDATE produtos SET atualizado_em = datetime('now') WHERE id = ?`).run(produtoId);
+    db.prepare('DELETE FROM produto_variantes WHERE id = ? AND empresa_id = ?').run(
+      varianteId,
+      empresaId,
+    );
+    db.prepare(
+      `UPDATE produtos SET atualizado_em = datetime('now') WHERE id = ? AND empresa_id = ?`,
+    ).run(produtoId, empresaId);
     res.status(204).send();
   });
 
@@ -818,16 +852,17 @@ export function createProdutosRouter(db: AppDatabase): Router {
     }
 
     const id = Number(req.params.id);
-    const atual = carregarProduto(id);
+    const empresaId = empresaDaSessao(req);
+    const atual = carregarProduto(id, empresaId);
     if (!atual) {
       return res.status(404).json({ erro: 'Produto não encontrado' });
     }
 
     const data = parsed.data;
-    if (data.sku && skuUsado(db, data.sku, { produtoId: id })) {
+    if (data.sku && skuUsado(db, empresaId, data.sku, { produtoId: id })) {
       return res.status(409).json({ erro: 'SKU já cadastrado' });
     }
-    if (data.codigo_barras && barcodeUsado(db, data.codigo_barras, { produtoId: id })) {
+    if (data.codigo_barras && barcodeUsado(db, empresaId, data.codigo_barras, { produtoId: id })) {
       return res.status(409).json({ erro: 'Código de barras já cadastrado' });
     }
 
@@ -840,12 +875,14 @@ export function createProdutosRouter(db: AppDatabase): Router {
       const aplicar = db.transaction(() => {
         if (sets) {
           db.prepare(
-            `UPDATE produtos SET ${sets}, atualizado_em = datetime('now') WHERE id = @id`,
-          ).run({ ...row, id });
+            `UPDATE produtos SET ${sets}, atualizado_em = datetime('now')
+              WHERE id = @id AND empresa_id = @empresa_id`,
+          ).run({ ...row, id, empresa_id: empresaId });
         }
-        const atualizado = carregarProduto(id)!;
+        const atualizado = carregarProduto(id, empresaId)!;
         gerarVariantes(
           id,
+          empresaId,
           atualizado.cores,
           atualizado.tamanhos,
           atualizado.sku || slug(atualizado.nome),
@@ -854,7 +891,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
         );
       });
       aplicar();
-      res.json(carregarProduto(id));
+      res.json(carregarProduto(id, empresaId));
     } catch (err) {
       if (isConflito(err)) {
         return res.status(409).json({ erro: err.message });
@@ -868,7 +905,8 @@ export function createProdutosRouter(db: AppDatabase): Router {
 
   router.delete('/:id', (req, res) => {
     const id = Number(req.params.id);
-    const produto = carregarProduto(id);
+    const empresaId = empresaDaSessao(req);
+    const produto = carregarProduto(id, empresaId);
     if (!produto) {
       return res.status(404).json({ erro: 'Produto não encontrado' });
     }
@@ -881,7 +919,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
       });
     }
 
-    db.prepare('DELETE FROM produtos WHERE id = ?').run(id);
+    db.prepare('DELETE FROM produtos WHERE id = ? AND empresa_id = ?').run(id, empresaId);
     res.status(204).send();
   });
 

@@ -2,6 +2,7 @@ import { Router, type Response } from 'express';
 import type { AppDatabase } from './db.js';
 import { arredondarDinheiro, statusEfetivoLancamento } from './financeiro.js';
 import { STATUS_PEDIDO } from './pedidos.js';
+import { aplicarEmpresa } from './tenant.js';
 
 function periodo(req: { query: Record<string, unknown> }) {
   const de = String(req.query.de ?? '').trim();
@@ -39,6 +40,7 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
     const porPagina = Math.min(200, Math.max(1, Number(req.query.por_pagina ?? 20) || 20));
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 's.empresa_id');
     if (q) {
       where.push(
         `(ifnull(p.nome,'') LIKE @q OR ifnull(m.nome,'') LIKE @q OR ifnull(v.sku,'') LIKE @q
@@ -101,9 +103,10 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
       .prepare(
         `SELECT mv.tipo, COUNT(*) AS n, ifnull(SUM(mv.quantidade),0) AS quantidade
          FROM estoque_movimentos mv
+         WHERE mv.empresa_id = @empresa_id
          GROUP BY mv.tipo`,
       )
-      .all() as Array<{ tipo: string; n: number; quantidade: number }>;
+      .all(params) as Array<{ tipo: string; n: number; quantidade: number }>;
 
     if (querCsv(req)) {
       return enviarCsv(
@@ -151,6 +154,7 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
     const porPagina = Math.min(200, Math.max(1, Number(req.query.por_pagina ?? 20) || 20));
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'c.empresa_id');
     if (de) {
       where.push('date(c.data_emissao) >= date(@de)');
       params.de = de;
@@ -225,7 +229,8 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
   router.get('/financeiro', (req, res) => {
     const { de, ate } = periodo(req);
     const where: string[] = [];
-    const params: Record<string, string> = {};
+    const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'l.empresa_id');
     if (de) {
       where.push(`date(ifnull(l.vencimento, l.criado_em)) >= date(@de)`);
       params.de = de;
@@ -287,6 +292,7 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
     const porPagina = Math.min(200, Math.max(1, Number(req.query.por_pagina ?? 20) || 20));
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'o.empresa_id');
     if (de) {
       where.push(`date(o.criado_em) >= date(@de)`);
       params.de = de;
@@ -371,8 +377,9 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
 
   router.get('/custos', (req, res) => {
     const { de, ate } = periodo(req);
-    const params: Record<string, string> = {};
+    const params: Record<string, string | number> = {};
     const whereCompra: string[] = [];
+    aplicarEmpresa(whereCompra, params, req, 'c.empresa_id');
     if (de) {
       whereCompra.push('date(c.data_emissao) >= date(@de)');
       params.de = de;
@@ -393,9 +400,9 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
           `SELECT ifnull(SUM(s.quantidade * ifnull(m.custo,0)),0) AS n
            FROM estoque_saldos s
            JOIN materias_primas m ON m.id = s.materia_prima_id
-           WHERE s.tipo = 'materia'`,
+           WHERE s.tipo = 'materia' AND s.empresa_id = @empresa_id`,
         )
-        .get() as { n: number }
+        .get(params) as { n: number }
     ).n;
     const consumoOp = (
       db
@@ -403,7 +410,7 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
           `SELECT ifnull(SUM(mv.quantidade * ifnull(m.custo,0)),0) AS n
            FROM estoque_movimentos mv
            JOIN materias_primas m ON m.id = mv.materia_prima_id
-           WHERE mv.tipo = 'saida' ${de ? 'AND date(mv.criado_em) >= date(@de)' : ''}
+           WHERE mv.tipo = 'saida' AND mv.empresa_id = @empresa_id ${de ? 'AND date(mv.criado_em) >= date(@de)' : ''}
              ${ate ? 'AND date(mv.criado_em) <= date(@ate)' : ''}`,
         )
         .get(params) as { n: number }
@@ -450,6 +457,7 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
       const porPagina = Math.min(200, Math.max(1, Number(req.query.por_pagina ?? 20) || 20));
       const where: string[] = [];
       const params: Record<string, string | number> = {};
+      aplicarEmpresa(where, params, req, 'p.empresa_id');
       if (de) {
         where.push('date(p.data_pedido) >= date(@de)');
         params.de = de;
@@ -578,10 +586,13 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
 
   router.get('/resumo', (req, res) => {
     const { de, ate } = periodo(req);
-    const params: Record<string, string> = {};
+    const params: Record<string, string | number> = {};
     const whereOp: string[] = [];
     const whereCompra: string[] = [];
     const wherePedido: string[] = [`status != 'cancelado'`];
+    aplicarEmpresa(whereOp, params, req);
+    whereCompra.unshift('empresa_id = @empresa_id');
+    wherePedido.unshift('empresa_id = @empresa_id');
     if (de) {
       whereOp.push('date(criado_em) >= date(@de)');
       whereCompra.push('date(data_emissao) >= date(@de)');
@@ -594,8 +605,8 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
       wherePedido.push('date(data_pedido) <= date(@ate)');
       params.ate = ate;
     }
-    const fOp = whereOp.length ? `WHERE ${whereOp.join(' AND ')}` : '';
-    const fC = whereCompra.length ? `WHERE ${whereCompra.join(' AND ')}` : '';
+    const fOp = `WHERE ${whereOp.join(' AND ')}`;
+    const fC = `WHERE ${whereCompra.join(' AND ')}`;
     const fP = `WHERE ${wherePedido.join(' AND ')}`;
 
     const ops = db.prepare(`SELECT COUNT(*) AS n, ifnull(SUM(quantidade),0) AS q FROM ordens_producao ${fOp}`).get(params) as {
@@ -622,17 +633,18 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
              LEFT JOIN produtos p ON p.id = s.produto_id
              LEFT JOIN produto_variantes v ON v.id = s.variante_id
              LEFT JOIN materias_primas m ON m.id = s.materia_prima_id
+             WHERE s.empresa_id = @empresa_id
            ) WHERE quantidade < minimo`,
         )
-        .get() as { n: number }
+        .get(params) as { n: number }
     ).n;
     const pagar = (
       db
         .prepare(
           `SELECT ifnull(SUM(valor),0) AS n FROM financeiro_lancamentos
-            WHERE tipo = 'pagar' AND status = 'pendente'`,
+            WHERE tipo = 'pagar' AND status = 'pendente' AND empresa_id = @empresa_id`,
         )
-        .get() as { n: number }
+        .get(params) as { n: number }
     ).n;
 
     res.json({

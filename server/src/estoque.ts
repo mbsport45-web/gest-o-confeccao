@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const TIPOS_SALDO = ['variante', 'produto', 'materia'] as const;
 export const TIPOS_MOVIMENTO = ['entrada', 'saida', 'ajuste'] as const;
@@ -126,48 +127,53 @@ export type ResultadoMovimentoEstoque =
 
 export function obterOuCriarSaldoEstoque(
   db: AppDatabase,
+  empresaId: number,
   ref: { variante_id?: number; produto_id?: number; materia_prima_id?: number },
 ): { ok: true; saldoId: number } | { ok: false; status: number; erro: string } {
   if (ref.variante_id) {
     const variante = db
-      .prepare('SELECT id, produto_id FROM produto_variantes WHERE id = ?')
-      .get(ref.variante_id) as { id: number; produto_id: number } | undefined;
+      .prepare(
+        `SELECT v.id, v.produto_id FROM produto_variantes v
+          JOIN produtos p ON p.id = v.produto_id
+         WHERE v.id = ? AND p.empresa_id = ?`,
+      )
+      .get(ref.variante_id, empresaId) as { id: number; produto_id: number } | undefined;
     if (!variante) return { ok: false, status: 404, erro: 'Variante não encontrada' };
     const atual = db
-      .prepare('SELECT id FROM estoque_saldos WHERE variante_id = ?')
-      .get(variante.id) as { id: number } | undefined;
+      .prepare('SELECT id FROM estoque_saldos WHERE variante_id = ? AND empresa_id = ?')
+      .get(variante.id, empresaId) as { id: number } | undefined;
     if (atual) return { ok: true, saldoId: atual.id };
     const info = db
       .prepare(
-        `INSERT INTO estoque_saldos (tipo, produto_id, variante_id, materia_prima_id, quantidade)
-         VALUES ('variante', @produto_id, @variante_id, NULL, 0)`,
+        `INSERT INTO estoque_saldos (empresa_id, tipo, produto_id, variante_id, materia_prima_id, quantidade)
+         VALUES (@empresa_id, 'variante', @produto_id, @variante_id, NULL, 0)`,
       )
-      .run({ produto_id: variante.produto_id, variante_id: variante.id });
+      .run({ empresa_id: empresaId, produto_id: variante.produto_id, variante_id: variante.id });
     return { ok: true, saldoId: Number(info.lastInsertRowid) };
   }
 
   if (ref.materia_prima_id) {
     const materia = db
-      .prepare('SELECT id FROM materias_primas WHERE id = ?')
-      .get(ref.materia_prima_id) as { id: number } | undefined;
+      .prepare('SELECT id FROM materias_primas WHERE id = ? AND empresa_id = ?')
+      .get(ref.materia_prima_id, empresaId) as { id: number } | undefined;
     if (!materia) return { ok: false, status: 404, erro: 'Matéria-prima não encontrada' };
     const atual = db
-      .prepare('SELECT id FROM estoque_saldos WHERE materia_prima_id = ?')
-      .get(materia.id) as { id: number } | undefined;
+      .prepare('SELECT id FROM estoque_saldos WHERE materia_prima_id = ? AND empresa_id = ?')
+      .get(materia.id, empresaId) as { id: number } | undefined;
     if (atual) return { ok: true, saldoId: atual.id };
     const info = db
       .prepare(
-        `INSERT INTO estoque_saldos (tipo, produto_id, variante_id, materia_prima_id, quantidade)
-         VALUES ('materia', NULL, NULL, @materia_prima_id, 0)`,
+        `INSERT INTO estoque_saldos (empresa_id, tipo, produto_id, variante_id, materia_prima_id, quantidade)
+         VALUES (@empresa_id, 'materia', NULL, NULL, @materia_prima_id, 0)`,
       )
-      .run({ materia_prima_id: materia.id });
+      .run({ empresa_id: empresaId, materia_prima_id: materia.id });
     return { ok: true, saldoId: Number(info.lastInsertRowid) };
   }
 
   if (ref.produto_id) {
     const produto = db
-      .prepare('SELECT id FROM produtos WHERE id = ?')
-      .get(ref.produto_id) as { id: number } | undefined;
+      .prepare('SELECT id FROM produtos WHERE id = ? AND empresa_id = ?')
+      .get(ref.produto_id, empresaId) as { id: number } | undefined;
     if (!produto) return { ok: false, status: 404, erro: 'Produto não encontrado' };
     const nVar = (
       db
@@ -183,16 +189,17 @@ export function obterOuCriarSaldoEstoque(
     }
     const atual = db
       .prepare(
-        `SELECT id FROM estoque_saldos WHERE tipo = 'produto' AND produto_id = ? AND variante_id IS NULL`,
+        `SELECT id FROM estoque_saldos
+          WHERE tipo = 'produto' AND produto_id = ? AND variante_id IS NULL AND empresa_id = ?`,
       )
-      .get(produto.id) as { id: number } | undefined;
+      .get(produto.id, empresaId) as { id: number } | undefined;
     if (atual) return { ok: true, saldoId: atual.id };
     const info = db
       .prepare(
-        `INSERT INTO estoque_saldos (tipo, produto_id, variante_id, materia_prima_id, quantidade)
-         VALUES ('produto', @produto_id, NULL, NULL, 0)`,
+        `INSERT INTO estoque_saldos (empresa_id, tipo, produto_id, variante_id, materia_prima_id, quantidade)
+         VALUES (@empresa_id, 'produto', @produto_id, NULL, NULL, 0)`,
       )
-      .run({ produto_id: produto.id });
+      .run({ empresa_id: empresaId, produto_id: produto.id });
     return { ok: true, saldoId: Number(info.lastInsertRowid) };
   }
 
@@ -201,9 +208,10 @@ export function obterOuCriarSaldoEstoque(
 
 export function registrarMovimentoEstoque(
   db: AppDatabase,
+  empresaId: number,
   data: MovimentoEstoqueInput,
 ): ResultadoMovimentoEstoque {
-  const alvo = obterOuCriarSaldoEstoque(db, {
+  const alvo = obterOuCriarSaldoEstoque(db, empresaId, {
     variante_id: data.variante_id,
     produto_id: data.produto_id,
     materia_prima_id: data.materia_prima_id,
@@ -211,14 +219,16 @@ export function registrarMovimentoEstoque(
   if (!alvo.ok) return alvo;
 
   const saldoRow = db
-    .prepare('SELECT * FROM estoque_saldos WHERE id = ?')
-    .get(alvo.saldoId) as {
+    .prepare('SELECT * FROM estoque_saldos WHERE id = ? AND empresa_id = ?')
+    .get(alvo.saldoId, empresaId) as {
     id: number;
     quantidade: number;
     produto_id: number | null;
     variante_id: number | null;
     materia_prima_id: number | null;
   };
+  if (!saldoRow) return { ok: false, status: 404, erro: 'Saldo de estoque não encontrado' };
+
   const anterior = saldoRow.quantidade;
   let posterior = anterior;
   if (data.tipo === 'entrada') posterior = anterior + data.quantidade;
@@ -230,19 +240,21 @@ export function registrarMovimentoEstoque(
   }
 
   db.prepare(
-    `UPDATE estoque_saldos SET quantidade = @quantidade, atualizado_em = datetime('now') WHERE id = @id`,
-  ).run({ id: saldoRow.id, quantidade: posterior });
+    `UPDATE estoque_saldos SET quantidade = @quantidade, atualizado_em = datetime('now')
+      WHERE id = @id AND empresa_id = @empresa_id`,
+  ).run({ id: saldoRow.id, empresa_id: empresaId, quantidade: posterior });
   const info = db
     .prepare(
       `INSERT INTO estoque_movimentos (
-         saldo_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, observacoes,
+         empresa_id, saldo_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, observacoes,
          produto_id, variante_id, materia_prima_id
        ) VALUES (
-         @saldo_id, @tipo, @quantidade, @saldo_anterior, @saldo_posterior, @motivo, @observacoes,
+         @empresa_id, @saldo_id, @tipo, @quantidade, @saldo_anterior, @saldo_posterior, @motivo, @observacoes,
          @produto_id, @variante_id, @materia_prima_id
        )`,
     )
     .run({
+      empresa_id: empresaId,
       saldo_id: saldoRow.id,
       tipo: data.tipo,
       quantidade: data.quantidade,
@@ -257,8 +269,12 @@ export function registrarMovimentoEstoque(
   return { ok: true, movimentoId: Number(info.lastInsertRowid), saldoId: saldoRow.id };
 }
 
-export function mapearSaldoEstoque(db: AppDatabase, id: number): EstoqueSaldo | undefined {
-  const row = db.prepare(`${SALDO_SELECT} WHERE s.id = ?`).get(id) as
+export function mapearSaldoEstoque(
+  db: AppDatabase,
+  id: number,
+  empresaId: number,
+): EstoqueSaldo | undefined {
+  const row = db.prepare(`${SALDO_SELECT} WHERE s.id = ? AND s.empresa_id = ?`).get(id, empresaId) as
     | Omit<EstoqueSaldo, 'abaixo_minimo'>
     | undefined;
   return row ? comAbaixo(row) : undefined;
@@ -272,8 +288,8 @@ export function createEstoqueRouter(db: AppDatabase): Router {
   );
   const getMovimento = db.prepare('SELECT * FROM estoque_movimentos WHERE id = ?');
 
-  function mapSaldo(id: number): EstoqueSaldo | undefined {
-    return mapearSaldoEstoque(db, id);
+  function mapSaldo(id: number, empresaId: number): EstoqueSaldo | undefined {
+    return mapearSaldoEstoque(db, id, empresaId);
   }
 
   router.get('/', (req, res) => {
@@ -288,6 +304,7 @@ export function createEstoqueRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 's.empresa_id');
 
     if (q) {
       where.push(
@@ -352,6 +369,7 @@ export function createEstoqueRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'mv.empresa_id');
     if (q) {
       where.push(
         `(ifnull(mv.motivo,'') LIKE @q OR ifnull(p.nome,'') LIKE @q
@@ -405,7 +423,7 @@ export function createEstoqueRouter(db: AppDatabase): Router {
   });
 
   router.get('/:id', (req, res) => {
-    const saldo = mapSaldo(Number(req.params.id));
+    const saldo = mapSaldo(Number(req.params.id), empresaDaSessao(req));
     if (!saldo) {
       return res.status(404).json({ erro: 'Saldo de estoque não encontrado' });
     }
@@ -424,8 +442,9 @@ export function createEstoqueRouter(db: AppDatabase): Router {
     }
 
     const data = parsed.data;
+    const empresaId = empresaDaSessao(req);
     const result = db.transaction(() =>
-      registrarMovimentoEstoque(db, {
+      registrarMovimentoEstoque(db, empresaId, {
         tipo: data.tipo,
         quantidade: data.quantidade,
         variante_id: data.variante_id,
@@ -441,7 +460,7 @@ export function createEstoqueRouter(db: AppDatabase): Router {
     const movimento = getMovimento.get(result.movimentoId) as EstoqueMovimento;
     res.status(201).json({
       movimento,
-      saldo: mapSaldo(movimento.saldo_id),
+      saldo: mapSaldo(movimento.saldo_id, empresaId),
     });
   });
 

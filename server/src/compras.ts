@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { registrarMovimentoEstoque } from './estoque.js';
 import { arredondarDinheiro, sincronizarContaPagarCompra } from './financeiro.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_COMPRA = [
   'rascunho',
@@ -31,6 +32,7 @@ export interface CompraItem {
 
 export interface PedidoCompra {
   id: number;
+  empresa_id: number;
   codigo: string | null;
   fornecedor_id: number;
   data_emissao: string;
@@ -150,55 +152,63 @@ function podeEditarItens(status: StatusCompra): boolean {
 
 export function createComprasRouter(db: AppDatabase): Router {
   const router = Router();
-  const getCompraStmt = db.prepare(`${COMPRA_SELECT} WHERE c.id = ?`);
+  const getCompraStmt = db.prepare(`${COMPRA_SELECT} WHERE c.id = ? AND c.empresa_id = ?`);
   const listItensStmt = db.prepare(`${ITEM_SELECT} WHERE i.compra_id = ? ORDER BY i.id ASC`);
 
   function mapItens(compraId: number): CompraItem[] {
     return listItensStmt.all(compraId) as CompraItem[];
   }
 
-  function mapCompra(id: number, comItens = false): PedidoCompra | undefined {
-    const row = getCompraStmt.get(id) as PedidoCompra | undefined;
+  function mapCompra(id: number, empresaId: number, comItens = false): PedidoCompra | undefined {
+    const row = getCompraStmt.get(id, empresaId) as PedidoCompra | undefined;
     if (!row) return undefined;
     if (comItens) row.itens = mapItens(id);
     return row;
   }
 
-  function recalc(compraId: number) {
+  function recalc(compraId: number, empresaId: number) {
     const itens = db
       .prepare(
         `SELECT ifnull(SUM(total),0) AS subtotal FROM pedido_compra_itens WHERE compra_id = ?`,
       )
       .get(compraId) as { subtotal: number };
     const compra = db
-      .prepare('SELECT desconto, frete FROM pedidos_compra WHERE id = ?')
-      .get(compraId) as { desconto: number; frete: number };
+      .prepare('SELECT desconto, frete FROM pedidos_compra WHERE id = ? AND empresa_id = ?')
+      .get(compraId, empresaId) as { desconto: number; frete: number };
     const subtotal = arredondarDinheiro(itens.subtotal);
     const desconto = Math.min(compra.desconto, subtotal);
     const total = arredondarDinheiro(subtotal - desconto + compra.frete);
     db.prepare(
       `UPDATE pedidos_compra
           SET subtotal = @subtotal, desconto = @desconto, total = @total, atualizado_em = datetime('now')
-        WHERE id = @id`,
-    ).run({ id: compraId, subtotal, desconto, total });
-    const atual = mapCompra(compraId);
+        WHERE id = @id AND empresa_id = @empresa_id`,
+    ).run({ id: compraId, empresa_id: empresaId, subtotal, desconto, total });
+    const atual = mapCompra(compraId, empresaId);
     if (atual) sincronizarContaPagarCompra(db, atual);
     return atual;
   }
 
-  function validarItemAlvo(item: z.infer<typeof itemSchema>): string | null {
+  function validarItemAlvo(item: z.infer<typeof itemSchema>, empresaId: number): string | null {
     if (item.materia_prima_id) {
-      const m = db.prepare('SELECT id FROM materias_primas WHERE id = ?').get(item.materia_prima_id);
+      const m = db
+        .prepare('SELECT id FROM materias_primas WHERE id = ? AND empresa_id = ?')
+        .get(item.materia_prima_id, empresaId);
       return m ? null : 'Matéria-prima não encontrada';
     }
     if (item.variante_id) {
       const v = db
-        .prepare('SELECT id, produto_id FROM produto_variantes WHERE id = ?')
-        .get(item.variante_id) as { id: number; produto_id: number } | undefined;
+        .prepare(
+          `SELECT v.id, v.produto_id FROM produto_variantes v
+            JOIN produtos p ON p.id = v.produto_id
+           WHERE v.id = ? AND p.empresa_id = ?`,
+        )
+        .get(item.variante_id, empresaId) as { id: number; produto_id: number } | undefined;
       return v ? null : 'Variante não encontrada';
     }
     if (item.produto_id) {
-      const p = db.prepare('SELECT id FROM produtos WHERE id = ?').get(item.produto_id);
+      const p = db
+        .prepare('SELECT id FROM produtos WHERE id = ? AND empresa_id = ?')
+        .get(item.produto_id, empresaId);
       if (!p) return 'Produto não encontrado';
       const nVar = (
         db
@@ -211,8 +221,8 @@ export function createComprasRouter(db: AppDatabase): Router {
     return 'Informe o item';
   }
 
-  function inserirItem(compraId: number, item: z.infer<typeof itemSchema>) {
-    const erro = validarItemAlvo(item);
+  function inserirItem(compraId: number, empresaId: number, item: z.infer<typeof itemSchema>) {
+    const erro = validarItemAlvo(item, empresaId);
     if (erro) throw Object.assign(new Error(erro), { status: 404 });
     const total = arredondarDinheiro(item.quantidade * item.custo_unitario);
     let produtoId = item.produto_id ?? null;
@@ -225,14 +235,15 @@ export function createComprasRouter(db: AppDatabase): Router {
     const info = db
       .prepare(
         `INSERT INTO pedido_compra_itens (
-           compra_id, materia_prima_id, produto_id, variante_id,
+           empresa_id, compra_id, materia_prima_id, produto_id, variante_id,
            quantidade, quantidade_recebida, custo_unitario, total, unidade
          ) VALUES (
-           @compra_id, @materia_prima_id, @produto_id, @variante_id,
+           @empresa_id, @compra_id, @materia_prima_id, @produto_id, @variante_id,
            @quantidade, 0, @custo_unitario, @total, @unidade
          )`,
       )
       .run({
+        empresa_id: empresaId,
         compra_id: compraId,
         materia_prima_id: item.materia_prima_id ?? null,
         produto_id: produtoId,
@@ -259,6 +270,7 @@ export function createComprasRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'c.empresa_id');
     if (q) {
       where.push(
         `(ifnull(c.codigo,'') LIKE @q OR f.nome LIKE @q OR ifnull(c.observacoes,'') LIKE @q)`,
@@ -302,7 +314,7 @@ export function createComprasRouter(db: AppDatabase): Router {
   });
 
   router.get('/:id', (req, res) => {
-    const compra = mapCompra(Number(req.params.id), true);
+    const compra = mapCompra(Number(req.params.id), empresaDaSessao(req), true);
     if (!compra) return res.status(404).json({ erro: 'Compra não encontrada' });
     res.json(compra);
   });
@@ -317,9 +329,10 @@ export function createComprasRouter(db: AppDatabase): Router {
       });
     }
     const data = parsed.data;
+    const empresaId = empresaDaSessao(req);
     const fornecedor = db
-      .prepare('SELECT id FROM fornecedores WHERE id = ?')
-      .get(data.fornecedor_id);
+      .prepare('SELECT id FROM fornecedores WHERE id = ? AND empresa_id = ?')
+      .get(data.fornecedor_id, empresaId);
     if (!fornecedor) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
     if (data.status && data.status !== 'rascunho' && data.status !== 'aberta') {
       return res.status(400).json({ erro: 'Nova compra deve nascer como rascunho ou aberta' });
@@ -333,14 +346,15 @@ export function createComprasRouter(db: AppDatabase): Router {
         const info = db
           .prepare(
             `INSERT INTO pedidos_compra (
-               codigo, fornecedor_id, data_emissao, data_prevista, status, observacoes,
+               empresa_id, codigo, fornecedor_id, data_emissao, data_prevista, status, observacoes,
                desconto, frete, forma_pagamento, condicao_pagamento, vencimento
              ) VALUES (
-               @codigo, @fornecedor_id, @data_emissao, @data_prevista, @status, @observacoes,
+               @empresa_id, @codigo, @fornecedor_id, @data_emissao, @data_prevista, @status, @observacoes,
                @desconto, @frete, @forma_pagamento, @condicao_pagamento, @vencimento
              )`,
           )
           .run({
+            empresa_id: empresaId,
             codigo: data.codigo ?? null,
             fornecedor_id: data.fornecedor_id,
             data_emissao: data.data_emissao ?? hoje(),
@@ -355,17 +369,20 @@ export function createComprasRouter(db: AppDatabase): Router {
           });
         const id = Number(info.lastInsertRowid);
         if (!data.codigo) {
-          db.prepare('UPDATE pedidos_compra SET codigo = @codigo WHERE id = @id').run({
+          db.prepare(
+            'UPDATE pedidos_compra SET codigo = @codigo WHERE id = @id AND empresa_id = @empresa_id',
+          ).run({
             id,
+            empresa_id: empresaId,
             codigo: `CP-${String(id).padStart(4, '0')}`,
           });
         }
-        for (const item of data.itens ?? []) inserirItem(id, item);
-        recalc(id);
+        for (const item of data.itens ?? []) inserirItem(id, empresaId, item);
+        recalc(id, empresaId);
         return id;
       });
       const id = criar();
-      res.status(201).json(mapCompra(id, true));
+      res.status(201).json(mapCompra(id, empresaId, true));
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       if (err instanceof Error && /UNIQUE/i.test(err.message)) {
@@ -377,7 +394,8 @@ export function createComprasRouter(db: AppDatabase): Router {
 
   router.patch('/:id', (req, res) => {
     const id = Number(req.params.id);
-    const atual = mapCompra(id, true);
+    const empresaId = empresaDaSessao(req);
+    const atual = mapCompra(id, empresaId, true);
     if (!atual) return res.status(404).json({ erro: 'Compra não encontrada' });
     const parsed = atualizarCompraSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -419,7 +437,9 @@ export function createComprasRouter(db: AppDatabase): Router {
       return res.status(409).json({ erro: 'Itens só podem ser substituídos em rascunho' });
     }
     if (data.fornecedor_id) {
-      const f = db.prepare('SELECT id FROM fornecedores WHERE id = ?').get(data.fornecedor_id);
+      const f = db
+        .prepare('SELECT id FROM fornecedores WHERE id = ? AND empresa_id = ?')
+        .get(data.fornecedor_id, empresaId);
       if (!f) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
     }
 
@@ -439,9 +459,10 @@ export function createComprasRouter(db: AppDatabase): Router {
              vencimento = @vencimento,
              codigo = @codigo,
              atualizado_em = datetime('now')
-           WHERE id = @id`,
+           WHERE id = @id AND empresa_id = @empresa_id`,
         ).run({
           id,
+          empresa_id: empresaId,
           fornecedor_id: data.fornecedor_id ?? atual.fornecedor_id,
           data_emissao: data.data_emissao ?? atual.data_emissao,
           data_prevista: data.data_prevista !== undefined ? data.data_prevista ?? null : atual.data_prevista,
@@ -460,11 +481,11 @@ export function createComprasRouter(db: AppDatabase): Router {
         });
         if (data.itens) {
           db.prepare('DELETE FROM pedido_compra_itens WHERE compra_id = ?').run(id);
-          for (const item of data.itens) inserirItem(id, item);
+          for (const item of data.itens) inserirItem(id, empresaId, item);
         }
-        recalc(id);
+        recalc(id, empresaId);
       })();
-      res.json(mapCompra(id, true));
+      res.json(mapCompra(id, empresaId, true));
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       return res.status(status).json({ erro: (err as Error).message });
@@ -472,7 +493,7 @@ export function createComprasRouter(db: AppDatabase): Router {
   });
 
   router.post('/:id/itens', (req, res) => {
-    const compra = mapCompra(Number(req.params.id));
+    const compra = mapCompra(Number(req.params.id), empresaDaSessao(req));
     if (!compra) return res.status(404).json({ erro: 'Compra não encontrada' });
     if (!podeEditarItens(compra.status)) {
       return res.status(409).json({ erro: 'Itens só podem ser incluídos em rascunho' });
@@ -487,10 +508,10 @@ export function createComprasRouter(db: AppDatabase): Router {
     }
     try {
       db.transaction(() => {
-        inserirItem(compra.id, parsed.data);
-        recalc(compra.id);
+        inserirItem(compra.id, compra.empresa_id, parsed.data);
+        recalc(compra.id, compra.empresa_id);
       })();
-      res.status(201).json(mapCompra(compra.id, true));
+      res.status(201).json(mapCompra(compra.id, compra.empresa_id, true));
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       return res.status(status).json({ erro: (err as Error).message });
@@ -498,7 +519,7 @@ export function createComprasRouter(db: AppDatabase): Router {
   });
 
   router.patch('/:id/itens/:itemId', (req, res) => {
-    const compra = mapCompra(Number(req.params.id));
+    const compra = mapCompra(Number(req.params.id), empresaDaSessao(req));
     if (!compra) return res.status(404).json({ erro: 'Compra não encontrada' });
     if (!podeEditarItens(compra.status)) {
       return res.status(409).json({ erro: 'Itens só podem ser editados em rascunho' });
@@ -538,12 +559,12 @@ export function createComprasRouter(db: AppDatabase): Router {
       total: arredondarDinheiro(quantidade * custo),
       unidade: data.unidade !== undefined ? data.unidade ?? null : item.unidade,
     });
-    recalc(compra.id);
-    res.json(mapCompra(compra.id, true));
+    recalc(compra.id, compra.empresa_id);
+    res.json(mapCompra(compra.id, compra.empresa_id, true));
   });
 
   router.delete('/:id/itens/:itemId', (req, res) => {
-    const compra = mapCompra(Number(req.params.id));
+    const compra = mapCompra(Number(req.params.id), empresaDaSessao(req));
     if (!compra) return res.status(404).json({ erro: 'Compra não encontrada' });
     if (!podeEditarItens(compra.status)) {
       return res.status(409).json({ erro: 'Itens só podem ser removidos em rascunho' });
@@ -552,12 +573,12 @@ export function createComprasRouter(db: AppDatabase): Router {
       .prepare('DELETE FROM pedido_compra_itens WHERE id = ? AND compra_id = ?')
       .run(Number(req.params.itemId), compra.id);
     if (info.changes === 0) return res.status(404).json({ erro: 'Item não encontrado' });
-    recalc(compra.id);
-    res.json(mapCompra(compra.id, true));
+    recalc(compra.id, compra.empresa_id);
+    res.json(mapCompra(compra.id, compra.empresa_id, true));
   });
 
   router.post('/:id/receber', (req, res) => {
-    const compra = mapCompra(Number(req.params.id), true);
+    const compra = mapCompra(Number(req.params.id), empresaDaSessao(req), true);
     if (!compra) return res.status(404).json({ erro: 'Compra não encontrada' });
     if (compra.status !== 'aberta' && compra.status !== 'parcial') {
       return res.status(409).json({
@@ -596,7 +617,7 @@ export function createComprasRouter(db: AppDatabase): Router {
               { status: 400 },
             );
           }
-          const mov = registrarMovimentoEstoque(db, {
+          const mov = registrarMovimentoEstoque(db, compra.empresa_id, {
             tipo: 'entrada',
             quantidade: pedido.quantidade,
             materia_prima_id: item.materia_prima_id ?? undefined,
@@ -621,12 +642,13 @@ export function createComprasRouter(db: AppDatabase): Router {
         );
         const status: StatusCompra = todos ? 'recebida' : algum ? 'parcial' : compra.status;
         db.prepare(
-          `UPDATE pedidos_compra SET status = @status, atualizado_em = datetime('now') WHERE id = @id`,
-        ).run({ id: compra.id, status });
-        const after = mapCompra(compra.id);
+          `UPDATE pedidos_compra SET status = @status, atualizado_em = datetime('now')
+            WHERE id = @id AND empresa_id = @empresa_id`,
+        ).run({ id: compra.id, empresa_id: compra.empresa_id, status });
+        const after = mapCompra(compra.id, compra.empresa_id);
         if (after) sincronizarContaPagarCompra(db, after);
       })();
-      res.json(mapCompra(compra.id, true));
+      res.json(mapCompra(compra.id, compra.empresa_id, true));
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       return res.status(status).json({ erro: (err as Error).message });
@@ -634,13 +656,19 @@ export function createComprasRouter(db: AppDatabase): Router {
   });
 
   router.delete('/:id', (req, res) => {
-    const compra = mapCompra(Number(req.params.id), true);
+    const compra = mapCompra(Number(req.params.id), empresaDaSessao(req), true);
     if (!compra) return res.status(404).json({ erro: 'Compra não encontrada' });
     if (compra.status !== 'rascunho' && compra.status !== 'cancelada') {
       return res.status(409).json({ erro: 'Exclua apenas rascunhos ou compras canceladas' });
     }
-    db.prepare('DELETE FROM financeiro_lancamentos WHERE compra_id = ?').run(compra.id);
-    db.prepare('DELETE FROM pedidos_compra WHERE id = ?').run(compra.id);
+    db.prepare('DELETE FROM financeiro_lancamentos WHERE compra_id = ? AND empresa_id = ?').run(
+      compra.id,
+      compra.empresa_id,
+    );
+    db.prepare('DELETE FROM pedidos_compra WHERE id = ? AND empresa_id = ?').run(
+      compra.id,
+      compra.empresa_id,
+    );
     res.status(204).send();
   });
 

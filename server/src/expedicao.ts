@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { arredondarDinheiro } from './financeiro.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_EXPEDICAO = ['pronto_envio', 'expedido', 'entregue'] as const;
 export type StatusExpedicao = (typeof STATUS_EXPEDICAO)[number];
@@ -108,16 +109,16 @@ function filtroFila(fila: string): string {
 export function createExpedicaoRouter(db: AppDatabase): Router {
   const router = Router();
 
-  function getPedido(id: number) {
+  function getPedido(id: number, empresaId: number) {
     return db
       .prepare(
-        `SELECT p.id, p.codigo, p.status, p.data_pedido, p.data_prevista, p.total,
+        `SELECT p.id, p.codigo, p.status, p.data_pedido, p.data_prevista, p.total, p.empresa_id,
                 c.nome AS cliente,
                 (SELECT ifnull(SUM(i.quantidade),0) FROM pedido_itens i WHERE i.pedido_id = p.id) AS quantidade
            FROM pedidos p JOIN clientes c ON c.id = p.cliente_id
-          WHERE p.id = ?`,
+          WHERE p.id = ? AND p.empresa_id = ?`,
       )
-      .get(id) as
+      .get(id, empresaId) as
       | {
           id: number;
           codigo: string | null;
@@ -125,16 +126,17 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
           data_pedido: string;
           data_prevista: string | null;
           total: number;
+          empresa_id: number;
           cliente: string;
           quantidade: number;
         }
       | undefined;
   }
 
-  function getExpedicao(pedidoId: number) {
+  function getExpedicao(pedidoId: number, empresaId: number) {
     return db
-      .prepare(`SELECT * FROM expedicoes WHERE pedido_id = ?`)
-      .get(pedidoId) as
+      .prepare(`SELECT * FROM expedicoes WHERE pedido_id = ? AND empresa_id = ?`)
+      .get(pedidoId, empresaId) as
       | {
           id: number;
           pedido_id: number;
@@ -147,31 +149,40 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
       | undefined;
   }
 
-  function getLinha(pedidoId: number) {
-    const row = db.prepare(`${LISTA_SELECT} WHERE p.id = ?`).get(pedidoId) as ExpedicaoRow | undefined;
+  function getLinha(pedidoId: number, empresaId: number) {
+    const row = db
+      .prepare(`${LISTA_SELECT} WHERE p.id = ? AND p.empresa_id = ?`)
+      .get(pedidoId, empresaId) as ExpedicaoRow | undefined;
     return row ? mapRow(row) : undefined;
   }
 
-  router.get('/resumo', (_req, res) => {
+  router.get('/resumo', (req, res) => {
+    const empresaId = empresaDaSessao(req);
     const prontos = (
       db
         .prepare(
           `SELECT COUNT(*) AS n FROM pedidos p
            LEFT JOIN expedicoes e ON e.pedido_id = p.id
-           WHERE ${filtroFila('prontos')}`,
+           WHERE p.empresa_id = ? AND ${filtroFila('prontos')}`,
         )
-        .get() as { n: number }
+        .get(empresaId) as { n: number }
     ).n;
     const prontosEnvio = (
-      db.prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE status = 'pronto_envio'`).get() as {
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE empresa_id = ? AND status = 'pronto_envio'`)
+        .get(empresaId) as {
         n: number;
       }
     ).n;
     const expedidos = (
-      db.prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE status = 'expedido'`).get() as { n: number }
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE empresa_id = ? AND status = 'expedido'`)
+        .get(empresaId) as { n: number }
     ).n;
     const entregues = (
-      db.prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE status = 'entregue'`).get() as { n: number }
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE empresa_id = ? AND status = 'entregue'`)
+        .get(empresaId) as { n: number }
     ).n;
     res.json({
       fila: prontos,
@@ -189,6 +200,7 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
     const porPagina = Math.min(100, Math.max(1, Number(req.query.por_pagina ?? 10) || 10));
     const where = [`p.status != 'cancelado'`, filtroFila(fila)];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'p.empresa_id');
     if (q) {
       where.push(`(ifnull(p.codigo,'') LIKE @q OR c.nome LIKE @q)`);
       params.q = `%${q}%`;
@@ -216,7 +228,8 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
   });
 
   router.post('/:id/pronto-envio', (req, res) => {
-    const pedido = getPedido(Number(req.params.id));
+    const empresaId = empresaDaSessao(req);
+    const pedido = getPedido(Number(req.params.id), empresaId);
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (pedido.status === 'cancelado') {
       return res.status(409).json({ erro: 'Pedido cancelado não entra na expedição' });
@@ -229,7 +242,7 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
         erro: 'Só pedidos prontos ou faturados podem ser marcados como pronto para envio',
       });
     }
-    const atual = getExpedicao(pedido.id);
+    const atual = getExpedicao(pedido.id, empresaId);
     if (atual && atual.status !== 'pronto_envio') {
       return res.status(409).json({ erro: 'Este pedido já foi expedido' });
     }
@@ -242,27 +255,30 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
             SET data_pronta = ifnull(data_pronta, @data_pronta),
                 observacoes = @observacoes,
                 atualizado_em = datetime('now')
-          WHERE id = @id`,
+          WHERE id = @id AND empresa_id = @empresa_id`,
       ).run({
         id: atual.id,
+        empresa_id: empresaId,
         data_pronta: dataPronta,
         observacoes: obs ?? atual.observacoes,
       });
     } else {
       db.prepare(
-        `INSERT INTO expedicoes (pedido_id, status, data_pronta, observacoes)
-         VALUES (@pedido_id, 'pronto_envio', @data_pronta, @observacoes)`,
+        `INSERT INTO expedicoes (empresa_id, pedido_id, status, data_pronta, observacoes)
+         VALUES (@empresa_id, @pedido_id, 'pronto_envio', @data_pronta, @observacoes)`,
       ).run({
+        empresa_id: empresaId,
         pedido_id: pedido.id,
         data_pronta: dataPronta,
         observacoes: obs ?? null,
       });
     }
-    res.status(atual ? 200 : 201).json(getLinha(pedido.id));
+    res.status(atual ? 200 : 201).json(getLinha(pedido.id, empresaId));
   });
 
   router.post('/:id/expedir', (req, res) => {
-    const pedido = getPedido(Number(req.params.id));
+    const empresaId = empresaDaSessao(req);
+    const pedido = getPedido(Number(req.params.id), empresaId);
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (pedido.status === 'cancelado') {
       return res.status(409).json({ erro: 'Pedido cancelado não pode ser expedido' });
@@ -277,7 +293,7 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
     if (!parsed.success) {
       return res.status(400).json({ erro: 'Dados inválidos', detalhes: parsed.error.flatten().fieldErrors });
     }
-    const atual = getExpedicao(pedido.id);
+    const atual = getExpedicao(pedido.id, empresaId);
     if (atual?.status === 'expedido') {
       return res.status(409).json({ erro: 'Expedição já registrada para este pedido' });
     }
@@ -294,29 +310,32 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
                 data_expedicao = @data_expedicao,
                 observacoes = @observacoes,
                 atualizado_em = datetime('now')
-          WHERE id = @id`,
+          WHERE id = @id AND empresa_id = @empresa_id`,
       ).run({
         id: atual.id,
+        empresa_id: empresaId,
         data_pronta: atual.data_pronta ?? hojeIso(),
         data_expedicao: dataExpedicao,
         observacoes: obs,
       });
     } else {
       db.prepare(
-        `INSERT INTO expedicoes (pedido_id, status, data_pronta, data_expedicao, observacoes)
-         VALUES (@pedido_id, 'expedido', @data_pronta, @data_expedicao, @observacoes)`,
+        `INSERT INTO expedicoes (empresa_id, pedido_id, status, data_pronta, data_expedicao, observacoes)
+         VALUES (@empresa_id, @pedido_id, 'expedido', @data_pronta, @data_expedicao, @observacoes)`,
       ).run({
+        empresa_id: empresaId,
         pedido_id: pedido.id,
         data_pronta: hojeIso(),
         data_expedicao: dataExpedicao,
         observacoes: obs,
       });
     }
-    res.status(atual ? 200 : 201).json(getLinha(pedido.id));
+    res.status(atual ? 200 : 201).json(getLinha(pedido.id, empresaId));
   });
 
   router.post('/:id/entregar', (req, res) => {
-    const pedido = getPedido(Number(req.params.id));
+    const empresaId = empresaDaSessao(req);
+    const pedido = getPedido(Number(req.params.id), empresaId);
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (pedido.status === 'cancelado') {
       return res.status(409).json({ erro: 'Pedido cancelado não pode ser entregue' });
@@ -331,7 +350,7 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
     if (!parsed.success) {
       return res.status(400).json({ erro: 'Dados inválidos', detalhes: parsed.error.flatten().fieldErrors });
     }
-    const atual = getExpedicao(pedido.id);
+    const atual = getExpedicao(pedido.id, empresaId);
     if (!atual || atual.status !== 'expedido') {
       return res.status(409).json({ erro: 'Registre a expedição antes de marcar como entregue' });
     }
@@ -343,17 +362,19 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
                 data_entrega = @data_entrega,
                 observacoes = @observacoes,
                 atualizado_em = datetime('now')
-          WHERE id = @id`,
+          WHERE id = @id AND empresa_id = @empresa_id`,
       ).run({
         id: atual.id,
+        empresa_id: empresaId,
         data_entrega: dataEntrega,
         observacoes: parsed.data.observacoes ?? atual.observacoes,
       });
       db.prepare(
-        `UPDATE pedidos SET status = 'entregue', atualizado_em = datetime('now') WHERE id = ?`,
-      ).run(pedido.id);
+        `UPDATE pedidos SET status = 'entregue', atualizado_em = datetime('now')
+          WHERE id = ? AND empresa_id = ?`,
+      ).run(pedido.id, empresaId);
     })();
-    res.json(getLinha(pedido.id));
+    res.json(getLinha(pedido.id, empresaId));
   });
 
   return router;
