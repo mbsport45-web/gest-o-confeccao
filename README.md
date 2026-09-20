@@ -51,11 +51,13 @@ npm run dev:web
 | Método   | Rota                | Descrição                        |
 | -------- | ------------------- | -------------------------------- |
 | `GET`    | `/api/health`       | Health check.                    |
-| `GET`    | `/api/ordens`       | Lista as ordens de produção.     |
-| `POST`   | `/api/ordens`       | Cria uma ordem de produção.      |
-| `GET`    | `/api/ordens/:id`   | Detalha uma ordem.               |
-| `PATCH`  | `/api/ordens/:id`   | Atualiza o status de uma ordem.  |
-| `DELETE` | `/api/ordens/:id`   | Remove uma ordem.                |
+| `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
+| `POST`   | `/api/ordens`       | Cria uma ordem de produção (código, produto/variante, BOM). |
+| `GET`    | `/api/ordens/ficha-tecnica` | Lê a ficha técnica/BOM do produto ou variante. |
+| `PUT`    | `/api/ordens/ficha-tecnica` | Grava a ficha técnica/BOM. |
+| `GET`    | `/api/ordens/:id`   | Detalha uma OP com requisitos e estoque. |
+| `PATCH`  | `/api/ordens/:id`   | Edita campos ou transiciona o status. |
+| `DELETE` | `/api/ordens/:id`   | Remove se não estiver em produção. |
 | `GET`    | `/api/clientes`     | Lista clientes (busca, filtros, paginação). |
 | `POST`   | `/api/clientes`     | Cria um cliente.                 |
 | `GET`    | `/api/clientes/:id` | Detalha um cliente.              |
@@ -83,6 +85,8 @@ npm run dev:web
 | `POST`   | `/api/estoque/movimentos` | Lança entrada, saída ou ajuste (variante, produto ou matéria-prima). |
 
 Cada variante possui SKU e código de barras únicos. O cadastro de produtos fica pronto para ficha técnica/BOM, matérias-primas, estoque, pedidos de venda e OPs (`produto_id` / `variante_id`). Matérias-primas usam `materias_primas.id` para os mesmos vínculos futuros. O estoque guarda saldo atual em `estoque_saldos` e o histórico em `estoque_movimentos`.
+
+Ordens de produção têm código (`OP-0001`), prioridade, data prevista, responsável, observações e status de chão de fábrica (`planejada`, `corte`, `costura`, `acabamento`, `qualidade`, `embalagem`, `concluida`, `cancelada`). A ficha técnica/BOM do produto ou variante vira requisito da OP; ao avançar para corte o sistema dá saída no estoque das matérias (e estorna se a OP for cancelada). O contrato antigo (`cliente`/`produto`/`tamanho` + `pendente`/`em_producao`) continua válido.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

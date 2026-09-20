@@ -1,27 +1,107 @@
 export const STATUS_VALIDOS = [
-  'pendente',
-  'em_producao',
+  'planejada',
+  'corte',
+  'costura',
+  'acabamento',
+  'qualidade',
+  'embalagem',
   'concluida',
   'cancelada',
+  'pendente',
+  'em_producao',
 ] as const;
 
 export type Status = (typeof STATUS_VALIDOS)[number];
 
+export const PRIORIDADES_OP = ['baixa', 'normal', 'alta', 'urgente'] as const;
+export type PrioridadeOp = (typeof PRIORIDADES_OP)[number];
+
+export const STATUS_OP_LABEL: Record<Status, string> = {
+  planejada: 'Planejada',
+  corte: 'Corte',
+  costura: 'Costura',
+  acabamento: 'Acabamento',
+  qualidade: 'Qualidade',
+  embalagem: 'Embalagem',
+  concluida: 'Concluída',
+  cancelada: 'Cancelada',
+  pendente: 'Pendente',
+  em_producao: 'Em produção',
+};
+
+export const PRIORIDADE_OP_LABEL: Record<PrioridadeOp, string> = {
+  baixa: 'Baixa',
+  normal: 'Normal',
+  alta: 'Alta',
+  urgente: 'Urgente',
+};
+
+export interface OrdemRequisito {
+  id?: number;
+  ordem_id?: number;
+  materia_prima_id: number;
+  quantidade_unitaria?: number;
+  quantidade_total?: number;
+  quantidade?: number;
+  unidade?: string | null;
+  movimento_id?: number | null;
+  nome?: string;
+  codigo?: string | null;
+  estoque_disponivel?: number;
+  suficiente?: boolean;
+}
+
 export interface OrdemProducao {
   id: number;
+  codigo: string | null;
   cliente: string;
   produto: string;
   tamanho: string;
   quantidade: number;
   status: Status;
+  prioridade: PrioridadeOp;
+  data_prevista: string | null;
+  observacoes: string | null;
+  responsavel: string | null;
+  cliente_id: number | null;
+  produto_id: number | null;
+  variante_id: number | null;
   criado_em: string;
+  atualizado_em: string | null;
+  requisitos?: OrdemRequisito[];
 }
 
 export interface NovaOrdem {
-  cliente: string;
-  produto: string;
-  tamanho: string;
+  cliente?: string;
+  produto?: string;
+  tamanho?: string;
   quantidade: number;
+  status?: Status;
+  cliente_id?: number;
+  produto_id?: number;
+  variante_id?: number;
+  codigo?: string;
+  prioridade?: PrioridadeOp;
+  data_prevista?: string;
+  observacoes?: string;
+  responsavel?: string;
+  requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
+}
+
+export interface ListaOrdens {
+  data: OrdemProducao[];
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+export interface FiltrosOrdens {
+  q?: string;
+  status?: string;
+  prioridade?: string;
+  pagina?: number;
+  por_pagina?: number;
 }
 
 async function parseError(res: Response): Promise<never> {
@@ -41,6 +121,26 @@ export async function listarOrdens(): Promise<OrdemProducao[]> {
   return res.json();
 }
 
+export async function listarOrdensPaginado(
+  filtros: FiltrosOrdens = {},
+): Promise<ListaOrdens> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.status) params.set('status', filtros.status);
+  if (filtros.prioridade) params.set('prioridade', filtros.prioridade);
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await fetch(`/api/ordens?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterOrdem(id: number): Promise<OrdemProducao> {
+  const res = await fetch(`/api/ordens/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function criarOrdem(ordem: NovaOrdem): Promise<OrdemProducao> {
   const res = await fetch('/api/ordens', {
     method: 'POST',
@@ -51,22 +151,51 @@ export async function criarOrdem(ordem: NovaOrdem): Promise<OrdemProducao> {
   return res.json();
 }
 
-export async function atualizarStatus(
+export async function atualizarOrdem(
   id: number,
-  status: Status,
+  dados: Partial<NovaOrdem>,
 ): Promise<OrdemProducao> {
   const res = await fetch(`/api/ordens/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(dados),
   });
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
+export async function atualizarStatus(
+  id: number,
+  status: Status,
+): Promise<OrdemProducao> {
+  return atualizarOrdem(id, { status });
+}
+
 export async function removerOrdem(id: number): Promise<void> {
   const res = await fetch(`/api/ordens/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function obterFichaTecnica(
+  produtoId: number,
+  varianteId?: number,
+): Promise<{
+  produto_id: number;
+  variante_id: number | null;
+  itens: Array<{
+    materia_prima_id: number;
+    quantidade: number;
+    unidade: string | null;
+    nome: string;
+    codigo: string | null;
+  }>;
+}> {
+  const params = new URLSearchParams();
+  params.set('produto_id', String(produtoId));
+  if (varianteId) params.set('variante_id', String(varianteId));
+  const res = await fetch(`/api/ordens/ficha-tecnica?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
 }
 
 export const STATUS_CLIENTE = ['ativo', 'inativo'] as const;

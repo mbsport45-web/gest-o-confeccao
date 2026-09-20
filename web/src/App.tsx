@@ -8,7 +8,7 @@ import { ProdutosPage } from './ProdutosPage';
 type Pagina = 'ordens' | 'clientes' | 'produtos' | 'materias' | 'estoque';
 
 const SUBTITULO: Record<Pagina, string> = {
-  ordens: 'Controle de ordens de produção',
+  ordens: 'Ordens de produção (OP)',
   clientes: 'Cadastro e gestão de clientes',
   produtos: 'Cadastro de produtos e variantes',
   materias: 'Cadastro de matérias-primas',

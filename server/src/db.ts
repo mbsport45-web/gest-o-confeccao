@@ -182,6 +182,36 @@ export function createDatabase(location: string) {
       materia_prima_id INTEGER REFERENCES materias_primas(id),
       criado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- BOM / ficha técnica por produto (variante opcional).
+    CREATE TABLE IF NOT EXISTS produto_bom_itens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      produto_id INTEGER NOT NULL REFERENCES produtos(id) ON DELETE CASCADE,
+      variante_id INTEGER REFERENCES produto_variantes(id) ON DELETE CASCADE,
+      materia_prima_id INTEGER NOT NULL REFERENCES materias_primas(id),
+      quantidade REAL NOT NULL DEFAULT 1,
+      unidade TEXT
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS produto_bom_variante_unique
+      ON produto_bom_itens (variante_id, materia_prima_id)
+      WHERE variante_id IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS produto_bom_produto_unique
+      ON produto_bom_itens (produto_id, materia_prima_id)
+      WHERE variante_id IS NULL;
+
+    -- Requisitos de material copiados para cada OP.
+    CREATE TABLE IF NOT EXISTS ordem_requisitos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id) ON DELETE CASCADE,
+      materia_prima_id INTEGER NOT NULL REFERENCES materias_primas(id),
+      quantidade_unitaria REAL NOT NULL,
+      quantidade_total REAL NOT NULL,
+      unidade TEXT,
+      movimento_id INTEGER REFERENCES estoque_movimentos(id),
+      UNIQUE (ordem_id, materia_prima_id)
+    );
   `);
 
   const ordemCols = db
@@ -202,6 +232,36 @@ export function createDatabase(location: string) {
       `ALTER TABLE ordens_producao ADD COLUMN variante_id INTEGER REFERENCES produto_variantes(id)`,
     );
   }
+
+  const extras: Array<{ name: string; ddl: string }> = [
+    { name: 'codigo', ddl: 'ALTER TABLE ordens_producao ADD COLUMN codigo TEXT' },
+    {
+      name: 'prioridade',
+      ddl: `ALTER TABLE ordens_producao ADD COLUMN prioridade TEXT NOT NULL DEFAULT 'normal'`,
+    },
+    { name: 'data_prevista', ddl: 'ALTER TABLE ordens_producao ADD COLUMN data_prevista TEXT' },
+    { name: 'observacoes', ddl: 'ALTER TABLE ordens_producao ADD COLUMN observacoes TEXT' },
+    { name: 'responsavel', ddl: 'ALTER TABLE ordens_producao ADD COLUMN responsavel TEXT' },
+    { name: 'atualizado_em', ddl: 'ALTER TABLE ordens_producao ADD COLUMN atualizado_em TEXT' },
+  ];
+  const nomes = new Set(ordemCols.map((col) => col.name));
+  for (const extra of extras) {
+    if (!nomes.has(extra.name)) db.exec(extra.ddl);
+  }
+
+  db.exec(`
+    UPDATE ordens_producao
+       SET codigo = 'OP-' || printf('%04d', id)
+     WHERE codigo IS NULL OR trim(codigo) = '';
+    UPDATE ordens_producao
+       SET atualizado_em = criado_em
+     WHERE atualizado_em IS NULL OR trim(atualizado_em) = '';
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ordens_producao_codigo_unique
+      ON ordens_producao (codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+  `);
 
   return db;
 }

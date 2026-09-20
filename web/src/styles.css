@@ -59,7 +59,8 @@ body {
 .app__main--clientes,
 .app__main--produtos,
 .app__main--materias,
-.app__main--estoque {
+.app__main--estoque,
+.app__main--ordens {
   grid-template-columns: 1fr 400px;
 }
 
@@ -218,11 +219,19 @@ button {
   font-size: 0.82rem;
 }
 
-.status--pendente {
+.status--pendente,
+.status--planejada {
   color: #fbbf24;
 }
-.status--em_producao {
+.status--em_producao,
+.status--corte,
+.status--costura {
   color: #60a5fa;
+}
+.status--acabamento,
+.status--qualidade,
+.status--embalagem {
+  color: #c084fc;
 }
 .status--concluida {
   color: #34d399;
@@ -420,6 +429,16 @@ button {
   align-items: center;
 }
 
+.filtros--ordens {
+  grid-template-columns: 1.6fr 1fr 1fr;
+}
+
+.card__head-acoes {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .filtro-check {
   display: flex;
   align-items: center;
@@ -439,10 +458,12 @@ button {
   .app__main--produtos,
   .app__main--materias,
   .app__main--estoque,
+  .app__main--ordens,
   .filtros,
   .filtros--produtos,
   .filtros--materias,
-  .filtros--estoque {
+  .filtros--estoque,
+  .filtros--ordens {
     grid-template-columns: 1fr;
   }
 }
