@@ -137,6 +137,7 @@ const ROTAS_PROTEGIDAS: Array<{ metodo: string; caminho: string }> = [
   { metodo: 'DELETE', caminho: '/api/assinatura/eventos' },
   { metodo: 'PATCH', caminho: '/api/assinatura' },
   { metodo: 'POST', caminho: '/api/assinatura/pagamento' },
+  { metodo: 'GET', caminho: '/api/assinatura/pagamento' },
 ];
 
 const ARQUIVOS_ROTAS = [

@@ -116,7 +116,7 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
   },
   plano: {
     titulo: 'Plano',
-    sub: 'Limites e recursos da empresa',
+    sub: 'Assinatura e pagamento sandbox',
   },
 };
 

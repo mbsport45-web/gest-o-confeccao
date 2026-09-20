@@ -65,6 +65,7 @@ npm run dev:web
 | `GET`    | `/api/assinatura` | Plano, uso, preço mensal, **status** (`trial`, `ativa`, `past_due`, `cancelada`, `expirada`) e, se houver, IDs sandbox Asaas da empresa da sessão. |
 | `GET`    | `/api/assinatura/eventos` | Histórico/auditoria comercial da empresa da sessão (criação, trial, upgrade, downgrade, cancelamento, reativação, status e pagamentos). Somente proprietário/administrador. Imutável. |
 | `PATCH`  | `/api/assinatura` | Troca o plano (**upgrade**/**downgrade**) **ou** aplica uma ação de status. O navegador não envia preço, `empresa_id` nem status cru. |
+| `GET`    | `/api/assinatura/pagamento` | Estado do checkout sandbox da empresa da sessão (`pendente`/`confirmado`/`falhou`). Não confirma pagamento só pela criação. |
 | `POST`   | `/api/assinatura/pagamento` | Cria/localiza cliente e assinatura **mensal no sandbox Asaas** com o preço oficial do plano. Proprietário/administrador. Sem cobrança real. |
 | `POST`   | `/api/webhooks/asaas` | Webhook público do Asaas. Valida `asaas-access-token` (não a API Key), persiste o `id` do evento com idempotência e atualiza a assinatura. |
 | `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
