@@ -38,7 +38,10 @@ describe('planos e assinatura por empresa', () => {
     const basico = res.body.data[0];
     expect(basico.limites.usuarios).toBe(3);
     expect(basico.recursos.relatorios_avancados).toBe(false);
-    expect(basico.preco_mensal).toBeNull();
+    expect(basico.preco_mensal).toBe(99.9);
+    expect(basico.moeda).toBe('BRL');
+    expect(res.body.ciclo).toBe('mensal');
+    expect(res.body.gateway).toBeNull();
     const enterprise = res.body.data[2];
     expect(enterprise.limites.usuarios).toBeNull();
     expect(enterprise.recursos.api_externa).toBe(true);
@@ -58,6 +61,16 @@ describe('planos e assinatura por empresa', () => {
       acesso: { leitura: true, operacional: true, trocar_plano: true },
     });
     expect(me.body.assinatura.plano.limites.clientes).toBe(50);
+    expect(me.body.assinatura.plano.preco_mensal).toBe(99.9);
+    expect(me.body.assinatura.comercial).toMatchObject({
+      ciclo: 'mensal',
+      moeda: 'BRL',
+      valor_mensal: 99.9,
+      gateway: null,
+      cobranca: 'desativada',
+      pronta: false,
+      operacoes: ['assinar', 'upgrade', 'downgrade', 'cancelar'],
+    });
 
     const assinatura = await api.get('/api/assinatura');
     expect(assinatura.status).toBe(200);
@@ -75,6 +88,8 @@ describe('planos e assinatura por empresa', () => {
     expect(trocar.body.cobranca).toBe('desativada');
     expect(trocar.body.gateway).toBeNull();
     expect(trocar.body.plano.recursos.relatorios_avancados).toBe(true);
+    expect(trocar.body.plano.preco_mensal).toBe(149.9);
+    expect(trocar.body.comercial.valor_mensal).toBe(149.9);
 
     const recusarGateway = await api.patch('/api/assinatura').send({
       plano: 'enterprise',

@@ -1225,6 +1225,13 @@ a.btn-secundario {
   margin: 0 0 0.4rem;
 }
 
+.plano__preco {
+  margin: 0 0 0.45rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
 .plano__lista {
   margin: 0.6rem 0 1rem;
   padding-left: 1.1rem;
@@ -1285,4 +1292,20 @@ a.btn-secundario {
 
 .assinatura-acoes button {
   width: auto;
+}
+
+.plano__eventos {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borda, #2a3548);
+}
+
+.plano__eventos h3 {
+  margin: 0 0 0.4rem;
+}
+
+.plano__eventos ul {
+  margin: 0.6rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
 }

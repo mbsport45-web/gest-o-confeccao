@@ -3,6 +3,9 @@ import {
   ACAO_ASSINATURA_LABEL,
   alterarAssinatura,
   alterarPlano,
+  EVENTO_ASSINATURA_LABEL,
+  formatarPrecoMensal,
+  listarEventosAssinatura,
   listarPlanos,
   obterAssinatura,
   temPermissao,
@@ -10,6 +13,7 @@ import {
   type AcaoAssinatura,
   type AssinaturaEmpresa,
   type ChaveLimite,
+  type EventoAssinatura,
   type PlanoEmpresa,
   type SessaoAtual,
 } from './api';
@@ -30,6 +34,12 @@ function formatarUso(atual: number, maximo: number | null): string {
   return maximo === null ? `${atual} · ilimitado` : `${atual} de ${maximo}`;
 }
 
+function rotuloTrocaPlano(plano: PlanoEmpresa, atual: PlanoEmpresa): string {
+  if (plano.codigo === atual.codigo) return 'Plano atual';
+  const preco = formatarPrecoMensal(plano.preco_mensal, plano.moeda);
+  return plano.ordem > atual.ordem ? `Fazer upgrade · ${preco}` : `Fazer downgrade · ${preco}`;
+}
+
 export function PlanoPage({
   sessao,
   onAssinatura,
@@ -39,6 +49,7 @@ export function PlanoPage({
 }) {
   const [planos, setPlanos] = useState<PlanoEmpresa[]>([]);
   const [atual, setAtual] = useState<AssinaturaEmpresa>(sessao.assinatura);
+  const [eventos, setEventos] = useState<EventoAssinatura[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState<string | null>(null);
@@ -46,9 +57,14 @@ export function PlanoPage({
   const podeVer = temPermissao(sessao.permissoes, 'assinatura', 'visualizar');
 
   const recarregar = useCallback(async () => {
-    const [lista, assinatura] = await Promise.all([listarPlanos(), obterAssinatura()]);
+    const [lista, assinatura, historico] = await Promise.all([
+      listarPlanos(),
+      obterAssinatura(),
+      listarEventosAssinatura(),
+    ]);
     setPlanos(lista.data);
     setAtual(assinatura);
+    setEventos(historico.data);
   }, []);
 
   useEffect(() => {
@@ -73,6 +89,8 @@ export function PlanoPage({
       const proxima = await alterarPlano(codigo);
       setAtual(proxima);
       onAssinatura(proxima);
+      const historico = await listarEventosAssinatura();
+      setEventos(historico.data);
     } catch (err) {
       setErro((err as Error).message);
     } finally {
@@ -88,6 +106,8 @@ export function PlanoPage({
       const proxima = await alterarAssinatura({ acao });
       setAtual(proxima);
       onAssinatura(proxima);
+      const historico = await listarEventosAssinatura();
+      setEventos(historico.data);
     } catch (err) {
       setErro((err as Error).message);
     } finally {
@@ -111,8 +131,9 @@ export function PlanoPage({
           <h2>Plano da empresa</h2>
         </div>
         <p className="dica">
-          Cobrança desativada. Nenhum pagamento é processado nesta etapa. O status da assinatura
-          define o que a empresa pode operar; os dados continuam acessíveis em leitura.
+          Preços comerciais mensais já definidos. Cobrança e gateway continuam desativados: a
+          empresa pode assinar, fazer upgrade, downgrade ou cancelar — o histórico fica
+          registrado para o faturamento futuro.
         </p>
         {podeVer && (
           <div className={`assinatura-status assinatura-status--${atual.status}`}>
@@ -120,6 +141,13 @@ export function PlanoPage({
               Status: <strong>{atual.status_label ?? atual.status}</strong>
               {' · '}
               plano <strong>{atual.plano.nome}</strong>
+              {' · '}
+              {formatarPrecoMensal(
+                atual.comercial?.valor_mensal ?? atual.plano.preco_mensal,
+                atual.comercial?.moeda ?? atual.plano.moeda,
+              )}
+              {' · '}
+              ciclo {atual.comercial?.ciclo ?? atual.ciclo}
               {' · '}
               cobrança {atual.cobranca}
             </p>
@@ -214,6 +242,9 @@ export function PlanoPage({
                   className={atualPlano ? 'plano plano--atual' : 'plano'}
                 >
                   <h3>{plano.nome}</h3>
+                  <p className="plano__preco">
+                    {formatarPrecoMensal(plano.preco_mensal, plano.moeda)}
+                  </p>
                   <p className="dica">{plano.descricao}</p>
                   <ul className="plano__lista">
                     {(Object.keys(plano.limites) as ChaveLimite[]).map((chave) => (
@@ -245,7 +276,7 @@ export function PlanoPage({
                           ? 'Indisponível neste status'
                           : salvando === plano.codigo
                             ? 'Salvando…'
-                            : 'Usar este plano'}
+                            : rotuloTrocaPlano(plano, atual.plano)}
                     </button>
                   ) : (
                     atualPlano && <p className="dica">Este é o plano da sua empresa.</p>
@@ -253,6 +284,32 @@ export function PlanoPage({
                 </article>
               );
             })}
+          </div>
+        )}
+        {podeVer && eventos.length > 0 && (
+          <div className="plano__eventos">
+            <h3>Histórico comercial</h3>
+            <p className="dica">
+              Eventos de assinatura mensal, upgrade, downgrade e cancelamento — sem cobrança
+              real nesta etapa.
+            </p>
+            <ul>
+              {eventos.slice(0, 8).map((evento) => (
+                <li key={evento.id}>
+                  <strong>{EVENTO_ASSINATURA_LABEL[evento.tipo] ?? evento.tipo}</strong>
+                  {evento.de_plano && evento.para_plano && evento.de_plano !== evento.para_plano
+                    ? ` · ${evento.de_plano} → ${evento.para_plano}`
+                    : evento.para_plano
+                      ? ` · ${evento.para_plano}`
+                      : ''}
+                  {evento.valor_mensal !== null
+                    ? ` · ${formatarPrecoMensal(evento.valor_mensal, evento.moeda)}`
+                    : ''}
+                  {' · '}
+                  cobrança {evento.cobranca}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </section>
