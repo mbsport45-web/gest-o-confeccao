@@ -91,6 +91,13 @@ npm run dev:web
 | `DELETE` | `/api/etapas/:id` | Remove etapa pendente ou cancelada. |
 | `GET`    | `/api/fornecedores` | Lista fornecedores (busca, filtros, paginação). |
 | `POST`   | `/api/fornecedores` | Cria um fornecedor. |
+| `GET`    | `/api/pedidos`      | Lista pedidos de venda (busca, filtros, paginação). |
+| `POST`   | `/api/pedidos`      | Cria um pedido (itens e totais no servidor). |
+| `GET`    | `/api/pedidos/resumo` | Abertos, confirmados, em produção, atrasados, vendido. |
+| `GET`    | `/api/pedidos/:id`  | Detalha pedido, itens, OPs e financeiro. |
+| `PATCH`  | `/api/pedidos/:id`  | Edita orçamento/aberto ou transiciona status. |
+| `POST`   | `/api/pedidos/:id/gerar-op` | Gera OP a partir dos itens confirmados. |
+| `POST`   | `/api/pedidos/:id/financeiro` | Gera conta a receber (sem duplicar). |
 | `GET`    | `/api/compras`      | Lista pedidos de compra (filtros e paginação). |
 | `POST`   | `/api/compras`      | Cria uma compra (itens, totais). |
 | `GET`    | `/api/compras/:id`  | Detalha compra com itens. |
@@ -109,6 +116,8 @@ Ordens de produção têm código (`OP-0001`), prioridade, data prevista, respon
 O fluxo de produção vive em `etapas_producao`, vinculado à OP: Corte, Costura, Acabamento, Controle de qualidade e Embalagem, com sequência, status, operador e horários de início/término. A etapa seguinte só inicia depois que a anterior for concluída.
 
 Compras usam `fornecedores`, `pedidos_compra` e `pedido_compra_itens`. Ao receber uma compra o sistema reutiliza o movimento de estoque (`entrada`). Abrir a compra gera uma conta a pagar em `financeiro_lancamentos` vinculada a `compra_id`. Relatórios leem os dados reais e podem exportar CSV.
+
+Pedidos de venda usam `pedidos` e `pedido_itens` (cliente, produto e variante existentes). Confirmar o pedido reserva a quantidade no próprio item (não baixa estoque de produto acabado). **Gerar OP** cria registros em `ordens_producao` com `pedido_id` / `pedido_item_id`, copiando cliente, produto, variante, quantidade, prioridade e previsão. **Gerar financeiro** cria uma conta a receber em `financeiro_lancamentos` (`pedido_id`) sem duplicar.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

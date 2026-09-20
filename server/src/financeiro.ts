@@ -33,6 +33,7 @@ export interface FinanceiroLancamento {
   cliente_id: number | null;
   compra_id: number | null;
   ordem_id: number | null;
+  pedido_id: number | null;
   observacoes: string | null;
   criado_em: string;
   atualizado_em: string;
@@ -40,6 +41,7 @@ export interface FinanceiroLancamento {
   fornecedor?: string | null;
   cliente?: string | null;
   compra_codigo?: string | null;
+  pedido_codigo?: string | null;
 }
 
 const textoOpcional = z
@@ -68,6 +70,7 @@ const lancamentoBase = z.object({
   cliente_id: z.number().int().positive().optional().nullable(),
   compra_id: z.number().int().positive().optional().nullable(),
   ordem_id: z.number().int().positive().optional().nullable(),
+  pedido_id: z.number().int().positive().optional().nullable(),
   observacoes: z
     .string()
     .trim()
@@ -89,12 +92,14 @@ const LANCAMENTO_SELECT = `
     c.nome AS categoria,
     f.nome AS fornecedor,
     cl.nome AS cliente,
-    pc.codigo AS compra_codigo
+    pc.codigo AS compra_codigo,
+    pv.codigo AS pedido_codigo
   FROM financeiro_lancamentos l
   LEFT JOIN financeiro_categorias c ON c.id = l.categoria_id
   LEFT JOIN fornecedores f ON f.id = l.fornecedor_id
   LEFT JOIN clientes cl ON cl.id = l.cliente_id
   LEFT JOIN pedidos_compra pc ON pc.id = l.compra_id
+  LEFT JOIN pedidos pv ON pv.id = l.pedido_id
 `;
 
 export function arredondarDinheiro(valor: number): number {
@@ -113,6 +118,91 @@ export function statusEfetivoLancamento(
     return 'vencido';
   }
   return status as (typeof STATUS_LANCAMENTO)[number];
+}
+
+export function categoriaVendasId(db: AppDatabase): number | null {
+  const row = db
+    .prepare(
+      `SELECT id FROM financeiro_categorias WHERE nome = 'Vendas' AND status = 'ativo' LIMIT 1`,
+    )
+    .get() as { id: number } | undefined;
+  return row?.id ?? null;
+}
+
+export function sincronizarContaReceberPedido(
+  db: AppDatabase,
+  pedido: {
+    id: number;
+    codigo: string | null;
+    cliente_id: number;
+    total: number;
+    data_prevista: string | null;
+    status: string;
+  },
+  opts: { criar: boolean; vencimento?: string | null } = { criar: false },
+): FinanceiroLancamento | undefined {
+  const atual = db
+    .prepare(
+      `SELECT * FROM financeiro_lancamentos WHERE pedido_id = ? AND tipo = 'receber'`,
+    )
+    .get(pedido.id) as FinanceiroLancamento | undefined;
+
+  if (pedido.status === 'cancelado' || pedido.total <= 0) {
+    if (atual && atual.status === 'pendente') {
+      db.prepare(
+        `UPDATE financeiro_lancamentos
+            SET status = 'cancelado', atualizado_em = datetime('now')
+          WHERE id = ?`,
+      ).run(atual.id);
+    }
+    return atual
+      ? ({ ...atual, status: atual.status === 'pendente' ? 'cancelado' : atual.status } as FinanceiroLancamento)
+      : undefined;
+  }
+
+  if (atual) {
+    if (atual.status === 'pendente' || atual.status === 'vencido') {
+      db.prepare(
+        `UPDATE financeiro_lancamentos
+            SET valor = @valor, vencimento = @vencimento, cliente_id = @cliente_id,
+                descricao = @descricao, atualizado_em = datetime('now')
+          WHERE id = @id`,
+      ).run({
+        id: atual.id,
+        valor: arredondarDinheiro(pedido.total),
+        vencimento: opts.vencimento ?? atual.vencimento ?? pedido.data_prevista,
+        cliente_id: pedido.cliente_id,
+        descricao: `Pedido ${pedido.codigo ?? pedido.id}`,
+      });
+    }
+    return db
+      .prepare(`SELECT * FROM financeiro_lancamentos WHERE id = ?`)
+      .get(atual.id) as FinanceiroLancamento;
+  }
+
+  if (!opts.criar) return undefined;
+
+  const info = db
+    .prepare(
+      `INSERT INTO financeiro_lancamentos (
+         tipo, categoria_id, descricao, valor, status, vencimento,
+         cliente_id, pedido_id
+       ) VALUES (
+         'receber', @categoria_id, @descricao, @valor, 'pendente', @vencimento,
+         @cliente_id, @pedido_id
+       )`,
+    )
+    .run({
+      categoria_id: categoriaVendasId(db),
+      descricao: `Pedido ${pedido.codigo ?? pedido.id}`,
+      valor: arredondarDinheiro(pedido.total),
+      vencimento: opts.vencimento ?? pedido.data_prevista,
+      cliente_id: pedido.cliente_id,
+      pedido_id: pedido.id,
+    });
+  return db
+    .prepare(`SELECT * FROM financeiro_lancamentos WHERE id = ?`)
+    .get(Number(info.lastInsertRowid)) as FinanceiroLancamento;
 }
 
 export function categoriaComprasId(db: AppDatabase): number | null {
@@ -394,12 +484,14 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       LEFT JOIN fornecedores f ON f.id = l.fornecedor_id
       LEFT JOIN clientes cl ON cl.id = l.cliente_id
       LEFT JOIN pedidos_compra pc ON pc.id = l.compra_id
+      LEFT JOIN pedidos pv ON pv.id = l.pedido_id
       ${filtro}
     `;
     const total = (db.prepare(`SELECT COUNT(*) AS n ${from}`).get(params) as { n: number }).n;
     const rows = db
       .prepare(
-        `SELECT l.*, c.nome AS categoria, f.nome AS fornecedor, cl.nome AS cliente, pc.codigo AS compra_codigo
+        `SELECT l.*, c.nome AS categoria, f.nome AS fornecedor, cl.nome AS cliente,
+                pc.codigo AS compra_codigo, pv.codigo AS pedido_codigo
          ${from}
          ORDER BY datetime(ifnull(l.vencimento, l.criado_em)) DESC, l.id DESC
          LIMIT @limit OFFSET @offset`,
@@ -449,10 +541,10 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       .prepare(
         `INSERT INTO financeiro_lancamentos (
            tipo, categoria_id, descricao, valor, status, vencimento, data_pagamento,
-           fornecedor_id, cliente_id, compra_id, ordem_id, observacoes
+           fornecedor_id, cliente_id, compra_id, ordem_id, pedido_id, observacoes
          ) VALUES (
            @tipo, @categoria_id, @descricao, @valor, @status, @vencimento, @data_pagamento,
-           @fornecedor_id, @cliente_id, @compra_id, @ordem_id, @observacoes
+           @fornecedor_id, @cliente_id, @compra_id, @ordem_id, @pedido_id, @observacoes
          )`,
       )
       .run({
@@ -467,6 +559,7 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
         cliente_id: data.cliente_id ?? null,
         compra_id: data.compra_id ?? null,
         ordem_id: data.ordem_id ?? null,
+        pedido_id: data.pedido_id ?? null,
         observacoes: data.observacoes ?? null,
       });
     res.status(201).json(mapLancamento(getLancamento.get(Number(info.lastInsertRowid)) as FinanceiroLancamento));
@@ -546,6 +639,11 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
     if (atual.compra_id) {
       return res.status(409).json({
         erro: 'Lançamento gerado pela compra; cancele a compra ou o lançamento',
+      });
+    }
+    if ((atual as FinanceiroLancamento & { pedido_id?: number | null }).pedido_id) {
+      return res.status(409).json({
+        erro: 'Lançamento gerado pelo pedido; cancele o pedido ou o lançamento',
       });
     }
     if (atual.status === 'pago' || atual.status === 'recebido') {

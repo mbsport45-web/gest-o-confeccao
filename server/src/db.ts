@@ -374,7 +374,69 @@ export function createDatabase(location: string) {
     CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_compra_unique
       ON financeiro_lancamentos (compra_id)
       WHERE compra_id IS NOT NULL AND tipo = 'pagar';
+
+    CREATE TABLE IF NOT EXISTS pedidos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo TEXT,
+      cliente_id INTEGER NOT NULL REFERENCES clientes(id),
+      data_pedido TEXT NOT NULL,
+      data_prevista TEXT,
+      status TEXT NOT NULL DEFAULT 'orcamento',
+      prioridade TEXT NOT NULL DEFAULT 'normal',
+      observacoes TEXT,
+      subtotal REAL NOT NULL DEFAULT 0,
+      desconto REAL NOT NULL DEFAULT 0,
+      frete REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS pedidos_codigo_unique
+      ON pedidos (codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    CREATE TABLE IF NOT EXISTS pedido_itens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pedido_id INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+      produto_id INTEGER NOT NULL REFERENCES produtos(id),
+      variante_id INTEGER REFERENCES produto_variantes(id),
+      quantidade INTEGER NOT NULL,
+      preco_unitario REAL NOT NULL,
+      desconto REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL,
+      quantidade_reservada INTEGER NOT NULL DEFAULT 0,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+
+  const finCols = db
+    .prepare(`PRAGMA table_info(financeiro_lancamentos)`)
+    .all() as { name: string }[];
+  if (!finCols.some((col) => col.name === 'pedido_id')) {
+    db.exec(
+      `ALTER TABLE financeiro_lancamentos ADD COLUMN pedido_id INTEGER REFERENCES pedidos(id)`,
+    );
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_pedido_unique
+      ON financeiro_lancamentos (pedido_id)
+      WHERE pedido_id IS NOT NULL AND tipo = 'receber';
+  `);
+
+  const ordemAtual = db
+    .prepare(`PRAGMA table_info(ordens_producao)`)
+    .all() as { name: string }[];
+  if (!ordemAtual.some((col) => col.name === 'pedido_id')) {
+    db.exec(
+      `ALTER TABLE ordens_producao ADD COLUMN pedido_id INTEGER REFERENCES pedidos(id)`,
+    );
+  }
+  if (!ordemAtual.some((col) => col.name === 'pedido_item_id')) {
+    db.exec(
+      `ALTER TABLE ordens_producao ADD COLUMN pedido_item_id INTEGER REFERENCES pedido_itens(id)`,
+    );
+  }
 
   db.exec(`
     INSERT OR IGNORE INTO financeiro_categorias (nome, tipo) VALUES

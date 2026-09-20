@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { sincronizarStatusPedidoFromOps } from './pedidos.js';
 
 export const STATUS_OP = [
   'planejada',
@@ -845,6 +846,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
       });
 
       aplicar();
+      sincronizarStatusPedidoFromOps(db, id);
       res.json(mapOrdem(id, !soStatus));
     } catch (e) {
       const err = e as Error & { status?: number };

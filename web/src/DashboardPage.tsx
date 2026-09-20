@@ -9,10 +9,12 @@ import {
   listarEtapas,
   listarMateriasPrimas,
   listarOrdens,
+  obterResumoPedidos,
   listarProdutos,
   type EstoqueSaldo,
   type EtapaProducao,
   type OrdemProducao,
+  type PedidoResumo,
 } from './api';
 
 type Props = {
@@ -41,13 +43,14 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
   const [etapasAndamento, setEtapasAndamento] = useState<EtapaProducao[]>([]);
   const [etapasAndamentoTotal, setEtapasAndamentoTotal] = useState(0);
   const [etapasConcluidas, setEtapasConcluidas] = useState(0);
+  const [pedidosResumo, setPedidosResumo] = useState<PedidoResumo | null>(null);
 
   useEffect(() => {
     let vivo = true;
     (async () => {
       try {
         setCarregando(true);
-        const [ops, produtos, materias, clientes, baixo, estoque, andamento, concluidas] =
+        const [ops, produtos, materias, clientes, baixo, estoque, andamento, concluidas, pedidos] =
           await Promise.all([
             listarOrdens(),
             listarProdutos({ por_pagina: 1 }),
@@ -57,6 +60,7 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
             listarEstoque({ por_pagina: 1 }),
             listarEtapas({ status: 'em_andamento', por_pagina: 8, pagina: 1 }),
             listarEtapas({ status: 'concluida', por_pagina: 1, pagina: 1 }),
+            obterResumoPedidos(),
           ]);
         if (!vivo) return;
         setOrdens(ops);
@@ -69,6 +73,7 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
         setEtapasAndamento(andamento.data);
         setEtapasAndamentoTotal(andamento.total);
         setEtapasConcluidas(concluidas.total);
+        setPedidosResumo(pedidos);
         setErro(null);
       } catch (e) {
         if (vivo) setErro((e as Error).message);
@@ -126,8 +131,20 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
           <section className="kpi-grid" aria-label="Indicadores">
             <button type="button" className="kpi" onClick={() => onIr('pedidos')}>
               <span className="kpi__label">Pedidos</span>
-              <strong className="kpi__valor">0</strong>
-              <span className="kpi__dica">Módulo ainda não implantado</span>
+              <strong className="kpi__valor">{pedidosResumo?.total ?? 0}</strong>
+              <span className="kpi__dica">
+                {pedidosResumo
+                  ? `${pedidosResumo.abertos} abertos · ${pedidosResumo.confirmados} confirmados · ${pedidosResumo.em_producao} em produção`
+                  : 'Carregando pedidos…'}
+              </span>
+              {pedidosResumo && (
+                <span className="kpi__dica">
+                  {pedidosResumo.atrasados} atrasado{pedidosResumo.atrasados === 1 ? '' : 's'} · vendido{' '}
+                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                    pedidosResumo.total_vendido,
+                  )}
+                </span>
+              )}
             </button>
             <button type="button" className="kpi" onClick={() => onIr('ordens')}>
               <span className="kpi__label">Ordens de produção</span>

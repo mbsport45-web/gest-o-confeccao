@@ -176,6 +176,7 @@ body {
 .app__main--ordens,
 .app__main--etapas,
 .app__main--compras,
+.app__main--pedidos,
 .app__main--financeiro {
   grid-template-columns: 1fr 400px;
 }
@@ -559,6 +560,10 @@ button {
   grid-template-columns: 1.4fr 1fr 1fr 0.9fr 0.9fr;
 }
 
+.filtros--pedidos {
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 0.9fr 0.9fr;
+}
+
 .filtros--financeiro {
   grid-template-columns: 1.4fr 1fr 1fr 1fr 0.9fr 0.9fr;
 }
@@ -815,11 +820,30 @@ a.btn-secundario {
 }
 
 .pill--aberta,
+.pill--aberto,
 .pill--pago,
 .pill--recebido,
-.pill--recebida {
+.pill--recebida,
+.pill--confirmado,
+.pill--entregue {
   color: #34d399;
   background: rgba(52, 211, 153, 0.12);
+}
+
+.pill--orcamento,
+.pill--faturado {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+}
+
+.pill--pronto {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+}
+
+.pill--cancelado {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
 }
 
 .pill--parcial {
@@ -991,6 +1015,7 @@ a.btn-secundario {
   .app__main--ordens,
   .app__main--etapas,
   .app__main--compras,
+  .app__main--pedidos,
   .app__main--financeiro,
   .filtros,
   .filtros--produtos,
@@ -999,6 +1024,7 @@ a.btn-secundario {
   .filtros--ordens,
   .filtros--etapas,
   .filtros--compras,
+  .filtros--pedidos,
   .filtros--financeiro {
     grid-template-columns: 1fr;
   }

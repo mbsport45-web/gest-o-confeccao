@@ -314,18 +314,21 @@ export function createProdutosRouter(db: AppDatabase): Router {
     'SELECT * FROM produto_variantes WHERE id = ? AND produto_id = ?',
   );
   const countVinculosProdutoStmt = db.prepare(
-    `SELECT COUNT(*) AS n FROM ordens_producao
-     WHERE produto_id = ?
-        OR variante_id IN (SELECT id FROM produto_variantes WHERE produto_id = ?)
-        OR lower(trim(produto)) = lower(trim(?))`,
+    `SELECT
+        (SELECT COUNT(*) FROM ordens_producao
+          WHERE produto_id = ?
+             OR variante_id IN (SELECT id FROM produto_variantes WHERE produto_id = ?)
+             OR lower(trim(produto)) = lower(trim(?)))
+      + (SELECT COUNT(*) FROM pedido_itens
+          WHERE produto_id = ?
+             OR variante_id IN (SELECT id FROM produto_variantes WHERE produto_id = ?)) AS n`,
   );
   const countVinculosVarianteStmt = db.prepare(
-    `SELECT COUNT(*) AS n FROM ordens_producao
-     WHERE variante_id = ?
-        OR (
-          produto_id = ?
-          AND lower(trim(tamanho)) = lower(trim(?))
-        )`,
+    `SELECT
+        (SELECT COUNT(*) FROM ordens_producao
+          WHERE variante_id = ?
+             OR (produto_id = ? AND lower(trim(tamanho)) = lower(trim(?))))
+      + (SELECT COUNT(*) FROM pedido_itens WHERE variante_id = ?) AS n`,
   );
 
   function carregarProduto(id: number): Produto | undefined {
@@ -791,7 +794,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
     if (!atual) {
       return res.status(404).json({ erro: 'Variante não encontrada' });
     }
-    const vinculos = countVinculosVarianteStmt.get(varianteId, produtoId, atual.tamanho) as {
+    const vinculos = countVinculosVarianteStmt.get(varianteId, produtoId, atual.tamanho, varianteId) as {
       n: number;
     };
     if (vinculos.n > 0) {
@@ -870,7 +873,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
       return res.status(404).json({ erro: 'Produto não encontrado' });
     }
 
-    const vinculos = countVinculosProdutoStmt.get(id, id, produto.nome) as { n: number };
+    const vinculos = countVinculosProdutoStmt.get(id, id, produto.nome, id, id) as { n: number };
     if (vinculos.n > 0) {
       return res.status(409).json({
         erro: 'Produto possui ordens de produção vinculadas e não pode ser excluído',

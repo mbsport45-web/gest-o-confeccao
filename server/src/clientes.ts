@@ -157,9 +157,10 @@ export function createClientesRouter(db: AppDatabase): Router {
 
   const getStmt = db.prepare('SELECT * FROM clientes WHERE id = ?');
   const countVinculosStmt = db.prepare(
-    `SELECT COUNT(*) AS n FROM ordens_producao
-     WHERE cliente_id = ?
-        OR lower(trim(cliente)) = lower(trim(?))`,
+    `SELECT
+        (SELECT COUNT(*) FROM ordens_producao
+          WHERE cliente_id = ? OR lower(trim(cliente)) = lower(trim(?)))
+      + (SELECT COUNT(*) FROM pedidos WHERE cliente_id = ?) AS n`,
   );
 
   router.get('/', (req, res) => {
@@ -323,10 +324,10 @@ export function createClientesRouter(db: AppDatabase): Router {
       return res.status(404).json({ erro: 'Cliente não encontrado' });
     }
 
-    const vinculos = countVinculosStmt.get(id, cliente.nome) as { n: number };
+    const vinculos = countVinculosStmt.get(id, cliente.nome, id) as { n: number };
     if (vinculos.n > 0) {
       return res.status(409).json({
-        erro: 'Cliente possui ordens de produção vinculadas e não pode ser excluído',
+        erro: 'Cliente possui ordens de produção ou pedidos vinculados e não pode ser excluído',
         vinculos: vinculos.n,
       });
     }

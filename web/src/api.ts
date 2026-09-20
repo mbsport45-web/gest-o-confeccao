@@ -176,6 +176,205 @@ export async function removerOrdem(id: number): Promise<void> {
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
+export const STATUS_PEDIDO = [
+  'orcamento',
+  'aberto',
+  'confirmado',
+  'em_producao',
+  'pronto',
+  'faturado',
+  'entregue',
+  'cancelado',
+] as const;
+export type StatusPedido = (typeof STATUS_PEDIDO)[number];
+export const STATUS_PEDIDO_LABEL: Record<StatusPedido, string> = {
+  orcamento: 'Orçamento',
+  aberto: 'Aberto',
+  confirmado: 'Confirmado',
+  em_producao: 'Em produção',
+  pronto: 'Pronto',
+  faturado: 'Faturado',
+  entregue: 'Entregue',
+  cancelado: 'Cancelado',
+};
+
+export interface PedidoItemVenda {
+  id: number;
+  pedido_id: number;
+  produto_id: number;
+  variante_id: number | null;
+  quantidade: number;
+  preco_unitario: number;
+  desconto: number;
+  total: number;
+  quantidade_reservada: number;
+  produto?: string | null;
+  sku?: string | null;
+  cor?: string | null;
+  tamanho?: string | null;
+  ordem_id?: number | null;
+  ordem_codigo?: string | null;
+  ordem_status?: string | null;
+}
+
+export interface PedidoVenda {
+  id: number;
+  codigo: string | null;
+  cliente_id: number;
+  data_pedido: string;
+  data_prevista: string | null;
+  status: StatusPedido;
+  prioridade: PrioridadeOp;
+  observacoes: string | null;
+  subtotal: number;
+  desconto: number;
+  frete: number;
+  total: number;
+  criado_em: string;
+  atualizado_em: string;
+  cliente?: string;
+  produtos?: string | null;
+  quantidade?: number;
+  itens?: PedidoItemVenda[];
+  ordens?: Array<{
+    id: number;
+    codigo: string | null;
+    status: string;
+    produto: string;
+    quantidade: number;
+    pedido_item_id: number | null;
+  }>;
+  financeiro?: {
+    id: number;
+    status: string;
+    valor: number;
+    vencimento: string | null;
+    descricao: string;
+  } | null;
+  ops_geradas?: Array<{ id: number; codigo: string }>;
+}
+
+export interface PedidoResumo {
+  total: number;
+  abertos: number;
+  confirmados: number;
+  em_producao: number;
+  prontos: number;
+  faturados: number;
+  entregues: number;
+  atrasados: number;
+  total_vendido: number;
+}
+
+export type PedidoPayload = {
+  cliente_id: number;
+  data_pedido?: string;
+  data_prevista?: string;
+  status?: StatusPedido;
+  prioridade?: PrioridadeOp;
+  observacoes?: string;
+  desconto?: number;
+  frete?: number;
+  itens?: Array<{
+    produto_id: number;
+    variante_id?: number;
+    quantidade: number;
+    preco_unitario: number;
+    desconto?: number;
+  }>;
+};
+
+export async function listarPedidos(
+  filtros: {
+    q?: string;
+    status?: string;
+    prioridade?: string;
+    cliente_id?: number;
+    produto_id?: number;
+    de?: string;
+    ate?: string;
+    pagina?: number;
+    por_pagina?: number;
+  } = {},
+): Promise<ListaPadrao<PedidoVenda> & { totais: { valor: number; quantidade: number } }> {
+  const params = new URLSearchParams();
+  Object.entries(filtros).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  });
+  const res = await fetch(`/api/pedidos?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterResumoPedidos(filtros: { de?: string; ate?: string } = {}): Promise<PedidoResumo> {
+  const params = new URLSearchParams();
+  if (filtros.de) params.set('de', filtros.de);
+  if (filtros.ate) params.set('ate', filtros.ate);
+  const res = await fetch(`/api/pedidos/resumo?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterPedido(id: number): Promise<PedidoVenda> {
+  const res = await fetch(`/api/pedidos/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarPedido(dados: PedidoPayload): Promise<PedidoVenda> {
+  const res = await fetch('/api/pedidos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarPedido(
+  id: number,
+  dados: Partial<PedidoPayload> & { status?: StatusPedido },
+): Promise<PedidoVenda> {
+  const res = await fetch(`/api/pedidos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function gerarOpPedido(
+  id: number,
+  body: { item_ids?: number[]; forcar?: boolean } = {},
+): Promise<PedidoVenda> {
+  const res = await fetch(`/api/pedidos/${id}/gerar-op`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function gerarFinanceiroPedido(
+  id: number,
+  vencimento?: string,
+): Promise<PedidoVenda> {
+  const res = await fetch(`/api/pedidos/${id}/financeiro`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(vencimento ? { vencimento } : {}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerPedido(id: number): Promise<void> {
+  const res = await fetch(`/api/pedidos/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}
+
 export async function obterFichaTecnica(
   produtoId: number,
   varianteId?: number,
@@ -1161,11 +1360,13 @@ export interface FinanceiroLancamento {
   fornecedor_id: number | null;
   cliente_id: number | null;
   compra_id: number | null;
+  pedido_id?: number | null;
   observacoes: string | null;
   categoria?: string | null;
   fornecedor?: string | null;
   cliente?: string | null;
   compra_codigo?: string | null;
+  pedido_codigo?: string | null;
 }
 
 export interface FinanceiroResumo {

@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { ClientesPage } from './ClientesPage';
+import { ComprasPage } from './ComprasPage';
 import { DashboardPage } from './DashboardPage';
 import { EtapasPage } from './EtapasPage';
 import { EstoquePage } from './EstoquePage';
-import { MateriasPrimasPage } from './MateriasPrimasPage';
-import { ModuloEmBreve } from './ModuloEmBreve';
-import { ComprasPage } from './ComprasPage';
 import { FinanceiroPage } from './FinanceiroPage';
-import { RelatoriosPage } from './RelatoriosPage';
+import { MateriasPrimasPage } from './MateriasPrimasPage';
 import { OrdemDetalhePage } from './OrdemDetalhePage';
 import { OrdensPage } from './OrdensPage';
+import { PedidosPage } from './PedidosPage';
 import { ProdutosPage } from './ProdutosPage';
+import { RelatoriosPage } from './RelatoriosPage';
 
 type Pagina =
   | 'dashboard'
@@ -173,12 +173,7 @@ export function App() {
               {pagina === 'produtos' && <ProdutosPage />}
               {pagina === 'materiais' && <MateriasPrimasPage />}
               {pagina === 'estoque' && <EstoquePage />}
-              {pagina === 'pedidos' && (
-                <ModuloEmBreve
-                  titulo="Pedidos"
-                  descricao="O módulo de pedidos de venda ainda não foi implantado."
-                />
-              )}
+              {pagina === 'pedidos' && <PedidosPage onAbrirOp={abrirOp} />}
               {pagina === 'ordens' && <OrdensPage />}
               {pagina === 'etapas' && <EtapasPage />}
               {pagina === 'compras' && <ComprasPage />}
