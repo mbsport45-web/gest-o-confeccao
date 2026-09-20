@@ -162,6 +162,12 @@ body {
   color: var(--muted);
 }
 
+.login__dica {
+  margin: -0.35rem 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
 .shell__hamburguer {
   display: none;
   background: var(--surface);

@@ -485,6 +485,7 @@ export function createDatabase(location: string) {
       criado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS sessoes_usuario ON sessoes (usuario_id);
+    CREATE INDEX IF NOT EXISTS usuarios_empresa ON usuarios (empresa_id);
   `);
 
   db.prepare(

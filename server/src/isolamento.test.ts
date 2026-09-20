@@ -14,7 +14,7 @@ describe('isolamento por empresa da sessão', () => {
     db = createDatabase(':memory:');
     const app = createApp(db);
     empresa1 = await autenticar(app);
-    ({ api: empresa2 } = await autenticarNovaEmpresa(app, db));
+    ({ api: empresa2 } = await autenticarNovaEmpresa(app));
   });
 
   afterEach(() => {
