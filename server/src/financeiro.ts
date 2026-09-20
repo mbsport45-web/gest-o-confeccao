@@ -98,11 +98,23 @@ const LANCAMENTO_SELECT = `
     pv.codigo AS pedido_codigo
   FROM financeiro_lancamentos l
   LEFT JOIN financeiro_categorias c ON c.id = l.categoria_id
-  LEFT JOIN fornecedores f ON f.id = l.fornecedor_id
-  LEFT JOIN clientes cl ON cl.id = l.cliente_id
-  LEFT JOIN pedidos_compra pc ON pc.id = l.compra_id
-  LEFT JOIN pedidos pv ON pv.id = l.pedido_id
+  LEFT JOIN fornecedores f ON f.id = l.fornecedor_id AND f.empresa_id = l.empresa_id
+  LEFT JOIN clientes cl ON cl.id = l.cliente_id AND cl.empresa_id = l.empresa_id
+  LEFT JOIN pedidos_compra pc ON pc.id = l.compra_id AND pc.empresa_id = l.empresa_id
+  LEFT JOIN pedidos pv ON pv.id = l.pedido_id AND pv.empresa_id = l.empresa_id
 `;
+
+function pertenceAEmpresa(
+  db: AppDatabase,
+  tabela: 'clientes' | 'fornecedores' | 'pedidos' | 'pedidos_compra' | 'ordens_producao',
+  id: number | null | undefined,
+  empresaId: number,
+): boolean {
+  if (id == null) return true;
+  return Boolean(
+    db.prepare(`SELECT id FROM ${tabela} WHERE id = ? AND empresa_id = ?`).get(id, empresaId),
+  );
+}
 
 export function arredondarDinheiro(valor: number): number {
   return Math.round((valor + Number.EPSILON) * 100) / 100;
@@ -491,10 +503,10 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
     const from = `
       FROM financeiro_lancamentos l
       LEFT JOIN financeiro_categorias c ON c.id = l.categoria_id
-      LEFT JOIN fornecedores f ON f.id = l.fornecedor_id
-      LEFT JOIN clientes cl ON cl.id = l.cliente_id
-      LEFT JOIN pedidos_compra pc ON pc.id = l.compra_id
-      LEFT JOIN pedidos pv ON pv.id = l.pedido_id
+      LEFT JOIN fornecedores f ON f.id = l.fornecedor_id AND f.empresa_id = l.empresa_id
+      LEFT JOIN clientes cl ON cl.id = l.cliente_id AND cl.empresa_id = l.empresa_id
+      LEFT JOIN pedidos_compra pc ON pc.id = l.compra_id AND pc.empresa_id = l.empresa_id
+      LEFT JOIN pedidos pv ON pv.id = l.pedido_id AND pv.empresa_id = l.empresa_id
       ${filtro}
     `;
     const total = (db.prepare(`SELECT COUNT(*) AS n ${from}`).get(params) as { n: number }).n;
@@ -539,13 +551,20 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
     if (data.tipo === 'receber' && data.status === 'pago') {
       return res.status(400).json({ erro: 'Conta a receber não usa status pago' });
     }
-    if (data.fornecedor_id) {
-      const f = db.prepare('SELECT id FROM fornecedores WHERE id = ? AND empresa_id = ?').get(data.fornecedor_id, empresaId);
-      if (!f) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
+    if (!pertenceAEmpresa(db, 'fornecedores', data.fornecedor_id, empresaId)) {
+      return res.status(404).json({ erro: 'Fornecedor não encontrado' });
     }
-    if (data.cliente_id) {
-      const c = db.prepare('SELECT id FROM clientes WHERE id = ? AND empresa_id = ?').get(data.cliente_id, empresaId);
-      if (!c) return res.status(404).json({ erro: 'Cliente não encontrado' });
+    if (!pertenceAEmpresa(db, 'clientes', data.cliente_id, empresaId)) {
+      return res.status(404).json({ erro: 'Cliente não encontrado' });
+    }
+    if (!pertenceAEmpresa(db, 'pedidos', data.pedido_id, empresaId)) {
+      return res.status(404).json({ erro: 'Pedido não encontrado' });
+    }
+    if (!pertenceAEmpresa(db, 'pedidos_compra', data.compra_id, empresaId)) {
+      return res.status(404).json({ erro: 'Compra não encontrada' });
+    }
+    if (!pertenceAEmpresa(db, 'ordens_producao', data.ordem_id, empresaId)) {
+      return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
     }
     const status = data.status ?? 'pendente';
     const info = db
@@ -593,6 +612,14 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       });
     }
     const data = parsed.data;
+    const clienteId = data.cliente_id !== undefined ? data.cliente_id : atual.cliente_id;
+    const fornecedorId = data.fornecedor_id !== undefined ? data.fornecedor_id : atual.fornecedor_id;
+    if (!pertenceAEmpresa(db, 'clientes', clienteId, empresaId)) {
+      return res.status(404).json({ erro: 'Cliente não encontrado' });
+    }
+    if (!pertenceAEmpresa(db, 'fornecedores', fornecedorId, empresaId)) {
+      return res.status(404).json({ erro: 'Fornecedor não encontrado' });
+    }
     const tipo = data.tipo ?? atual.tipo;
     const status = data.status ?? atual.status;
     if (tipo === 'pagar' && status === 'recebido') {
@@ -637,8 +664,8 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       status,
       vencimento: data.vencimento !== undefined ? data.vencimento ?? null : atual.vencimento,
       data_pagamento: dataPagamento,
-      fornecedor_id: data.fornecedor_id !== undefined ? data.fornecedor_id : atual.fornecedor_id,
-      cliente_id: data.cliente_id !== undefined ? data.cliente_id : atual.cliente_id,
+      fornecedor_id: fornecedorId,
+      cliente_id: clienteId,
       observacoes: data.observacoes !== undefined ? data.observacoes ?? null : atual.observacoes,
     });
     res.json(mapLancamento(getLancamento.get(id, empresaId) as FinanceiroLancamento));

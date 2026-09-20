@@ -527,7 +527,8 @@ export function createPedidosRouter(db: AppDatabase): Router {
       db
         .prepare(
           `SELECT COUNT(*) AS n FROM pedidos
-            WHERE status NOT IN ('entregue','cancelado','faturado')
+            WHERE empresa_id = @empresa_id
+              AND status NOT IN ('entregue','cancelado','faturado')
               AND data_prevista IS NOT NULL
               AND date(data_prevista) < date('now')
               ${de ? 'AND date(data_pedido) >= date(@de)' : ''}
