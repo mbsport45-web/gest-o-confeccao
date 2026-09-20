@@ -1240,13 +1240,14 @@ a.btn-secundario {
 
 .plano button {
   width: 100%;
+  margin-top: auto;
 }
 
 .assinatura-status {
   border: 1px solid var(--borda, #2a3548);
   border-radius: 12px;
   padding: 1rem;
-  margin: 0 0 1rem;
+  margin: 1.25rem 0 1rem;
   background: rgba(255, 255, 255, 0.02);
 }
 

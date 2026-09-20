@@ -113,7 +113,67 @@ export function PlanoPage({
           Sandbox (Pix ou boleto). O preço oficial sai do servidor — o navegador só envia o plano
           escolhido.
         </p>
-        {podeVer && (
+        {erro && <p className="erro">{erro}</p>}
+        {carregando ? (
+          <p className="vazio">Carregando planos…</p>
+        ) : planoCheckout ? (
+          <CheckoutAssinatura
+            plano={planoCheckout}
+            atual={atual}
+            podeHistorico={podeHistorico}
+            onAssinatura={aplicarAssinatura}
+            onEventos={setEventos}
+            onVoltar={() => setPlanoCheckout(null)}
+          />
+        ) : (
+          <div className="planos">
+            {planos.map((plano) => {
+              const atualPlano = plano.codigo === atual.plano.codigo;
+              return (
+                <article
+                  key={plano.codigo}
+                  className={atualPlano ? 'plano plano--atual' : 'plano'}
+                  data-codigo={plano.codigo}
+                >
+                  {atualPlano && <p className="plano__selo">Plano atual</p>}
+                  <h3>{plano.nome}</h3>
+                  <p className="plano__preco">{formatarPrecoMensal(plano.preco_mensal, plano.moeda)}</p>
+                  <p className="dica">{plano.descricao}</p>
+                  <ul className="plano__lista">
+                    {(Object.keys(plano.limites) as ChaveLimite[]).map((chave) => (
+                      <li key={chave}>
+                        {LIMITE_LABEL[chave]}: {formatarLimite(plano.limites[chave])}
+                      </li>
+                    ))}
+                  </ul>
+                  <ul className="plano__lista">
+                    {Object.entries(plano.recursos).map(([chave, ligado]) => (
+                      <li key={chave}>
+                        {ligado ? 'Inclui' : 'Não inclui'} {RECURSO_LABEL[chave] ?? chave}
+                      </li>
+                    ))}
+                  </ul>
+                  {podeEditar ? (
+                    <button
+                      type="button"
+                      disabled={atualPlano || !atual.acesso.trocar_plano}
+                      onClick={() => setPlanoCheckout(plano)}
+                    >
+                      {atualPlano
+                        ? 'Plano atual'
+                        : !atual.acesso.trocar_plano
+                          ? 'Indisponível neste status'
+                          : rotuloAcaoPlano(plano, atual.plano)}
+                    </button>
+                  ) : (
+                    atualPlano && <p className="dica">Este é o plano da sua empresa.</p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+        {podeVer && !planoCheckout && (
           <div className={`assinatura-status assinatura-status--${atual.status}`}>
             <p>
               Status: <strong>{atual.status_label ?? atual.status}</strong>
@@ -209,66 +269,6 @@ export function PlanoPage({
               );
             })}
           </ul>
-        )}
-        {erro && <p className="erro">{erro}</p>}
-        {carregando ? (
-          <p className="vazio">Carregando planos…</p>
-        ) : planoCheckout ? (
-          <CheckoutAssinatura
-            plano={planoCheckout}
-            atual={atual}
-            podeHistorico={podeHistorico}
-            onAssinatura={aplicarAssinatura}
-            onEventos={setEventos}
-            onVoltar={() => setPlanoCheckout(null)}
-          />
-        ) : (
-          <div className="planos">
-            {planos.map((plano) => {
-              const atualPlano = plano.codigo === atual.plano.codigo;
-              return (
-                <article
-                  key={plano.codigo}
-                  className={atualPlano ? 'plano plano--atual' : 'plano'}
-                  data-codigo={plano.codigo}
-                >
-                  {atualPlano && <p className="plano__selo">Plano atual</p>}
-                  <h3>{plano.nome}</h3>
-                  <p className="plano__preco">{formatarPrecoMensal(plano.preco_mensal, plano.moeda)}</p>
-                  <p className="dica">{plano.descricao}</p>
-                  <ul className="plano__lista">
-                    {(Object.keys(plano.limites) as ChaveLimite[]).map((chave) => (
-                      <li key={chave}>
-                        {LIMITE_LABEL[chave]}: {formatarLimite(plano.limites[chave])}
-                      </li>
-                    ))}
-                  </ul>
-                  <ul className="plano__lista">
-                    {Object.entries(plano.recursos).map(([chave, ligado]) => (
-                      <li key={chave}>
-                        {ligado ? 'Inclui' : 'Não inclui'} {RECURSO_LABEL[chave] ?? chave}
-                      </li>
-                    ))}
-                  </ul>
-                  {podeEditar ? (
-                    <button
-                      type="button"
-                      disabled={atualPlano || !atual.acesso.trocar_plano}
-                      onClick={() => setPlanoCheckout(plano)}
-                    >
-                      {atualPlano
-                        ? 'Plano atual'
-                        : !atual.acesso.trocar_plano
-                          ? 'Indisponível neste status'
-                          : rotuloAcaoPlano(plano, atual.plano)}
-                    </button>
-                  ) : (
-                    atualPlano && <p className="dica">Este é o plano da sua empresa.</p>
-                  )}
-                </article>
-              );
-            })}
-          </div>
         )}
         {podeHistorico && !carregando && <HistoricoComercial eventos={eventos} />}
       </section>
