@@ -118,7 +118,8 @@ export function ExpedicaoPage() {
   }
 
   return (
-    <main className="app__main app__main--expedicao">
+    <main className={`app__main app__main--expedicao${expedindo ? '' : ' app__main--expedicao-solo'}`}>
+      <div>
       {resumo && (
         <section className="kpi-grid" aria-label="Indicadores de expedição">
           <button type="button" className="kpi" onClick={() => setFila('prontos')}>
@@ -256,6 +257,7 @@ export function ExpedicaoPage() {
           </div>
         </div>
       </section>
+      </div>
 
       {expedindo && (
         <section className="card">

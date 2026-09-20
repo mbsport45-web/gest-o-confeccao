@@ -177,8 +177,17 @@ body {
 .app__main--etapas,
 .app__main--compras,
 .app__main--pedidos,
+.app__main--expedicao,
 .app__main--financeiro {
   grid-template-columns: 1fr 400px;
+}
+
+.app__main--expedicao.app__main--expedicao-solo {
+  grid-template-columns: 1fr;
+}
+
+.app__main--expedicao .kpi-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .nav {
