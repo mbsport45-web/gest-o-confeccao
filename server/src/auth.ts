@@ -4,7 +4,12 @@ import { hashSync, compareSync } from 'bcryptjs';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { isPapel, permissoesDoPapel, type Papel } from './papeis.js';
-import { avaliarLimite, garantirAssinatura, obterAssinaturaDaEmpresa } from './planos.js';
+import {
+  avaliarLimite,
+  corpoAssinaturaBloqueada,
+  garantirAssinatura,
+  obterAssinaturaDaEmpresa,
+} from './planos.js';
 
 export const COOKIE_SESSAO = 'gc_sessao';
 const SESSAO_MS = 7 * 24 * 60 * 60 * 1000;
@@ -238,6 +243,10 @@ export function createAuthRouter(db: AppDatabase): Router {
       return res.status(400).json({ erro: 'Este convite foi enviado para outro e-mail' });
     }
     if (conviteInfo?.ok) {
+      const assinaturaEmpresa = obterAssinaturaDaEmpresa(db, conviteInfo.convite.empresa_id);
+      if (!assinaturaEmpresa.acesso.operacional) {
+        return res.status(403).json(corpoAssinaturaBloqueada(assinaturaEmpresa.status));
+      }
       const membros = (
         db
           .prepare('SELECT COUNT(*) AS n FROM usuarios WHERE empresa_id = ?')

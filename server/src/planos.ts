@@ -8,6 +8,121 @@ export type CodigoPlano = (typeof CODIGOS_PLANO)[number];
 
 export const PLANO_PADRAO: CodigoPlano = 'basico';
 export const COBRANCA_DESATIVADA = 'desativada' as const;
+export const STATUS_ASSINATURA_PADRAO = 'trial' as const;
+export const TRIAL_DIAS = 14;
+export const CICLO_DIAS = 30;
+export const ATRASO_GRACA_DIAS = 7;
+
+export const STATUS_ASSINATURA = [
+  'trial',
+  'ativa',
+  'past_due',
+  'cancelada',
+  'expirada',
+] as const;
+export type StatusAssinatura = (typeof STATUS_ASSINATURA)[number];
+
+export const ACOES_ASSINATURA = [
+  'ativar',
+  'cancelar',
+  'regularizar',
+  'reativar',
+  'renovar',
+  'marcar_atraso',
+  'expirar',
+] as const;
+export type AcaoAssinatura = (typeof ACOES_ASSINATURA)[number];
+
+export const CODIGO_ASSINATURA_BLOQUEADA = 'assinatura_bloqueada' as const;
+
+export const STATUS_ASSINATURA_LABEL: Record<StatusAssinatura, string> = {
+  trial: 'Período de avaliação',
+  ativa: 'Ativa',
+  past_due: 'Em atraso',
+  cancelada: 'Cancelada',
+  expirada: 'Expirada',
+};
+
+export const TRANSICOES_ASSINATURA: Record<
+  AcaoAssinatura,
+  { de: StatusAssinatura[]; para: StatusAssinatura }
+> = {
+  ativar: { de: ['trial'], para: 'ativa' },
+  cancelar: { de: ['trial', 'ativa', 'past_due'], para: 'cancelada' },
+  regularizar: { de: ['past_due'], para: 'ativa' },
+  reativar: { de: ['cancelada'], para: 'ativa' },
+  renovar: { de: ['expirada'], para: 'ativa' },
+  marcar_atraso: { de: ['ativa'], para: 'past_due' },
+  expirar: { de: ['trial', 'past_due', 'cancelada'], para: 'expirada' },
+};
+
+export const ACAO_ASSINATURA_LABEL: Record<AcaoAssinatura, string> = {
+  ativar: 'Ativar assinatura',
+  cancelar: 'Cancelar assinatura',
+  regularizar: 'Regularizar atraso',
+  reativar: 'Reativar assinatura',
+  renovar: 'Renovar assinatura',
+  marcar_atraso: 'Simular atraso',
+  expirar: 'Simular expiração',
+};
+
+export function isStatusAssinatura(valor: unknown): valor is StatusAssinatura {
+  return typeof valor === 'string' && (STATUS_ASSINATURA as readonly string[]).includes(valor);
+}
+
+export function politicaDaAssinatura(status: StatusAssinatura) {
+  const operacional = status === 'trial' || status === 'ativa';
+  const acoes = (Object.keys(TRANSICOES_ASSINATURA) as AcaoAssinatura[]).filter((acao) =>
+    TRANSICOES_ASSINATURA[acao].de.includes(status),
+  );
+  if (operacional) {
+    return {
+      leitura: true,
+      operacional: true,
+      trocar_plano: true,
+      permite: [
+        'Ler os dados da empresa',
+        'Criar, editar e excluir cadastros e produção dentro dos limites do plano',
+        'Trocar de plano',
+        'Gerenciar o status da assinatura',
+      ],
+      bloqueia: ['Cobrança real (desativada nesta etapa)'],
+      acoes,
+    };
+  }
+  const bloqueia = [
+    'Criar, editar ou excluir cadastros, pedidos, OPs e demais dados operacionais',
+    'Trocar de plano enquanto a assinatura não estiver operacional',
+    'Aceitar novos convites',
+  ];
+  const permite = [
+    'Entrar na empresa e ler os dados já gravados',
+    'Ver o plano, o uso e o status da assinatura',
+    'Regularizar, reativar ou renovar (sem cobrança nesta etapa)',
+  ];
+  return {
+    leitura: true,
+    operacional: false,
+    trocar_plano: false,
+    permite,
+    bloqueia,
+    acoes,
+  };
+}
+
+export function mensagemAssinaturaBloqueada(status: StatusAssinatura): string {
+  const label = STATUS_ASSINATURA_LABEL[status];
+  return `Assinatura ${label.toLowerCase()}: os dados da empresa continuam acessíveis em leitura. Regularize, reative ou renove o plano para voltar a operar.`;
+}
+
+export function corpoAssinaturaBloqueada(status: StatusAssinatura) {
+  return {
+    erro: mensagemAssinaturaBloqueada(status),
+    codigo: CODIGO_ASSINATURA_BLOQUEADA,
+    status,
+    operacional: false,
+  };
+}
 
 export type LimitesPlano = {
   usuarios: number | null;
@@ -130,11 +245,15 @@ export const PLANOS_CATALOGO: PlanoCatalogo[] = [
   },
 ];
 
-const alterarPlanoSchema = z
+const alterarAssinaturaSchema = z
   .object({
-    plano: z.enum(CODIGOS_PLANO),
+    plano: z.enum(CODIGOS_PLANO).optional(),
+    acao: z.enum(ACOES_ASSINATURA).optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => Boolean(body.plano) !== Boolean(body.acao), {
+    message: 'Informe plano ou acao',
+  });
 
 type PlanoRow = {
   id: number;
@@ -188,14 +307,23 @@ export function mapearPlano(row: {
 }
 
 export function mapearAssinatura(row: AssinaturaRow) {
+  const status: StatusAssinatura = isStatusAssinatura(row.status) ? row.status : 'ativa';
+  const politica = politicaDaAssinatura(status);
   return {
-    status: row.status,
+    status,
+    status_label: STATUS_ASSINATURA_LABEL[status],
     cobranca: row.cobranca,
     ciclo: row.ciclo,
     inicia_em: row.inicia_em,
     renova_em: row.renova_em,
     gateway: row.gateway,
     plano: mapearPlano(row),
+    acesso: {
+      leitura: politica.leitura,
+      operacional: politica.operacional,
+      trocar_plano: politica.trocar_plano,
+    },
+    politica,
   };
 }
 
@@ -309,6 +437,95 @@ export function exigirLimite(
   };
 }
 
+function vencidaEm(renovaEm: string | null, agora: string): boolean {
+  return Boolean(renovaEm && renovaEm <= agora);
+}
+
+export function sincronizarAssinatura(db: AppDatabase, empresaId: number) {
+  garantirAssinatura(db, empresaId);
+  const row = db.prepare(`${ASSINATURA_SELECT} WHERE a.empresa_id = ?`).get(empresaId) as
+    | AssinaturaRow
+    | undefined;
+  if (!row) return;
+  const status = isStatusAssinatura(row.status) ? row.status : 'ativa';
+  const agora = (db.prepare(`SELECT datetime('now') AS n`).get() as { n: string }).n;
+  const deveExpirar =
+    (status === 'trial' || status === 'past_due' || status === 'cancelada') &&
+    vencidaEm(row.renova_em, agora);
+  if (!deveExpirar) return;
+  db.prepare(
+    `UPDATE assinaturas
+        SET status = 'expirada', cobranca = 'desativada', gateway = NULL, gateway_assinatura_id = NULL,
+            atualizado_em = datetime('now')
+      WHERE empresa_id = ?`,
+  ).run(empresaId);
+}
+
+export function aplicarAcaoAssinatura(
+  db: AppDatabase,
+  empresaId: number,
+  acao: AcaoAssinatura,
+): { ok: true } | { ok: false; statusHttp: number; corpo: Record<string, unknown> } {
+  sincronizarAssinatura(db, empresaId);
+  const row = db.prepare(`${ASSINATURA_SELECT} WHERE a.empresa_id = ?`).get(empresaId) as
+    | AssinaturaRow
+    | undefined;
+  if (!row) return { ok: false, statusHttp: 404, corpo: { erro: 'Assinatura não encontrada' } };
+  const atual: StatusAssinatura = isStatusAssinatura(row.status) ? row.status : 'ativa';
+  const regra = TRANSICOES_ASSINATURA[acao];
+  if (!regra.de.includes(atual)) {
+    return {
+      ok: false,
+      statusHttp: 409,
+      corpo: {
+        erro: `Não é possível ${ACAO_ASSINATURA_LABEL[acao].toLowerCase()} a partir do status ${STATUS_ASSINATURA_LABEL[atual].toLowerCase()}.`,
+        codigo: 'transicao_invalida',
+        de: atual,
+        acao,
+      },
+    };
+  }
+  const proximo = regra.para;
+  let renovaSql = 'renova_em';
+  if (proximo === 'ativa') {
+    renovaSql = `datetime('now', '+${CICLO_DIAS} days')`;
+  } else if (proximo === 'past_due') {
+    renovaSql = `datetime('now', '+${ATRASO_GRACA_DIAS} days')`;
+  } else if (proximo === 'expirada') {
+    renovaSql = `datetime('now')`;
+  }
+  db.prepare(
+    `UPDATE assinaturas
+        SET status = ?, cobranca = 'desativada', gateway = NULL, gateway_assinatura_id = NULL,
+            inicia_em = CASE WHEN ? IN ('ativa', 'trial') THEN datetime('now') ELSE inicia_em END,
+            renova_em = ${renovaSql},
+            atualizado_em = datetime('now')
+      WHERE empresa_id = ?`,
+  ).run(proximo, proximo, empresaId);
+  return { ok: true };
+}
+
+export function exigirAssinaturaOperacional(db: AppDatabase): RequestHandler {
+  return (req, res, next) => {
+    const metodo = req.method.toUpperCase();
+    if (metodo === 'GET' || metodo === 'HEAD' || metodo === 'OPTIONS') return next();
+    const caminho = (req.originalUrl || req.path || '').split('?')[0];
+    if (
+      caminho === '/api/assinatura' ||
+      caminho.startsWith('/api/assinatura/') ||
+      caminho === '/api/planos' ||
+      caminho.startsWith('/api/planos/')
+    ) {
+      return next();
+    }
+    const empresaId = empresaDaSessao(req);
+    sincronizarAssinatura(db, empresaId);
+    const assinatura = obterAssinaturaDaEmpresa(db, empresaId);
+    if (assinatura.acesso.operacional) return next();
+    return res.status(403).json(corpoAssinaturaBloqueada(assinatura.status));
+  };
+}
+
 export function aplicarSchemaPlanos(db: AppDatabase) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS planos (
@@ -376,8 +593,8 @@ export function garantirAssinatura(db: AppDatabase, empresaId: number, codigo: C
     .get(codigo) as { id: number } | undefined;
   if (!plano) throw new Error(`plano ${codigo} não cadastrado`);
   db.prepare(
-    `INSERT INTO assinaturas (empresa_id, plano_id, status, cobranca, ciclo)
-     VALUES (?, ?, 'ativa', 'desativada', 'mensal')`,
+    `INSERT INTO assinaturas (empresa_id, plano_id, status, cobranca, ciclo, renova_em)
+     VALUES (?, ?, 'trial', 'desativada', 'mensal', datetime('now', '+${TRIAL_DIAS} days'))`,
   ).run(empresaId, plano.id);
 }
 
@@ -391,7 +608,7 @@ const ASSINATURA_SELECT = `
 `;
 
 export function obterAssinaturaDaEmpresa(db: AppDatabase, empresaId: number) {
-  garantirAssinatura(db, empresaId);
+  sincronizarAssinatura(db, empresaId);
   const row = db.prepare(`${ASSINATURA_SELECT} WHERE a.empresa_id = ?`).get(empresaId) as
     | AssinaturaRow
     | undefined;
@@ -429,19 +646,31 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
   });
 
   router.patch('/', (req, res) => {
-    const parsed = alterarPlanoSchema.safeParse(req.body);
+    const parsed = alterarAssinaturaSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
         erro: 'Dados inválidos',
         detalhes: parsed.error.flatten().fieldErrors,
+        form: parsed.error.flatten().formErrors,
       });
     }
     const empresaId = empresaDaSessao(req);
+    sincronizarAssinatura(db, empresaId);
+
+    if (parsed.data.acao) {
+      const resultado = aplicarAcaoAssinatura(db, empresaId, parsed.data.acao);
+      if (!resultado.ok) return res.status(resultado.statusHttp).json(resultado.corpo);
+      return res.json(obterAssinaturaDaEmpresa(db, empresaId));
+    }
+
+    const atual = obterAssinaturaDaEmpresa(db, empresaId);
+    if (!atual.acesso.trocar_plano) {
+      return res.status(403).json(corpoAssinaturaBloqueada(atual.status));
+    }
     const plano = db
       .prepare('SELECT id FROM planos WHERE codigo = ? AND ativo = 1')
       .get(parsed.data.plano) as { id: number } | undefined;
     if (!plano) return res.status(404).json({ erro: 'Plano não encontrado' });
-    garantirAssinatura(db, empresaId);
     db.prepare(
       `UPDATE assinaturas
           SET plano_id = ?, cobranca = 'desativada', gateway = NULL, gateway_assinatura_id = NULL,

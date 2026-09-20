@@ -18,9 +18,11 @@ import { LoginPage } from './LoginPage';
 import {
   obterSessao,
   PAPEL_LABEL,
+  STATUS_ASSINATURA_LABEL,
   sair,
   temPermissao,
   moduloSomenteLeitura,
+  assinaturaOperacional,
   type Modulo,
   type SessaoAtual,
 } from './api';
@@ -180,9 +182,16 @@ function AppAutenticado({
     ? 'ordens'
     : NAV.find((item) => item.id === paginaAtual)?.modulo;
   const podeEquipe = temPermissao(sessao.permissoes, 'equipe');
-  const somenteLeitura = moduloAtual
-    ? moduloSomenteLeitura(sessao.permissoes, moduloAtual)
-    : false;
+  const bloqueioAssinatura = !assinaturaOperacional(sessao.assinatura);
+  const somenteLeitura = bloqueioAssinatura
+    ? Boolean(moduloAtual)
+    : moduloAtual
+      ? moduloSomenteLeitura(sessao.permissoes, moduloAtual)
+      : false;
+  const statusLabel =
+    sessao.assinatura.status_label ??
+    STATUS_ASSINATURA_LABEL[sessao.assinatura.status] ??
+    sessao.assinatura.status;
 
   return (
     <div
@@ -239,7 +248,7 @@ function AppAutenticado({
               {sessao.usuario.nome}
               <small>
                 {sessao.empresa.nome} · {PAPEL_LABEL[sessao.usuario.papel]} ·{' '}
-                {sessao.assinatura.plano.nome}
+                {sessao.assinatura.plano.nome} · {statusLabel}
               </small>
             </span>
             <button
@@ -255,7 +264,13 @@ function AppAutenticado({
         </header>
 
         <div className="shell__conteudo">
-          {somenteLeitura && (
+          {bloqueioAssinatura && (
+            <p className="aviso-limite">
+              Assinatura {statusLabel.toLowerCase()}: os dados continuam visíveis, mas criar ou
+              alterar cadastros está bloqueado. Abra Plano para regularizar, reativar ou renovar.
+            </p>
+          )}
+          {somenteLeitura && !bloqueioAssinatura && (
             <p className="aviso-leitura">Seu papel é somente leitura neste módulo.</p>
           )}
           {ordemId && temPermissao(sessao.permissoes, 'ordens') ? (

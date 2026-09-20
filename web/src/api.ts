@@ -1667,8 +1667,46 @@ export interface PlanoEmpresa {
   preco_anual: number | null;
 }
 
+export interface PoliticaAssinatura {
+  leitura: boolean;
+  operacional: boolean;
+  trocar_plano: boolean;
+  permite: string[];
+  bloqueia: string[];
+  acoes: AcaoAssinatura[];
+}
+
+export type StatusAssinatura = 'trial' | 'ativa' | 'past_due' | 'cancelada' | 'expirada';
+export type AcaoAssinatura =
+  | 'ativar'
+  | 'cancelar'
+  | 'regularizar'
+  | 'reativar'
+  | 'renovar'
+  | 'marcar_atraso'
+  | 'expirar';
+
+export const STATUS_ASSINATURA_LABEL: Record<StatusAssinatura, string> = {
+  trial: 'Período de avaliação',
+  ativa: 'Ativa',
+  past_due: 'Em atraso',
+  cancelada: 'Cancelada',
+  expirada: 'Expirada',
+};
+
+export const ACAO_ASSINATURA_LABEL: Record<AcaoAssinatura, string> = {
+  ativar: 'Ativar assinatura',
+  cancelar: 'Cancelar assinatura',
+  regularizar: 'Regularizar atraso',
+  reativar: 'Reativar assinatura',
+  renovar: 'Renovar assinatura',
+  marcar_atraso: 'Simular atraso',
+  expirar: 'Simular expiração',
+};
+
 export interface AssinaturaEmpresa {
-  status: string;
+  status: StatusAssinatura;
+  status_label: string;
   cobranca: 'desativada' | string;
   ciclo: string;
   inicia_em: string;
@@ -1676,6 +1714,16 @@ export interface AssinaturaEmpresa {
   gateway: string | null;
   plano: PlanoEmpresa;
   uso: UsoPlano;
+  acesso: {
+    leitura: boolean;
+    operacional: boolean;
+    trocar_plano: boolean;
+  };
+  politica: PoliticaAssinatura;
+}
+
+export function assinaturaOperacional(assinatura: AssinaturaEmpresa | undefined): boolean {
+  return Boolean(assinatura?.acesso?.operacional);
 }
 
 export interface SessaoAtual {
@@ -1825,10 +1873,17 @@ export async function obterAssinatura(): Promise<AssinaturaEmpresa> {
 }
 
 export async function alterarPlano(codigo: string): Promise<AssinaturaEmpresa> {
+  return alterarAssinatura({ plano: codigo });
+}
+
+export async function alterarAssinatura(body: {
+  plano?: string;
+  acao?: AcaoAssinatura;
+}): Promise<AssinaturaEmpresa> {
   const res = await apiFetch('/api/assinatura', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plano: codigo }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) return parseError(res);
   return res.json();

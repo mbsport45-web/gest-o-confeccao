@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  ACAO_ASSINATURA_LABEL,
+  alterarAssinatura,
   alterarPlano,
   listarPlanos,
   obterAssinatura,
   temPermissao,
   LIMITE_LABEL,
+  type AcaoAssinatura,
   type AssinaturaEmpresa,
   type ChaveLimite,
   type PlanoEmpresa,
@@ -40,6 +43,7 @@ export function PlanoPage({
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState<string | null>(null);
   const podeEditar = temPermissao(sessao.permissoes, 'assinatura', 'editar');
+  const podeVer = temPermissao(sessao.permissoes, 'assinatura', 'visualizar');
 
   const recarregar = useCallback(async () => {
     const [lista, assinatura] = await Promise.all([listarPlanos(), obterAssinatura()]);
@@ -62,7 +66,7 @@ export function PlanoPage({
   }, [recarregar]);
 
   async function escolher(codigo: string) {
-    if (!podeEditar || codigo === atual.plano.codigo) return;
+    if (!podeEditar || codigo === atual.plano.codigo || !atual.acesso.trocar_plano) return;
     setErro(null);
     setSalvando(codigo);
     try {
@@ -76,7 +80,29 @@ export function PlanoPage({
     }
   }
 
+  async function executarAcao(acao: AcaoAssinatura) {
+    if (!podeEditar) return;
+    setErro(null);
+    setSalvando(acao);
+    try {
+      const proxima = await alterarAssinatura({ acao });
+      setAtual(proxima);
+      onAssinatura(proxima);
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(null);
+    }
+  }
+
   const algumAtingido = Object.values(atual.uso ?? {}).some((item) => item.atingido);
+  const acoes = atual.politica?.acoes ?? [];
+  const acoesPrincipais = acoes.filter(
+    (acao) => acao !== 'marcar_atraso' && acao !== 'expirar',
+  );
+  const acoesSimulacao = acoes.filter(
+    (acao) => acao === 'marcar_atraso' || acao === 'expirar',
+  );
 
   return (
     <main className="app__main app__main--equipe">
@@ -85,16 +111,81 @@ export function PlanoPage({
           <h2>Plano da empresa</h2>
         </div>
         <p className="dica">
-          Cobrança desativada. Nenhum pagamento é processado nesta etapa. Os limites do plano
-          valem na API e na interface — ultrapassar exige upgrade.
+          Cobrança desativada. Nenhum pagamento é processado nesta etapa. O status da assinatura
+          define o que a empresa pode operar; os dados continuam acessíveis em leitura.
         </p>
-        <p>
-          Plano atual: <strong>{atual.plano.nome}</strong> · cobrança {atual.cobranca}
-        </p>
-        {algumAtingido && (
+        {podeVer && (
+          <div className={`assinatura-status assinatura-status--${atual.status}`}>
+            <p>
+              Status: <strong>{atual.status_label ?? atual.status}</strong>
+              {' · '}
+              plano <strong>{atual.plano.nome}</strong>
+              {' · '}
+              cobrança {atual.cobranca}
+            </p>
+            {atual.renova_em && (
+              <p className="dica">Próxima renovação / validade: {atual.renova_em}</p>
+            )}
+            <div className="assinatura-politica">
+              <div>
+                <h3>Permite</h3>
+                <ul>
+                  {(atual.politica?.permite ?? []).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3>Bloqueia</h3>
+                <ul>
+                  {(atual.politica?.bloqueia ?? []).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            {podeEditar && acoesPrincipais.length > 0 && (
+              <div className="assinatura-acoes">
+                {acoesPrincipais.map((acao) => (
+                  <button
+                    key={acao}
+                    type="button"
+                    disabled={salvando !== null}
+                    onClick={() => void executarAcao(acao)}
+                  >
+                    {salvando === acao ? 'Salvando…' : ACAO_ASSINATURA_LABEL[acao]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {podeEditar && atual.cobranca === 'desativada' && acoesSimulacao.length > 0 && (
+              <div className="assinatura-acoes">
+                <p className="dica">Simulação sem cobrança real:</p>
+                {acoesSimulacao.map((acao) => (
+                  <button
+                    key={acao}
+                    type="button"
+                    className="btn-secundario"
+                    disabled={salvando !== null}
+                    onClick={() => void executarAcao(acao)}
+                  >
+                    {salvando === acao ? 'Salvando…' : ACAO_ASSINATURA_LABEL[acao]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {algumAtingido && atual.acesso?.operacional && (
           <p className="aviso-limite">
             Um ou mais limites do plano {atual.plano.nome} foram atingidos. Faça upgrade para
             continuar criando cadastros, pedidos ou usuários.
+          </p>
+        )}
+        {!atual.acesso?.operacional && (
+          <p className="aviso-limite">
+            Assinatura {atual.status_label?.toLowerCase()}: a empresa está em leitura. Use as
+            ações acima para voltar a operar.
           </p>
         )}
         {atual.uso && (
@@ -141,14 +232,20 @@ export function PlanoPage({
                   {podeEditar ? (
                     <button
                       type="button"
-                      disabled={atualPlano || salvando !== null}
+                      disabled={
+                        atualPlano ||
+                        salvando !== null ||
+                        !atual.acesso.trocar_plano
+                      }
                       onClick={() => void escolher(plano.codigo)}
                     >
                       {atualPlano
                         ? 'Plano atual'
-                        : salvando === plano.codigo
-                          ? 'Salvando…'
-                          : 'Usar este plano'}
+                        : !atual.acesso.trocar_plano
+                          ? 'Indisponível neste status'
+                          : salvando === plano.codigo
+                            ? 'Salvando…'
+                            : 'Usar este plano'}
                     </button>
                   ) : (
                     atualPlano && <p className="dica">Este é o plano da sua empresa.</p>

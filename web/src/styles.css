@@ -1234,3 +1234,55 @@ a.btn-secundario {
 .plano button {
   width: 100%;
 }
+
+.assinatura-status {
+  border: 1px solid var(--borda, #2a3548);
+  border-radius: 12px;
+  padding: 1rem;
+  margin: 0 0 1rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.assinatura-status--trial {
+  border-color: #7c8cff;
+}
+
+.assinatura-status--ativa {
+  border-color: #34d399;
+}
+
+.assinatura-status--past_due,
+.assinatura-status--cancelada,
+.assinatura-status--expirada {
+  border-color: #d97706;
+}
+
+.assinatura-politica {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.assinatura-politica h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.assinatura-politica ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+}
+
+.assinatura-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 0.9rem;
+}
+
+.assinatura-acoes button {
+  width: auto;
+}
