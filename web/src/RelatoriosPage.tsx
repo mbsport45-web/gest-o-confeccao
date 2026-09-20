@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { obterRelatorio, STATUS_PEDIDO, STATUS_PEDIDO_LABEL, urlRelatorioCsv } from './api';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -33,9 +33,11 @@ export function RelatoriosPage() {
   const [dados, setDados] = useState<Record<string, unknown> | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const reqSeq = useRef(0);
 
   const recarregar = useCallback(async () => {
     const alvo = aba;
+    const id = ++reqSeq.current;
     try {
       setCarregando(true);
       const json = await obterRelatorio(alvo, {
@@ -45,12 +47,14 @@ export function RelatoriosPage() {
         pagina: 1,
         por_pagina: 20,
       });
+      if (id !== reqSeq.current) return;
       setDados(json);
       setErro(null);
     } catch (e) {
+      if (id !== reqSeq.current) return;
       setErro((e as Error).message);
     } finally {
-      setCarregando(false);
+      if (id === reqSeq.current) setCarregando(false);
     }
   }, [aba, de, ate, status]);
 
