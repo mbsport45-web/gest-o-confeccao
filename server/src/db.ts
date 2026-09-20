@@ -280,5 +280,110 @@ export function createDatabase(location: string) {
       WHERE codigo IS NOT NULL AND codigo != '';
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS fornecedores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo TEXT,
+      nome TEXT NOT NULL,
+      cpf_cnpj TEXT,
+      contato TEXT,
+      telefone TEXT,
+      email TEXT,
+      endereco TEXT,
+      cidade TEXT,
+      estado TEXT,
+      cep TEXT,
+      condicao_pagamento TEXT,
+      status TEXT NOT NULL DEFAULT 'ativo',
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS fornecedores_cpf_cnpj_unique
+      ON fornecedores (cpf_cnpj)
+      WHERE cpf_cnpj IS NOT NULL AND cpf_cnpj != '';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS fornecedores_codigo_unique
+      ON fornecedores (codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    CREATE TABLE IF NOT EXISTS pedidos_compra (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo TEXT,
+      fornecedor_id INTEGER NOT NULL REFERENCES fornecedores(id),
+      data_emissao TEXT NOT NULL,
+      data_prevista TEXT,
+      status TEXT NOT NULL DEFAULT 'rascunho',
+      observacoes TEXT,
+      subtotal REAL NOT NULL DEFAULT 0,
+      desconto REAL NOT NULL DEFAULT 0,
+      frete REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      forma_pagamento TEXT,
+      condicao_pagamento TEXT,
+      vencimento TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS pedidos_compra_codigo_unique
+      ON pedidos_compra (codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    CREATE TABLE IF NOT EXISTS pedido_compra_itens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      compra_id INTEGER NOT NULL REFERENCES pedidos_compra(id) ON DELETE CASCADE,
+      materia_prima_id INTEGER REFERENCES materias_primas(id),
+      produto_id INTEGER REFERENCES produtos(id),
+      variante_id INTEGER REFERENCES produto_variantes(id),
+      quantidade REAL NOT NULL,
+      quantidade_recebida REAL NOT NULL DEFAULT 0,
+      custo_unitario REAL NOT NULL,
+      total REAL NOT NULL,
+      unidade TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS financeiro_categorias (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL UNIQUE,
+      tipo TEXT NOT NULL DEFAULT 'ambos',
+      status TEXT NOT NULL DEFAULT 'ativo',
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS financeiro_lancamentos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tipo TEXT NOT NULL,
+      categoria_id INTEGER REFERENCES financeiro_categorias(id),
+      descricao TEXT NOT NULL,
+      valor REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      vencimento TEXT,
+      data_pagamento TEXT,
+      fornecedor_id INTEGER REFERENCES fornecedores(id),
+      cliente_id INTEGER REFERENCES clientes(id),
+      compra_id INTEGER REFERENCES pedidos_compra(id),
+      ordem_id INTEGER REFERENCES ordens_producao(id),
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_compra_unique
+      ON financeiro_lancamentos (compra_id)
+      WHERE compra_id IS NOT NULL AND tipo = 'pagar';
+  `);
+
+  db.exec(`
+    INSERT OR IGNORE INTO financeiro_categorias (nome, tipo) VALUES
+      ('Compras', 'pagar'),
+      ('Frete', 'pagar'),
+      ('Vendas', 'receber'),
+      ('Serviços', 'ambos'),
+      ('Outros', 'ambos');
+  `);
+
   return db;
 }

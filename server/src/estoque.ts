@@ -110,111 +110,170 @@ const criarMovimentoSchema = z
     path: ['quantidade'],
   });
 
+export type MovimentoEstoqueInput = {
+  tipo: (typeof TIPOS_MOVIMENTO)[number];
+  quantidade: number;
+  variante_id?: number;
+  produto_id?: number;
+  materia_prima_id?: number;
+  motivo?: string | null;
+  observacoes?: string | null;
+};
+
+export type ResultadoMovimentoEstoque =
+  | { ok: true; movimentoId: number; saldoId: number }
+  | { ok: false; status: number; erro: string };
+
+export function obterOuCriarSaldoEstoque(
+  db: AppDatabase,
+  ref: { variante_id?: number; produto_id?: number; materia_prima_id?: number },
+): { ok: true; saldoId: number } | { ok: false; status: number; erro: string } {
+  if (ref.variante_id) {
+    const variante = db
+      .prepare('SELECT id, produto_id FROM produto_variantes WHERE id = ?')
+      .get(ref.variante_id) as { id: number; produto_id: number } | undefined;
+    if (!variante) return { ok: false, status: 404, erro: 'Variante não encontrada' };
+    const atual = db
+      .prepare('SELECT id FROM estoque_saldos WHERE variante_id = ?')
+      .get(variante.id) as { id: number } | undefined;
+    if (atual) return { ok: true, saldoId: atual.id };
+    const info = db
+      .prepare(
+        `INSERT INTO estoque_saldos (tipo, produto_id, variante_id, materia_prima_id, quantidade)
+         VALUES ('variante', @produto_id, @variante_id, NULL, 0)`,
+      )
+      .run({ produto_id: variante.produto_id, variante_id: variante.id });
+    return { ok: true, saldoId: Number(info.lastInsertRowid) };
+  }
+
+  if (ref.materia_prima_id) {
+    const materia = db
+      .prepare('SELECT id FROM materias_primas WHERE id = ?')
+      .get(ref.materia_prima_id) as { id: number } | undefined;
+    if (!materia) return { ok: false, status: 404, erro: 'Matéria-prima não encontrada' };
+    const atual = db
+      .prepare('SELECT id FROM estoque_saldos WHERE materia_prima_id = ?')
+      .get(materia.id) as { id: number } | undefined;
+    if (atual) return { ok: true, saldoId: atual.id };
+    const info = db
+      .prepare(
+        `INSERT INTO estoque_saldos (tipo, produto_id, variante_id, materia_prima_id, quantidade)
+         VALUES ('materia', NULL, NULL, @materia_prima_id, 0)`,
+      )
+      .run({ materia_prima_id: materia.id });
+    return { ok: true, saldoId: Number(info.lastInsertRowid) };
+  }
+
+  if (ref.produto_id) {
+    const produto = db
+      .prepare('SELECT id FROM produtos WHERE id = ?')
+      .get(ref.produto_id) as { id: number } | undefined;
+    if (!produto) return { ok: false, status: 404, erro: 'Produto não encontrado' };
+    const nVar = (
+      db
+        .prepare('SELECT COUNT(*) AS n FROM produto_variantes WHERE produto_id = ?')
+        .get(produto.id) as { n: number }
+    ).n;
+    if (nVar > 0) {
+      return {
+        ok: false,
+        status: 400,
+        erro: 'Produto possui variantes; informe variante_id',
+      };
+    }
+    const atual = db
+      .prepare(
+        `SELECT id FROM estoque_saldos WHERE tipo = 'produto' AND produto_id = ? AND variante_id IS NULL`,
+      )
+      .get(produto.id) as { id: number } | undefined;
+    if (atual) return { ok: true, saldoId: atual.id };
+    const info = db
+      .prepare(
+        `INSERT INTO estoque_saldos (tipo, produto_id, variante_id, materia_prima_id, quantidade)
+         VALUES ('produto', @produto_id, NULL, NULL, 0)`,
+      )
+      .run({ produto_id: produto.id });
+    return { ok: true, saldoId: Number(info.lastInsertRowid) };
+  }
+
+  return { ok: false, status: 400, erro: 'Informe o item de estoque' };
+}
+
+export function registrarMovimentoEstoque(
+  db: AppDatabase,
+  data: MovimentoEstoqueInput,
+): ResultadoMovimentoEstoque {
+  const alvo = obterOuCriarSaldoEstoque(db, {
+    variante_id: data.variante_id,
+    produto_id: data.produto_id,
+    materia_prima_id: data.materia_prima_id,
+  });
+  if (!alvo.ok) return alvo;
+
+  const saldoRow = db
+    .prepare('SELECT * FROM estoque_saldos WHERE id = ?')
+    .get(alvo.saldoId) as {
+    id: number;
+    quantidade: number;
+    produto_id: number | null;
+    variante_id: number | null;
+    materia_prima_id: number | null;
+  };
+  const anterior = saldoRow.quantidade;
+  let posterior = anterior;
+  if (data.tipo === 'entrada') posterior = anterior + data.quantidade;
+  else if (data.tipo === 'saida') posterior = anterior - data.quantidade;
+  else posterior = data.quantidade;
+
+  if (posterior < 0) {
+    return { ok: false, status: 409, erro: 'Estoque insuficiente para a saída' };
+  }
+
+  db.prepare(
+    `UPDATE estoque_saldos SET quantidade = @quantidade, atualizado_em = datetime('now') WHERE id = @id`,
+  ).run({ id: saldoRow.id, quantidade: posterior });
+  const info = db
+    .prepare(
+      `INSERT INTO estoque_movimentos (
+         saldo_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, observacoes,
+         produto_id, variante_id, materia_prima_id
+       ) VALUES (
+         @saldo_id, @tipo, @quantidade, @saldo_anterior, @saldo_posterior, @motivo, @observacoes,
+         @produto_id, @variante_id, @materia_prima_id
+       )`,
+    )
+    .run({
+      saldo_id: saldoRow.id,
+      tipo: data.tipo,
+      quantidade: data.quantidade,
+      saldo_anterior: anterior,
+      saldo_posterior: posterior,
+      motivo: data.motivo ?? null,
+      observacoes: data.observacoes ?? null,
+      produto_id: saldoRow.produto_id,
+      variante_id: saldoRow.variante_id,
+      materia_prima_id: saldoRow.materia_prima_id,
+    });
+  return { ok: true, movimentoId: Number(info.lastInsertRowid), saldoId: saldoRow.id };
+}
+
+export function mapearSaldoEstoque(db: AppDatabase, id: number): EstoqueSaldo | undefined {
+  const row = db.prepare(`${SALDO_SELECT} WHERE s.id = ?`).get(id) as
+    | Omit<EstoqueSaldo, 'abaixo_minimo'>
+    | undefined;
+  return row ? comAbaixo(row) : undefined;
+}
+
 export function createEstoqueRouter(db: AppDatabase): Router {
   const router = Router();
 
-  const getSaldoStmt = db.prepare(`${SALDO_SELECT} WHERE s.id = ?`);
-  const getSaldoByVariante = db.prepare(
-    'SELECT * FROM estoque_saldos WHERE variante_id = ?',
-  );
-  const getSaldoByProduto = db.prepare(
-    `SELECT * FROM estoque_saldos WHERE tipo = 'produto' AND produto_id = ? AND variante_id IS NULL`,
-  );
-  const getSaldoByMateria = db.prepare(
-    'SELECT * FROM estoque_saldos WHERE materia_prima_id = ?',
-  );
-  const insertSaldo = db.prepare(
-    `INSERT INTO estoque_saldos (tipo, produto_id, variante_id, materia_prima_id, quantidade)
-     VALUES (@tipo, @produto_id, @variante_id, @materia_prima_id, 0)`,
-  );
-  const updateSaldo = db.prepare(
-    `UPDATE estoque_saldos SET quantidade = @quantidade, atualizado_em = datetime('now') WHERE id = @id`,
-  );
-  const insertMovimento = db.prepare(
-    `INSERT INTO estoque_movimentos (
-       saldo_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, observacoes,
-       produto_id, variante_id, materia_prima_id
-     ) VALUES (
-       @saldo_id, @tipo, @quantidade, @saldo_anterior, @saldo_posterior, @motivo, @observacoes,
-       @produto_id, @variante_id, @materia_prima_id
-     )`,
-  );
   const listMovimentosSaldo = db.prepare(
     `SELECT * FROM estoque_movimentos WHERE saldo_id = ? ORDER BY datetime(criado_em) DESC, id DESC`,
   );
   const getMovimento = db.prepare('SELECT * FROM estoque_movimentos WHERE id = ?');
 
   function mapSaldo(id: number): EstoqueSaldo | undefined {
-    const row = getSaldoStmt.get(id) as Omit<EstoqueSaldo, 'abaixo_minimo'> | undefined;
-    return row ? comAbaixo(row) : undefined;
-  }
-
-  function obterOuCriarSaldo(ref: {
-    variante_id?: number;
-    produto_id?: number;
-    materia_prima_id?: number;
-  }): { ok: true; saldoId: number } | { ok: false; status: number; erro: string } {
-    if (ref.variante_id) {
-      const variante = db
-        .prepare('SELECT id, produto_id FROM produto_variantes WHERE id = ?')
-        .get(ref.variante_id) as { id: number; produto_id: number } | undefined;
-      if (!variante) return { ok: false, status: 404, erro: 'Variante não encontrada' };
-      const atual = getSaldoByVariante.get(variante.id) as { id: number } | undefined;
-      if (atual) return { ok: true, saldoId: atual.id };
-      const info = insertSaldo.run({
-        tipo: 'variante',
-        produto_id: variante.produto_id,
-        variante_id: variante.id,
-        materia_prima_id: null,
-      });
-      return { ok: true, saldoId: Number(info.lastInsertRowid) };
-    }
-
-    if (ref.materia_prima_id) {
-      const materia = db
-        .prepare('SELECT id FROM materias_primas WHERE id = ?')
-        .get(ref.materia_prima_id) as { id: number } | undefined;
-      if (!materia) return { ok: false, status: 404, erro: 'Matéria-prima não encontrada' };
-      const atual = getSaldoByMateria.get(materia.id) as { id: number } | undefined;
-      if (atual) return { ok: true, saldoId: atual.id };
-      const info = insertSaldo.run({
-        tipo: 'materia',
-        produto_id: null,
-        variante_id: null,
-        materia_prima_id: materia.id,
-      });
-      return { ok: true, saldoId: Number(info.lastInsertRowid) };
-    }
-
-    if (ref.produto_id) {
-      const produto = db
-        .prepare('SELECT id FROM produtos WHERE id = ?')
-        .get(ref.produto_id) as { id: number } | undefined;
-      if (!produto) return { ok: false, status: 404, erro: 'Produto não encontrado' };
-      const nVar = (
-        db
-          .prepare('SELECT COUNT(*) AS n FROM produto_variantes WHERE produto_id = ?')
-          .get(produto.id) as { n: number }
-      ).n;
-      if (nVar > 0) {
-        return {
-          ok: false,
-          status: 400,
-          erro: 'Produto possui variantes; informe variante_id',
-        };
-      }
-      const atual = getSaldoByProduto.get(produto.id) as { id: number } | undefined;
-      if (atual) return { ok: true, saldoId: atual.id };
-      const info = insertSaldo.run({
-        tipo: 'produto',
-        produto_id: produto.id,
-        variante_id: null,
-        materia_prima_id: null,
-      });
-      return { ok: true, saldoId: Number(info.lastInsertRowid) };
-    }
-
-    return { ok: false, status: 400, erro: 'Informe o item de estoque' };
+    return mapearSaldoEstoque(db, id);
   }
 
   router.get('/', (req, res) => {
@@ -365,56 +424,21 @@ export function createEstoqueRouter(db: AppDatabase): Router {
     }
 
     const data = parsed.data;
-    const alvo = obterOuCriarSaldo({
-      variante_id: data.variante_id,
-      produto_id: data.produto_id,
-      materia_prima_id: data.materia_prima_id,
-    });
-    if (!alvo.ok) {
-      return res.status(alvo.status).json({ erro: alvo.erro });
-    }
-
-    const aplicar = db.transaction(() => {
-      const saldoRow = db
-        .prepare('SELECT * FROM estoque_saldos WHERE id = ?')
-        .get(alvo.saldoId) as {
-        id: number;
-        quantidade: number;
-        produto_id: number | null;
-        variante_id: number | null;
-        materia_prima_id: number | null;
-      };
-      const anterior = saldoRow.quantidade;
-      let posterior = anterior;
-      if (data.tipo === 'entrada') posterior = anterior + data.quantidade;
-      else if (data.tipo === 'saida') posterior = anterior - data.quantidade;
-      else posterior = data.quantidade;
-
-      if (posterior < 0) {
-        return { erro: 'Estoque insuficiente para a saída', status: 409 as const };
-      }
-
-      updateSaldo.run({ id: saldoRow.id, quantidade: posterior });
-      const info = insertMovimento.run({
-        saldo_id: saldoRow.id,
+    const result = db.transaction(() =>
+      registrarMovimentoEstoque(db, {
         tipo: data.tipo,
         quantidade: data.quantidade,
-        saldo_anterior: anterior,
-        saldo_posterior: posterior,
+        variante_id: data.variante_id,
+        produto_id: data.produto_id,
+        materia_prima_id: data.materia_prima_id,
         motivo: data.motivo ?? null,
         observacoes: data.observacoes ?? null,
-        produto_id: saldoRow.produto_id,
-        variante_id: saldoRow.variante_id,
-        materia_prima_id: saldoRow.materia_prima_id,
-      });
-      return { id: Number(info.lastInsertRowid), status: 201 as const };
-    });
-
-    const result = aplicar();
-    if ('erro' in result && result.erro) {
+      }),
+    )();
+    if (!result.ok) {
       return res.status(result.status).json({ erro: result.erro });
     }
-    const movimento = getMovimento.get(result.id) as EstoqueMovimento;
+    const movimento = getMovimento.get(result.movimentoId) as EstoqueMovimento;
     res.status(201).json({
       movimento,
       saldo: mapSaldo(movimento.saldo_id),

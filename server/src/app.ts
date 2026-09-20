@@ -6,6 +6,10 @@ import { createProdutosRouter } from './produtos.js';
 import { createMateriasPrimasRouter } from './materiasPrimas.js';
 import { createEstoqueRouter } from './estoque.js';
 import { createEtapasRouter } from './etapas.js';
+import { createFornecedoresRouter } from './fornecedores.js';
+import { createComprasRouter } from './compras.js';
+import { createFinanceiroRouter } from './financeiro.js';
+import { createRelatoriosRouter } from './relatorios.js';
 import type { AppDatabase } from './db.js';
 
 export function createApp(db: AppDatabase): Express {
@@ -25,6 +29,10 @@ export function createApp(db: AppDatabase): Express {
   app.use('/api/estoque', createEstoqueRouter(db));
   app.use('/api/ordens', createOrdensRouter(db));
   app.use('/api/etapas', createEtapasRouter(db));
+  app.use('/api/fornecedores', createFornecedoresRouter(db));
+  app.use('/api/compras', createComprasRouter(db));
+  app.use('/api/financeiro', createFinanceiroRouter(db));
+  app.use('/api/relatorios', createRelatoriosRouter(db));
 
   return app;
 }
