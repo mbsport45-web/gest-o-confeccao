@@ -45,14 +45,20 @@ export function LoginPage({ onEntrou }: { onEntrou: (sessao: SessaoAtual) => voi
           <button
             type="button"
             className={modo === 'entrar' ? 'nav__item nav__item--ativo' : 'nav__item'}
-            onClick={() => setModo('entrar')}
+            onClick={() => {
+              setModo('entrar');
+              setErro(null);
+            }}
           >
             Entrar
           </button>
           <button
             type="button"
             className={modo === 'criar' ? 'nav__item nav__item--ativo' : 'nav__item'}
-            onClick={() => setModo('criar')}
+            onClick={() => {
+              setModo('criar');
+              setErro(null);
+            }}
           >
             Criar conta
           </button>
