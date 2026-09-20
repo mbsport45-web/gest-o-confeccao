@@ -18,9 +18,30 @@ import { createConvitesRouter, createMembrosRouter } from './equipe.js';
 import { createAssinaturaRouter, createPlanosRouter, exigirAssinaturaOperacional } from './planos.js';
 import { exigirPermissaoModulo } from './papeis.js';
 import type { AppDatabase } from './db.js';
+import { gatewayAsaasDoAmbiente } from './pagamentos/asaas.js';
+import { createPagamentoAssinaturaRouter } from './pagamentos/rotas.js';
+import {
+  sincronizarCancelamentoGateway,
+  sincronizarReativacaoGateway,
+  sincronizarTrocaPlanoGateway,
+} from './pagamentos/servico.js';
+import type { PaymentGateway } from './pagamentos/tipos.js';
+import { createAsaasWebhookHandler } from './pagamentos/webhooks.js';
 
-export function createApp(db: AppDatabase): Express {
+export type AppOpcoes = {
+  gateway?: PaymentGateway | null;
+  webhookToken?: string;
+};
+
+export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
   const app = express();
+  const gateway = opcoes.gateway === undefined
+    ? process.env.VITEST
+      ? null
+      : gatewayAsaasDoAmbiente()
+    : opcoes.gateway;
+  const webhookToken =
+    opcoes.webhookToken ?? (process.env.VITEST ? '' : process.env.ASAAS_WEBHOOK_TOKEN ?? '');
 
   app.use(cors({ origin: true, credentials: true }));
   // 2mb: imagens de produto podem ir como data URL no cadastro.
@@ -31,6 +52,8 @@ export function createApp(db: AppDatabase): Express {
     res.json({ status: 'ok', servico: 'gestao-confeccao-api' });
   });
 
+  app.post('/api/webhooks/asaas', createAsaasWebhookHandler(db, { token: webhookToken, gateway }));
+
   app.use('/api/auth', createAuthRouter(db));
   app.get('/api/me', requireAuth(db), handleMe(db));
   app.use('/api', requireAuth(db));
@@ -40,7 +63,19 @@ export function createApp(db: AppDatabase): Express {
   app.use('/api/membros', createMembrosRouter(db));
   app.use('/api/convites', createConvitesRouter(db));
   app.use('/api/planos', createPlanosRouter(db));
-  app.use('/api/assinatura', createAssinaturaRouter(db));
+  app.use(
+    '/api/assinatura',
+    createAssinaturaRouter(db, {
+      antesDeAcao: async (empresaId, acao) => {
+        if (acao === 'cancelar') await sincronizarCancelamentoGateway(db, gateway, empresaId);
+        if (acao === 'reativar') await sincronizarReativacaoGateway(db, gateway, empresaId);
+      },
+      antesDeTrocarPlano: async (empresaId, plano) => {
+        await sincronizarTrocaPlanoGateway(db, gateway, empresaId, plano);
+      },
+    }),
+  );
+  app.use('/api/assinatura', createPagamentoAssinaturaRouter(db, gateway));
   app.use('/api/clientes', createClientesRouter(db));
   app.use('/api/produtos', createProdutosRouter(db));
   app.use('/api/materias-primas', createMateriasPrimasRouter(db));

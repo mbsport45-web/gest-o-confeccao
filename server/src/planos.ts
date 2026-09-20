@@ -8,6 +8,7 @@ export type CodigoPlano = (typeof CODIGOS_PLANO)[number];
 
 export const PLANO_PADRAO: CodigoPlano = 'basico';
 export const COBRANCA_DESATIVADA = 'desativada' as const;
+export const COBRANCA_SANDBOX = 'sandbox' as const;
 export const STATUS_ASSINATURA_PADRAO = 'trial' as const;
 export const TRIAL_DIAS = 14;
 export const CICLO_DIAS = 30;
@@ -31,6 +32,11 @@ export const TIPOS_EVENTO_ASSINATURA = [
   'regularizar',
   'marcar_atraso',
   'expirar',
+  'pagamento_confirmado',
+  'pagamento_pendente',
+  'pagamento_vencido',
+  'pagamento_negado',
+  'pagamento_cancelado',
 ] as const;
 export type TipoEventoAssinatura = (typeof TIPOS_EVENTO_ASSINATURA)[number];
 export type TipoMudancaPlano = 'upgrade' | 'downgrade' | 'manter';
@@ -53,6 +59,11 @@ export const EVENTO_ASSINATURA_LABEL: Record<TipoEventoAssinatura, string> = {
   regularizar: 'Regularização',
   marcar_atraso: 'Atraso',
   expirar: 'Expiração',
+  pagamento_confirmado: 'Pagamento confirmado',
+  pagamento_pendente: 'Pagamento pendente',
+  pagamento_vencido: 'Pagamento vencido',
+  pagamento_negado: 'Pagamento negado',
+  pagamento_cancelado: 'Pagamento cancelado',
 };
 
 export function podeVerHistoricoAssinatura(papel?: string): boolean {
@@ -132,7 +143,7 @@ export function politicaDaAssinatura(status: StatusAssinatura) {
         'Trocar de plano',
         'Gerenciar o status da assinatura',
       ],
-      bloqueia: ['Cobrança real (catálogo com preço mensal; gateway ainda desativado)'],
+      bloqueia: ['Cobrança em produção (somente sandbox Asaas; sem chave de produção)'],
       acoes,
     };
   }
@@ -144,7 +155,7 @@ export function politicaDaAssinatura(status: StatusAssinatura) {
   const permite = [
     'Entrar na empresa e ler os dados já gravados',
     'Ver o plano, o uso e o status da assinatura',
-    'Regularizar, reativar ou renovar (assinatura mensal preparada, sem gateway nesta etapa)',
+    'Regularizar, reativar ou renovar (assinatura mensal; sandbox Asaas, sem produção)',
   ];
   return {
     leitura: true,
@@ -383,6 +394,7 @@ type EventoAssinaturaRow = {
   usuario_id: number | null;
   usuario_nome: string | null;
   usuario_atual?: string | null;
+  referencia_externa: string | null;
 };
 
 type AssinaturaRow = {
@@ -395,6 +407,10 @@ type AssinaturaRow = {
   renova_em: string | null;
   gateway: string | null;
   gateway_assinatura_id: string | null;
+  asaas_customer_id: string | null;
+  asaas_subscription_id: string | null;
+  payment_provider: string | null;
+  payment_provider_status: string | null;
   atualizado_em: string;
 } & PlanoRow;
 
@@ -463,6 +479,7 @@ export function mapearEventoAssinatura(row: EventoAssinaturaRow) {
     valor_mensal: row.valor_mensal,
     cobranca: row.cobranca,
     gateway: row.gateway,
+    referencia_externa: row.referencia_externa ?? null,
     imutavel: true as const,
   };
 }
@@ -471,23 +488,32 @@ export function mapearAssinatura(row: AssinaturaRow) {
   const status: StatusAssinatura = isStatusAssinatura(row.status) ? row.status : 'ativa';
   const politica = politicaDaAssinatura(status);
   const plano = mapearPlano(row);
+  const sandbox = row.payment_provider === 'asaas';
+  const cobranca = sandbox ? COBRANCA_SANDBOX : COBRANCA_DESATIVADA;
+  const gateway = sandbox ? 'asaas' : null;
   return {
     status,
     status_label: STATUS_ASSINATURA_LABEL[status],
-    cobranca: COBRANCA_DESATIVADA,
+    cobranca,
     ciclo: row.ciclo || CICLO_PADRAO,
     inicia_em: row.inicia_em,
     renova_em: row.renova_em,
-    gateway: null as string | null,
+    gateway,
+    asaas_customer_id: row.asaas_customer_id,
+    asaas_subscription_id: row.asaas_subscription_id,
+    payment_provider: row.payment_provider,
+    payment_provider_status: row.payment_provider_status,
     plano,
     comercial: {
       ciclo: CICLO_PADRAO,
       moeda: plano.moeda,
       valor_mensal: plano.preco_mensal,
       preco_anual: plano.preco_anual,
-      gateway: null as string | null,
-      cobranca: COBRANCA_DESATIVADA,
-      pronta: false,
+      gateway,
+      cobranca,
+      pronta: sandbox && Boolean(row.asaas_subscription_id),
+      cobranca_real: false as const,
+      ambiente: sandbox ? ('sandbox' as const) : null,
       operacoes: [...TIPOS_OPERACAO_COMERCIAL],
     },
     acesso: {
@@ -629,8 +655,7 @@ export function sincronizarAssinatura(db: AppDatabase, empresaId: number, ator: 
   const valor = planoDoCatalogo(dePlano).preco_mensal;
   db.prepare(
     `UPDATE assinaturas
-        SET status = 'expirada', cobranca = 'desativada', gateway = NULL, gateway_assinatura_id = NULL,
-            atualizado_em = datetime('now')
+        SET status = 'expirada', atualizado_em = datetime('now')
       WHERE empresa_id = ?`,
   ).run(empresaId);
   if (status === 'trial') {
@@ -691,7 +716,7 @@ export function aplicarAcaoAssinatura(
   }
   db.prepare(
     `UPDATE assinaturas
-        SET status = ?, cobranca = 'desativada', gateway = NULL, gateway_assinatura_id = NULL,
+        SET status = ?,
             inicia_em = CASE WHEN ? IN ('ativa', 'trial') THEN datetime('now') ELSE inicia_em END,
             renova_em = ${renovaSql},
             atualizado_em = datetime('now')
@@ -750,7 +775,7 @@ function garantirColuna(db: AppDatabase, tabela: string, coluna: string, ddl: st
   }
 }
 
-function registrarEventoAssinatura(
+export function registrarEventoAssinatura(
   db: AppDatabase,
   empresaId: number,
   evento: {
@@ -761,13 +786,16 @@ function registrarEventoAssinatura(
     para_status: string | null;
     valor_mensal: number | null;
     ator?: AtorAssinatura;
+    gateway?: string | null;
+    cobranca?: string;
+    referencia_externa?: string | null;
   },
 ) {
   db.prepare(
     `INSERT INTO eventos_assinatura (
         empresa_id, tipo, de_plano, para_plano, de_status, para_status,
-        ciclo, moeda, valor_mensal, cobranca, gateway, usuario_id, usuario_nome
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+        ciclo, moeda, valor_mensal, cobranca, gateway, usuario_id, usuario_nome, referencia_externa
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     empresaId,
     evento.tipo,
@@ -778,9 +806,11 @@ function registrarEventoAssinatura(
     CICLO_PADRAO,
     MOEDA_PLANO,
     evento.valor_mensal,
-    COBRANCA_DESATIVADA,
+    evento.cobranca ?? COBRANCA_DESATIVADA,
+    evento.gateway ?? null,
     evento.ator?.id ?? null,
     evento.ator?.nome ?? null,
+    evento.referencia_externa ?? null,
   );
 }
 
@@ -891,6 +921,26 @@ export function aplicarSchemaPlanos(db: AppDatabase) {
   garantirColuna(db, 'planos', 'moeda', `ALTER TABLE planos ADD COLUMN moeda TEXT NOT NULL DEFAULT 'BRL'`);
   garantirColuna(db, 'eventos_assinatura', 'usuario_id', 'ALTER TABLE eventos_assinatura ADD COLUMN usuario_id INTEGER');
   garantirColuna(db, 'eventos_assinatura', 'usuario_nome', 'ALTER TABLE eventos_assinatura ADD COLUMN usuario_nome TEXT');
+  garantirColuna(db, 'assinaturas', 'asaas_customer_id', 'ALTER TABLE assinaturas ADD COLUMN asaas_customer_id TEXT');
+  garantirColuna(
+    db,
+    'assinaturas',
+    'asaas_subscription_id',
+    'ALTER TABLE assinaturas ADD COLUMN asaas_subscription_id TEXT',
+  );
+  garantirColuna(db, 'assinaturas', 'payment_provider', 'ALTER TABLE assinaturas ADD COLUMN payment_provider TEXT');
+  garantirColuna(
+    db,
+    'assinaturas',
+    'payment_provider_status',
+    'ALTER TABLE assinaturas ADD COLUMN payment_provider_status TEXT',
+  );
+  garantirColuna(
+    db,
+    'eventos_assinatura',
+    'referencia_externa',
+    'ALTER TABLE eventos_assinatura ADD COLUMN referencia_externa TEXT',
+  );
 
   const upsert = db.prepare(
     `INSERT INTO planos (codigo, nome, descricao, ativo, ordem, limites_json, recursos_json, preco_mensal, moeda)
@@ -948,6 +998,7 @@ const ASSINATURA_SELECT = `
   SELECT
     a.id, a.empresa_id, a.status, a.cobranca, a.ciclo, a.inicia_em, a.renova_em,
     a.gateway, a.gateway_assinatura_id, a.atualizado_em,
+    a.asaas_customer_id, a.asaas_subscription_id, a.payment_provider, a.payment_provider_status,
     p.id AS plano_pk, p.codigo, p.nome, p.descricao, p.ativo, p.ordem, p.limites_json, p.recursos_json,
     p.preco_mensal, p.moeda
     FROM assinaturas a
@@ -982,7 +1033,7 @@ export function listarEventosAssinatura(db: AppDatabase, empresaId: number) {
     .prepare(
       `SELECT e.id, e.empresa_id, e.tipo, e.de_plano, e.para_plano, e.de_status, e.para_status,
               e.ciclo, e.moeda, e.valor_mensal, e.cobranca, e.gateway, e.criado_em,
-              e.usuario_id, e.usuario_nome, u.nome AS usuario_atual
+              e.usuario_id, e.usuario_nome, e.referencia_externa, u.nome AS usuario_atual
          FROM eventos_assinatura e
          LEFT JOIN usuarios u ON u.id = e.usuario_id
         WHERE e.empresa_id = ?
@@ -1018,7 +1069,12 @@ export function createPlanosRouter(db: AppDatabase): Router {
   return router;
 }
 
-export function createAssinaturaRouter(db: AppDatabase): Router {
+export type GanchosCobranca = {
+  antesDeAcao?: (empresaId: number, acao: AcaoAssinatura, ator: AtorAssinatura) => Promise<void>;
+  antesDeTrocarPlano?: (empresaId: number, plano: CodigoPlano, ator: AtorAssinatura) => Promise<void>;
+};
+
+export function createAssinaturaRouter(db: AppDatabase, ganchos: GanchosCobranca = {}): Router {
   const router = Router();
 
   router.get('/', (req, res) => {
@@ -1046,7 +1102,7 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
   router.put('/eventos', recusarMutacaoHistorico);
   router.delete('/eventos', recusarMutacaoHistorico);
 
-  router.patch('/', (req, res) => {
+  router.patch('/', async (req, res) => {
     const parsed = alterarAssinaturaSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -1060,6 +1116,14 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
     sincronizarAssinatura(db, empresaId, ator);
 
     if (parsed.data.acao) {
+      try {
+        if (ganchos.antesDeAcao) await ganchos.antesDeAcao(empresaId, parsed.data.acao, ator);
+      } catch (erro) {
+        return res.status(502).json({
+          erro: erro instanceof Error ? erro.message : 'Falha no gateway sandbox',
+          codigo: 'gateway_erro',
+        });
+      }
       const resultado = aplicarAcaoAssinatura(db, empresaId, parsed.data.acao, ator);
       if (!resultado.ok) return res.status(resultado.statusHttp).json(resultado.corpo);
       return res.json(obterAssinaturaDaEmpresa(db, empresaId));
@@ -1081,10 +1145,17 @@ export function createAssinaturaRouter(db: AppDatabase): Router {
       .prepare('SELECT id FROM planos WHERE codigo = ? AND ativo = 1')
       .get(codigoDestino) as { id: number } | undefined;
     if (!plano) return res.status(404).json({ erro: 'Plano não encontrado' });
+    try {
+      if (ganchos.antesDeTrocarPlano) await ganchos.antesDeTrocarPlano(empresaId, codigoDestino, ator);
+    } catch (erro) {
+      return res.status(502).json({
+        erro: erro instanceof Error ? erro.message : 'Falha no gateway sandbox',
+        codigo: 'gateway_erro',
+      });
+    }
     db.prepare(
       `UPDATE assinaturas
-          SET plano_id = ?, cobranca = 'desativada', gateway = NULL, gateway_assinatura_id = NULL,
-              atualizado_em = datetime('now')
+          SET plano_id = ?, atualizado_em = datetime('now')
         WHERE empresa_id = ?`,
     ).run(plano.id, empresaId);
     registrarEventoAssinatura(db, empresaId, {

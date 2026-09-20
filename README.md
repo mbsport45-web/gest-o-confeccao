@@ -61,10 +61,12 @@ npm run dev:web
 | `GET`    | `/api/convites` | Lista convites (padrão: pendentes). |
 | `POST`   | `/api/convites` | Convida e-mail com papel; devolve o token uma vez. |
 | `DELETE` | `/api/convites/:id` | Cancela convite pendente. |
-| `GET`    | `/api/planos` | Catálogo comercial Básico (R$ 99,90/mês), Profissional (R$ 149,90/mês) e Enterprise (R$ 199,90/mês), com limites e recursos. Cobrança desativada. |
-| `GET`    | `/api/assinatura` | Plano, uso, preço mensal e **status** da assinatura da sessão (`trial`, `ativa`, `past_due`, `cancelada`, `expirada`). |
-| `GET`    | `/api/assinatura/eventos` | Histórico/auditoria comercial da empresa da sessão (criação, trial, upgrade, downgrade, cancelamento, reativação e status). Somente proprietário/administrador. Imutável. |
-| `PATCH`  | `/api/assinatura` | Troca o plano (**upgrade**/**downgrade**) **ou** aplica uma ação de status (`ativar`/`reativar`/`renovar` preparam assinatura mensal, `cancelar`, `regularizar`, `marcar_atraso`, `expirar`), sem pagamento. |
+| `GET`    | `/api/planos` | Catálogo comercial Básico (R$ 99,90/mês), Profissional (R$ 149,90/mês) e Enterprise (R$ 199,90/mês). O preço vem só do backend. |
+| `GET`    | `/api/assinatura` | Plano, uso, preço mensal, **status** (`trial`, `ativa`, `past_due`, `cancelada`, `expirada`) e, se houver, IDs sandbox Asaas da empresa da sessão. |
+| `GET`    | `/api/assinatura/eventos` | Histórico/auditoria comercial da empresa da sessão (criação, trial, upgrade, downgrade, cancelamento, reativação, status e pagamentos). Somente proprietário/administrador. Imutável. |
+| `PATCH`  | `/api/assinatura` | Troca o plano (**upgrade**/**downgrade**) **ou** aplica uma ação de status. O navegador não envia preço, `empresa_id` nem status cru. |
+| `POST`   | `/api/assinatura/pagamento` | Cria/localiza cliente e assinatura **mensal no sandbox Asaas** com o preço oficial do plano. Proprietário/administrador. Sem cobrança real. |
+| `POST`   | `/api/webhooks/asaas` | Webhook público do Asaas. Valida `asaas-access-token` (não a API Key), persiste o `id` do evento com idempotência e atualiza a assinatura. |
 | `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
 | `POST`   | `/api/ordens`       | Cria uma ordem de produção (código, produto/variante, BOM). |
 | `GET`    | `/api/ordens/ficha-tecnica` | Lê a ficha técnica/BOM do produto ou variante. |
@@ -150,19 +152,23 @@ Papéis por empresa, com permissões de visualizar/criar/editar/excluir por mód
 - **estoque**: CRUD em materiais, estoque, compras e fornecedores; visualiza produtos.
 - **produção**: CRUD em ordens e etapas; visualiza produtos, materiais, estoque e clientes.
 
-A API recusa (403) ação fora do papel e responde 404 quando o registro é de outra empresa. `/api/health` continua público. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query.
+A API recusa (403) ação fora do papel e responde 404 quando o registro é de outra empresa. `/api/health` e `POST /api/webhooks/asaas` continuam públicos. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query.
 
 Cada empresa tem uma **assinatura** com um plano comercial (**Básico R$ 99,90/mês**, **Profissional R$ 149,90/mês** ou **Enterprise R$ 199,90/mês**), limites, recursos e uma máquina de estados:
 
 | Status | O que permite | O que bloqueia |
 | --- | --- | --- |
-| `trial` | Ler e operar dentro dos limites (14 dias) | Cobrança real |
-| `ativa` | Ler e operar dentro dos limites | Cobrança real |
+| `trial` | Ler e operar dentro dos limites (14 dias) | Cobrança em produção |
+| `ativa` | Ler e operar dentro dos limites | Cobrança em produção |
 | `past_due` | Login e leitura dos dados | Criar/editar/excluir operação e trocar plano |
 | `cancelada` | Login e leitura dos dados | Criar/editar/excluir operação e trocar plano |
 | `expirada` | Login e leitura dos dados | Criar/editar/excluir operação e trocar plano |
 
-Cadastro novo entra em **trial**. Transições inválidas respondem 409 (`transicao_invalida`). Operação bloqueada responde 403 (`assinatura_bloqueada`) — distinto do 403 de papel (`modulo`/`acao`). A cobrança fica **desativada**: não há gateway nem pagamento real. Os preços mensais já estão no catálogo. Cada empresa tem um **histórico comercial imutável** (criação, início/fim do trial, upgrade, downgrade, cancelamento, reativação e mudanças de status) com data, empresa, usuário responsável, plano anterior/novo e status. Só proprietário e administrador leem o histórico; usuários comuns não alteram os eventos. Trocar o plano (proprietário/administrador) só vale em `trial` ou `ativa`. Os dados continuam isolados pela empresa da sessão.
+Cadastro novo entra em **trial**. Transições inválidas respondem 409 (`transicao_invalida`). Operação bloqueada responde 403 (`assinatura_bloqueada`) — distinto do 403 de papel (`modulo`/`acao`). O navegador **não** altera `ativa` / `past_due` / `cancelada` / `expirada` diretamente: o backend aplica a máquina de estados e os webhooks Asaas.
+
+Há integração **somente sandbox** com o Asaas (`AsaasPaymentGateway`), desacoplada atrás de `PaymentGateway`. Preços saem do catálogo no servidor. Cada empresa guarda `asaas_customer_id`, `asaas_subscription_id`, `payment_provider` e `payment_provider_status`. Variáveis: `ASAAS_BASE_URL=https://api-sandbox.asaas.com/v3`, `ASAAS_API_KEY` e `ASAAS_WEBHOOK_TOKEN` (nunca a API Key; nunca produção). O webhook valida `asaas-access-token`, grava o `id` único do evento e é idempotente.
+
+Cada empresa tem um **histórico comercial imutável** (criação, início/fim do trial, upgrade, downgrade, cancelamento, reativação, mudanças de status e eventos de pagamento sandbox) com data, empresa, usuário responsável quando existir, plano anterior/novo, status e referência externa do Asaas. Só proprietário e administrador leem o histórico; usuários comuns não alteram os eventos. Trocar o plano (proprietário/administrador) só vale em `trial` ou `ativa`. Os dados continuam isolados pela empresa da sessão.
 
 Os limites são **aplicados de verdade** na API (e refletidos na interface). Criar além do teto responde **409** com `codigo: "limite_plano"`, o uso atual, o máximo e um aviso de upgrade. A contagem usa só a empresa da sessão — `empresa_id` no body não contorna o limite. Convites pendentes ocupam vaga de usuário. Pedidos e OPs contam no mês calendário (`criado_em`). PostgreSQL/RLS ainda não entra nesta etapa.
 
