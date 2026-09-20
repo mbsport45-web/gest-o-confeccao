@@ -18,5 +18,5 @@ export function AvisoLimite({
 }
 
 export function podeCriarNoPlano(assinatura: AssinaturaEmpresa, chave: ChaveLimite): boolean {
-  return !limiteAtingido(assinatura, chave);
+  return Boolean(assinatura.acesso?.operacional) && !limiteAtingido(assinatura, chave);
 }

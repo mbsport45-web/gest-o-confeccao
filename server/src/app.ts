@@ -15,7 +15,7 @@ import { createPedidosRouter } from './pedidos.js';
 import { createExpedicaoRouter } from './expedicao.js';
 import { createAuthRouter, handleMe, requireAuth } from './auth.js';
 import { createConvitesRouter, createMembrosRouter } from './equipe.js';
-import { createAssinaturaRouter, createPlanosRouter } from './planos.js';
+import { createAssinaturaRouter, createPlanosRouter, exigirAssinaturaOperacional } from './planos.js';
 import { exigirPermissaoModulo } from './papeis.js';
 import type { AppDatabase } from './db.js';
 
@@ -35,6 +35,7 @@ export function createApp(db: AppDatabase): Express {
   app.get('/api/me', requireAuth(db), handleMe(db));
   app.use('/api', requireAuth(db));
   app.use('/api', exigirPermissaoModulo());
+  app.use('/api', exigirAssinaturaOperacional(db));
 
   app.use('/api/membros', createMembrosRouter(db));
   app.use('/api/convites', createConvitesRouter(db));

@@ -49,11 +49,13 @@ describe('planos e assinatura por empresa', () => {
     const me = await api.get('/api/me');
     expect(me.status).toBe(200);
     expect(me.body.assinatura).toMatchObject({
-      status: 'ativa',
+      status: 'trial',
+      status_label: 'Período de avaliação',
       cobranca: 'desativada',
       ciclo: 'mensal',
       gateway: null,
       plano: { codigo: PLANO_PADRAO, nome: 'Básico' },
+      acesso: { leitura: true, operacional: true, trocar_plano: true },
     });
     expect(me.body.assinatura.plano.limites.clientes).toBe(50);
 
