@@ -573,6 +573,11 @@ button {
   max-width: 420px;
 }
 
+.filtros--relatorios-status {
+  grid-template-columns: 1fr 1fr 1.4fr;
+  max-width: 640px;
+}
+
 .financeiro-topo {
   display: grid;
   gap: 1rem;

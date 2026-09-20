@@ -75,6 +75,8 @@ describe('API de relatórios', () => {
     expect(resumo.body.compras_total).toBe(120);
     expect(resumo.body.estoque_baixo).toBeGreaterThanOrEqual(1);
     expect(resumo.body.ordens).toBeGreaterThanOrEqual(1);
+    expect(resumo.body.vendas).toBe(0);
+    expect(resumo.body.vendas_total).toBe(0);
   });
 
   it('exporta CSV de compras', async () => {
@@ -92,5 +94,130 @@ describe('API de relatórios', () => {
     });
     expect(res.body.data).toHaveLength(1);
     expect(res.body.pagina).toBe(1);
+  });
+
+  async function seedPedidos() {
+    const clienteA = await request(app).post('/api/clientes').send({
+      nome: 'Loja Alfa',
+      cidade: 'Recife',
+      estado: 'PE',
+    });
+    const clienteB = await request(app).post('/api/clientes').send({
+      nome: 'Loja Beta',
+      cidade: 'Olinda',
+      estado: 'PE',
+    });
+    const produto = await request(app).post('/api/produtos').send({
+      sku: 'CAM-REL',
+      nome: 'Camisa Relatório',
+      cores: ['Azul'],
+      tamanhos: ['M'],
+      preco_venda: 50,
+    });
+    const variante = (produto.body.variantes as Array<{ id: number }>)[0];
+    const pedidoAbril = await request(app).post('/api/pedidos').send({
+      cliente_id: clienteA.body.id,
+      data_pedido: '2026-04-10',
+      status: 'aberto',
+      itens: [
+        {
+          produto_id: produto.body.id,
+          variante_id: variante.id,
+          quantidade: 2,
+          preco_unitario: 50,
+        },
+      ],
+    });
+    await request(app).patch(`/api/pedidos/${pedidoAbril.body.id}`).send({ status: 'confirmado' });
+    await request(app).patch(`/api/pedidos/${pedidoAbril.body.id}`).send({ status: 'faturado' });
+    const pedidoMaio = await request(app).post('/api/pedidos').send({
+      cliente_id: clienteB.body.id,
+      data_pedido: '2026-05-02',
+      status: 'aberto',
+      itens: [
+        {
+          produto_id: produto.body.id,
+          variante_id: variante.id,
+          quantidade: 3,
+          preco_unitario: 40,
+        },
+      ],
+    });
+    const pedidoCancelado = await request(app).post('/api/pedidos').send({
+      cliente_id: clienteA.body.id,
+      data_pedido: '2026-04-20',
+      status: 'aberto',
+      itens: [
+        {
+          produto_id: produto.body.id,
+          variante_id: variante.id,
+          quantidade: 8,
+          preco_unitario: 50,
+        },
+      ],
+    });
+    await request(app).patch(`/api/pedidos/${pedidoCancelado.body.id}`).send({ status: 'cancelado' });
+    return { clienteA, clienteB, produto, pedidoAbril, pedidoMaio, pedidoCancelado };
+  }
+
+  it('relatório de vendas soma totais, agrupa e exclui cancelados por padrão', async () => {
+    await seedPedidos();
+
+    const res = await request(app).get('/api/relatorios/vendas');
+    expect(res.status).toBe(200);
+    expect(res.body.totais.pedidos).toBe(2);
+    expect(res.body.totais.vendas).toBe(220);
+    expect(res.body.totais.quantidade).toBe(5);
+    expect(res.body.por_periodo).toEqual([
+      { periodo: '2026-04', pedidos: 1, total: 100 },
+      { periodo: '2026-05', pedidos: 1, total: 120 },
+    ]);
+    expect(res.body.por_produto[0]).toMatchObject({
+      nome: 'Camisa Relatório',
+      sku: 'CAM-REL',
+      quantidade: 5,
+      pedidos: 2,
+      total: 220,
+    });
+    expect(res.body.por_cliente).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ nome: 'Loja Alfa', pedidos: 1, total: 100 }),
+        expect.objectContaining({ nome: 'Loja Beta', pedidos: 1, total: 120 }),
+      ]),
+    );
+    expect(res.body.data.map((d: { codigo: string }) => d.codigo)).toEqual(['PV-0002', 'PV-0001']);
+
+    const abril = await request(app)
+      .get('/api/relatorios/vendas')
+      .query({ de: '2026-04-01', ate: '2026-04-30' });
+    expect(abril.body.totais.pedidos).toBe(1);
+    expect(abril.body.totais.vendas).toBe(100);
+    expect(abril.body.por_periodo).toEqual([{ periodo: '2026-04', pedidos: 1, total: 100 }]);
+
+    const faturado = await request(app).get('/api/relatorios/vendas').query({ status: 'faturado' });
+    expect(faturado.body.totais.pedidos).toBe(1);
+    expect(faturado.body.data[0].codigo).toBe('PV-0001');
+
+    const cancelado = await request(app).get('/api/relatorios/vendas').query({ status: 'cancelado' });
+    expect(cancelado.body.totais.pedidos).toBe(1);
+    expect(cancelado.body.totais.vendas).toBe(400);
+    expect(cancelado.body.data[0].codigo).toBe('PV-0003');
+
+    const resumo = await request(app).get('/api/relatorios/resumo').query({ de: '2026-04-01', ate: '2026-05-31' });
+    expect(resumo.body.vendas).toBe(2);
+    expect(resumo.body.vendas_total).toBe(220);
+  });
+
+  it('exporta CSV de vendas e rejeita status inválido', async () => {
+    await seedPedidos();
+    const res = await request(app).get('/api/relatorios/vendas').query({ formato: 'csv' });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/csv/);
+    expect(res.text).toMatch(/PV-0001/);
+    expect(res.text).toMatch(/Loja Alfa/);
+    expect(res.text).not.toMatch(/PV-0003/);
+
+    const invalido = await request(app).get('/api/relatorios/vendas').query({ status: 'inexistente' });
+    expect(invalido.status).toBe(400);
   });
 });

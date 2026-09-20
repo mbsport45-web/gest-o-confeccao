@@ -1,6 +1,7 @@
 import { Router, type Response } from 'express';
 import type { AppDatabase } from './db.js';
 import { arredondarDinheiro, statusEfetivoLancamento } from './financeiro.js';
+import { STATUS_PEDIDO } from './pedidos.js';
 
 function periodo(req: { query: Record<string, unknown> }) {
   const de = String(req.query.de ?? '').trim();
@@ -441,23 +442,161 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
     res.json({ totais, por_material: porMaterial });
   });
 
+  router.get('/vendas', (req, res) => {
+    try {
+      const { de, ate } = periodo(req);
+      const status = String(req.query.status ?? '').trim();
+      const pagina = Math.max(1, Number(req.query.pagina ?? 1) || 1);
+      const porPagina = Math.min(200, Math.max(1, Number(req.query.por_pagina ?? 20) || 20));
+      const where: string[] = [];
+      const params: Record<string, string | number> = {};
+      if (de) {
+        where.push('date(p.data_pedido) >= date(@de)');
+        params.de = de;
+      }
+      if (ate) {
+        where.push('date(p.data_pedido) <= date(@ate)');
+        params.ate = ate;
+      }
+      if (status) {
+        if (!(STATUS_PEDIDO as readonly string[]).includes(status)) {
+          return res.status(400).json({ erro: 'status de pedido inválido' });
+        }
+        where.push('p.status = @status');
+        params.status = status;
+      } else {
+        where.push(`p.status != 'cancelado'`);
+      }
+      const filtro = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      const from = `FROM pedidos p JOIN clientes c ON c.id = p.cliente_id ${filtro}`;
+      const total = (db.prepare(`SELECT COUNT(*) AS n ${from}`).get(params) as { n: number }).n;
+      const data = db
+        .prepare(
+          `SELECT p.id, p.codigo, p.status, p.data_pedido, p.total, p.cliente_id, c.nome AS cliente
+           ${from} ORDER BY date(p.data_pedido) DESC, p.id DESC
+           LIMIT @limit OFFSET @offset`,
+        )
+        .all({ ...params, limit: porPagina, offset: (pagina - 1) * porPagina }) as Array<{
+        id: number;
+        codigo: string | null;
+        status: string;
+        data_pedido: string;
+        total: number;
+        cliente_id: number;
+        cliente: string;
+      }>;
+      const totaisRow = db
+        .prepare(`SELECT ifnull(SUM(p.total),0) AS vendas ${from}`)
+        .get(params) as { vendas: number };
+      const quantidade = (
+        db
+          .prepare(
+            `SELECT ifnull(SUM(i.quantidade),0) AS n
+             FROM pedido_itens i
+             JOIN pedidos p ON p.id = i.pedido_id
+             JOIN clientes c ON c.id = p.cliente_id
+             ${filtro}`,
+          )
+          .get(params) as { n: number }
+      ).n;
+      const porPeriodo = db
+        .prepare(
+          `SELECT strftime('%Y-%m', p.data_pedido) AS periodo,
+                  COUNT(*) AS pedidos,
+                  ifnull(SUM(p.total),0) AS total
+           ${from}
+           GROUP BY strftime('%Y-%m', p.data_pedido)
+           ORDER BY periodo`,
+        )
+        .all(params) as Array<{ periodo: string; pedidos: number; total: number }>;
+      const porProduto = db
+        .prepare(
+          `SELECT
+             pr.id AS produto_id,
+             pr.nome,
+             pr.sku,
+             SUM(i.quantidade) AS quantidade,
+             COUNT(DISTINCT i.pedido_id) AS pedidos,
+             SUM(i.total) AS total
+           FROM pedido_itens i
+           JOIN pedidos p ON p.id = i.pedido_id
+           JOIN clientes c ON c.id = p.cliente_id
+           JOIN produtos pr ON pr.id = i.produto_id
+           ${filtro}
+           GROUP BY pr.id
+           ORDER BY total DESC
+           LIMIT 20`,
+        )
+        .all(params) as Array<{
+        produto_id: number;
+        nome: string;
+        sku: string | null;
+        quantidade: number;
+        pedidos: number;
+        total: number;
+      }>;
+      const porCliente = db
+        .prepare(
+          `SELECT c.id AS cliente_id, c.nome,
+                  COUNT(*) AS pedidos,
+                  ifnull(SUM(p.total),0) AS total
+           ${from}
+           GROUP BY c.id
+           ORDER BY total DESC
+           LIMIT 20`,
+        )
+        .all(params) as Array<{ cliente_id: number; nome: string; pedidos: number; total: number }>;
+
+      if (querCsv(req)) {
+        return enviarCsv(
+          res,
+          'relatorio-vendas.csv',
+          ['Código', 'Cliente', 'Pedido', 'Status', 'Total'],
+          data.map((d) => [d.codigo, d.cliente, d.data_pedido, d.status, d.total]),
+        );
+      }
+
+      res.json({
+        data: data.map((d) => ({ ...d, total: arredondarDinheiro(d.total) })),
+        pagina,
+        por_pagina: porPagina,
+        total,
+        total_paginas: Math.max(1, Math.ceil(total / porPagina)),
+        totais: {
+          pedidos: total,
+          vendas: arredondarDinheiro(totaisRow.vendas),
+          quantidade,
+        },
+        por_periodo: porPeriodo.map((r) => ({ ...r, total: arredondarDinheiro(r.total) })),
+        por_produto: porProduto.map((r) => ({ ...r, total: arredondarDinheiro(r.total) })),
+        por_cliente: porCliente.map((r) => ({ ...r, total: arredondarDinheiro(r.total) })),
+      });
+    } catch (err) {
+      res.status(500).json({ erro: (err as Error).message });
+    }
+  });
+
   router.get('/resumo', (req, res) => {
     const { de, ate } = periodo(req);
     const params: Record<string, string> = {};
     const whereOp: string[] = [];
     const whereCompra: string[] = [];
+    const wherePedido: string[] = [`status != 'cancelado'`];
     if (de) {
       whereOp.push('date(criado_em) >= date(@de)');
       whereCompra.push('date(data_emissao) >= date(@de)');
+      wherePedido.push('date(data_pedido) >= date(@de)');
       params.de = de;
     }
     if (ate) {
       whereOp.push('date(criado_em) <= date(@ate)');
       whereCompra.push('date(data_emissao) <= date(@ate)');
+      wherePedido.push('date(data_pedido) <= date(@ate)');
       params.ate = ate;
     }
     const fOp = whereOp.length ? `WHERE ${whereOp.join(' AND ')}` : '';
     const fC = whereCompra.length ? `WHERE ${whereCompra.join(' AND ')}` : '';
+    const fP = `WHERE ${wherePedido.join(' AND ')}`;
 
     const ops = db.prepare(`SELECT COUNT(*) AS n, ifnull(SUM(quantidade),0) AS q FROM ordens_producao ${fOp}`).get(params) as {
       n: number;
@@ -465,6 +604,9 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
     };
     const compras = db
       .prepare(`SELECT COUNT(*) AS n, ifnull(SUM(total),0) AS total FROM pedidos_compra ${fC}`)
+      .get(params) as { n: number; total: number };
+    const vendas = db
+      .prepare(`SELECT COUNT(*) AS n, ifnull(SUM(total),0) AS total FROM pedidos ${fP}`)
       .get(params) as { n: number; total: number };
     const estoqueBaixo = (
       db
@@ -498,6 +640,8 @@ export function createRelatoriosRouter(db: AppDatabase): Router {
       pecas: ops.q,
       compras: compras.n,
       compras_total: arredondarDinheiro(compras.total),
+      vendas: vendas.n,
+      vendas_total: arredondarDinheiro(vendas.total),
       estoque_baixo: estoqueBaixo,
       contas_pagar: arredondarDinheiro(pagar),
     });

@@ -107,7 +107,7 @@ npm run dev:web
 | `GET`    | `/api/financeiro/lancamentos` | Contas a pagar/receber. |
 | `POST`   | `/api/financeiro/lancamentos` | Cria lançamento. |
 | `PATCH`  | `/api/financeiro/lancamentos/:id` | Baixa pagamento/recebimento. |
-| `GET`    | `/api/relatorios/:tipo` | Estoque, compras, financeiro, produção, custos, resumo (`?formato=csv`). |
+| `GET`    | `/api/relatorios/:tipo` | Estoque, compras, vendas, financeiro, produção, custos, resumo (`?formato=csv`). |
 
 Cada variante possui SKU e código de barras únicos. O cadastro de produtos fica pronto para ficha técnica/BOM, matérias-primas, estoque, pedidos de venda e OPs (`produto_id` / `variante_id`). Matérias-primas usam `materias_primas.id` para os mesmos vínculos futuros. O estoque guarda saldo atual em `estoque_saldos` e o histórico em `estoque_movimentos`.
 
@@ -115,7 +115,7 @@ Ordens de produção têm código (`OP-0001`), prioridade, data prevista, respon
 
 O fluxo de produção vive em `etapas_producao`, vinculado à OP: Corte, Costura, Acabamento, Controle de qualidade e Embalagem, com sequência, status, operador e horários de início/término. A etapa seguinte só inicia depois que a anterior for concluída.
 
-Compras usam `fornecedores`, `pedidos_compra` e `pedido_compra_itens`. Ao receber uma compra o sistema reutiliza o movimento de estoque (`entrada`). Abrir a compra gera uma conta a pagar em `financeiro_lancamentos` vinculada a `compra_id`. Relatórios leem os dados reais e podem exportar CSV.
+Compras usam `fornecedores`, `pedidos_compra` e `pedido_compra_itens`. Ao receber uma compra o sistema reutiliza o movimento de estoque (`entrada`). Abrir a compra gera uma conta a pagar em `financeiro_lancamentos` vinculada a `compra_id`. Relatórios leem os dados reais e podem exportar CSV. O relatório de **vendas** usa `pedidos` / `pedido_itens` (total, quantidade, faturamento por período, por produto e por cliente) com filtros de período (`data_pedido`) e status.
 
 Pedidos de venda usam `pedidos` e `pedido_itens` (cliente, produto e variante existentes). Confirmar o pedido reserva a quantidade no próprio item (não baixa estoque de produto acabado). **Gerar OP** cria registros em `ordens_producao` com `pedido_id` / `pedido_item_id`, copiando cliente, produto, variante, quantidade, prioridade e previsão. **Gerar financeiro** cria uma conta a receber em `financeiro_lancamentos` (`pedido_id`) sem duplicar.
 

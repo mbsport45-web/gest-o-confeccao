@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { obterRelatorio, urlRelatorioCsv } from './api';
+import { obterRelatorio, STATUS_PEDIDO, STATUS_PEDIDO_LABEL, urlRelatorioCsv } from './api';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
 const ABAS = [
   { id: 'resumo', label: 'Resumo' },
+  { id: 'vendas', label: 'Vendas' },
   { id: 'estoque', label: 'Estoque' },
   { id: 'compras', label: 'Compras' },
   { id: 'financeiro', label: 'Financeiro' },
@@ -18,6 +19,9 @@ function dadosCompativeis(aba: Aba, dados: Record<string, unknown> | null): bool
   if (!dados) return false;
   if (aba === 'resumo') return 'ordens' in dados && !('data' in dados);
   if (aba === 'custos') return 'por_material' in dados && 'totais' in dados;
+  if (aba === 'vendas') {
+    return Array.isArray(dados.data) && 'por_produto' in dados && 'por_cliente' in dados;
+  }
   return Array.isArray(dados.data);
 }
 
@@ -25,6 +29,7 @@ export function RelatoriosPage() {
   const [aba, setAba] = useState<Aba>('resumo');
   const [de, setDe] = useState('');
   const [ate, setAte] = useState('');
+  const [status, setStatus] = useState('');
   const [dados, setDados] = useState<Record<string, unknown> | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -33,7 +38,13 @@ export function RelatoriosPage() {
     const alvo = aba;
     try {
       setCarregando(true);
-      const json = await obterRelatorio(alvo, { de: de || undefined, ate: ate || undefined, pagina: 1, por_pagina: 20 });
+      const json = await obterRelatorio(alvo, {
+        de: de || undefined,
+        ate: ate || undefined,
+        status: alvo === 'vendas' ? status || undefined : undefined,
+        pagina: 1,
+        por_pagina: 20,
+      });
       setDados(json);
       setErro(null);
     } catch (e) {
@@ -41,13 +52,20 @@ export function RelatoriosPage() {
     } finally {
       setCarregando(false);
     }
-  }, [aba, de, ate]);
+  }, [aba, de, ate, status]);
 
   useEffect(() => {
     void recarregar();
   }, [recarregar]);
 
-  const csv = aba === 'resumo' ? null : urlRelatorioCsv(aba, { de: de || undefined, ate: ate || undefined });
+  const csv =
+    aba === 'resumo'
+      ? null
+      : urlRelatorioCsv(aba, {
+          de: de || undefined,
+          ate: ate || undefined,
+          status: aba === 'vendas' ? status || undefined : undefined,
+        });
   const pronto = !carregando && dadosCompativeis(aba, dados);
 
   return (
@@ -76,9 +94,19 @@ export function RelatoriosPage() {
         )}
       </div>
 
-      <div className="filtros filtros--relatorios">
+      <div className={aba === 'vendas' ? 'filtros filtros--relatorios filtros--relatorios-status' : 'filtros filtros--relatorios'}>
         <input type="date" value={de} onChange={(e) => setDe(e.target.value)} aria-label="Período inicial" />
         <input type="date" value={ate} onChange={(e) => setAte(e.target.value)} aria-label="Período final" />
+        {aba === 'vendas' && (
+          <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status do pedido">
+            <option value="">Todos (exceto cancelados)</option>
+            {STATUS_PEDIDO.map((s) => (
+              <option key={s} value={s}>
+                {STATUS_PEDIDO_LABEL[s]}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {erro && <p className="erro">{erro}</p>}
@@ -98,6 +126,8 @@ function RelatorioConteudo({ aba, dados }: { aba: Aba; dados: Record<string, unk
       pecas: number;
       compras: number;
       compras_total: number;
+      vendas?: number;
+      vendas_total?: number;
       estoque_baixo: number;
       contas_pagar: number;
     };
@@ -105,9 +135,58 @@ function RelatorioConteudo({ aba, dados }: { aba: Aba; dados: Record<string, unk
       <section className="kpi-grid">
         <div className="kpi"><span className="kpi__label">Ordens</span><strong className="kpi__valor">{r.ordens}</strong></div>
         <div className="kpi"><span className="kpi__label">Peças</span><strong className="kpi__valor">{r.pecas}</strong></div>
+        <div className="kpi"><span className="kpi__label">Vendas</span><strong className="kpi__valor">{r.vendas ?? 0}</strong><span className="kpi__dica">{moeda.format(r.vendas_total ?? 0)}</span></div>
         <div className="kpi"><span className="kpi__label">Compras</span><strong className="kpi__valor">{r.compras}</strong><span className="kpi__dica">{moeda.format(r.compras_total)}</span></div>
         <div className="kpi kpi--alerta"><span className="kpi__label">Estoque baixo</span><strong className="kpi__valor">{r.estoque_baixo}</strong></div>
         <div className="kpi"><span className="kpi__label">Contas a pagar</span><strong className="kpi__valor">{moeda.format(r.contas_pagar)}</strong></div>
+      </section>
+    );
+  }
+
+  if (aba === 'vendas') {
+    const r = dados as {
+      data: Array<{ codigo: string; cliente: string; data_pedido: string; status: string; total: number }>;
+      totais: { pedidos: number; vendas: number; quantidade: number };
+      por_periodo: Array<{ periodo: string; pedidos: number; total: number }>;
+      por_produto: Array<{ nome: string; sku: string | null; quantidade: number; pedidos: number; total: number }>;
+      por_cliente: Array<{ nome: string; pedidos: number; total: number }>;
+    };
+    return (
+      <section className="card">
+        <div className="kpi-grid">
+          <div className="kpi">
+            <span className="kpi__label">Pedidos</span>
+            <strong className="kpi__valor">{r.totais.pedidos}</strong>
+          </div>
+          <div className="kpi">
+            <span className="kpi__label">Total de vendas</span>
+            <strong className="kpi__valor">{moeda.format(r.totais.vendas)}</strong>
+          </div>
+          <div className="kpi">
+            <span className="kpi__label">Peças vendidas</span>
+            <strong className="kpi__valor">{r.totais.quantidade}</strong>
+          </div>
+        </div>
+        <h3 className="subtitulo">Faturamento por período</h3>
+        <Tabela
+          colunas={['Período', 'Pedidos', 'Faturamento']}
+          linhas={(r.por_periodo ?? []).map((p) => [p.periodo, p.pedidos, moeda.format(p.total)])}
+        />
+        <h3 className="subtitulo">Vendas por produto</h3>
+        <Tabela
+          colunas={['Produto', 'SKU', 'Pedidos', 'Qtd.', 'Total']}
+          linhas={(r.por_produto ?? []).map((p) => [p.nome, p.sku ?? '—', p.pedidos, p.quantidade, moeda.format(p.total)])}
+        />
+        <h3 className="subtitulo">Vendas por cliente</h3>
+        <Tabela
+          colunas={['Cliente', 'Pedidos', 'Total']}
+          linhas={(r.por_cliente ?? []).map((c) => [c.nome, c.pedidos, moeda.format(c.total)])}
+        />
+        <h3 className="subtitulo">Pedidos</h3>
+        <Tabela
+          colunas={['Código', 'Cliente', 'Pedido', 'Status', 'Total']}
+          linhas={r.data.map((d) => [d.codigo, d.cliente, d.data_pedido, d.status, moeda.format(d.total)])}
+        />
       </section>
     );
   }
