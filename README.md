@@ -51,7 +51,7 @@ npm run dev:web
 | Método   | Rota                | Descrição                        |
 | -------- | ------------------- | -------------------------------- |
 | `GET`    | `/api/health`       | Health check (público).          |
-| `POST`   | `/api/auth/registrar` | Cria usuário na Empresa 1 e abre sessão (cookie httpOnly). |
+| `POST`   | `/api/auth/registrar` | Primeiro usuário na Empresa 1; cadastros seguintes criam uma empresa nova. Cookie httpOnly. |
 | `POST`   | `/api/auth/login`   | Abre sessão.                     |
 | `POST`   | `/api/auth/logout`  | Encerra a sessão.                |
 | `GET`    | `/api/auth/me` / `/api/me` | Usuário e empresa da sessão. |
@@ -130,7 +130,7 @@ Pedidos de venda usam `pedidos` e `pedido_itens` (cliente, produto e variante ex
 
 Expedição usa a tabela `expedicoes` ligada ao pedido. A fila mostra pedidos `pronto` ou `faturado`. Dali é possível marcar **pronto para envio**, **registrar a expedição** e **marcar entregue** (atualiza o status do pedido). Não há integração com transportadoras nesta etapa.
 
-A API de negócio exige sessão. O primeiro cadastro cria um usuário na **Empresa 1** e grava o cookie httpOnly `gc_sessao` (SameSite=Lax). `/api/health` continua público. As tabelas de fábrica carregam `empresa_id` (dados atuais ficam na Empresa 1). As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query. Planos, cobrança e PostgreSQL/RLS ainda não entram nesta etapa.
+A API de negócio exige sessão. O primeiro cadastro cria um usuário na **Empresa 1** (dados atuais ficam nela) e grava o cookie httpOnly `gc_sessao` (SameSite=Lax). Cadastros seguintes criam uma empresa nova e isolada. `/api/health` continua público. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query. Planos, cobrança e PostgreSQL/RLS ainda não entram nesta etapa.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

@@ -485,6 +485,7 @@ export function createDatabase(location: string) {
       criado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS sessoes_usuario ON sessoes (usuario_id);
+    CREATE INDEX IF NOT EXISTS usuarios_empresa ON usuarios (empresa_id);
   `);
 
   db.prepare(
@@ -530,7 +531,7 @@ function aplicarColunaEmpresaId(db: AppDatabase) {
     const cols = db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[];
     if (!cols.some((col) => col.name === 'empresa_id')) {
       db.exec(
-        `ALTER TABLE ${tabela} ADD COLUMN empresa_id INTEGER NOT NULL DEFAULT 1 REFERENCES empresas(id)`,
+        `ALTER TABLE ${tabela} ADD COLUMN empresa_id INTEGER NOT NULL DEFAULT 1`,
       );
     }
   }

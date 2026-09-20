@@ -105,4 +105,60 @@ describe('API de autenticação e sessão', () => {
     const depois = await agent.get('/api/clientes');
     expect(depois.status).toBe(401);
   });
+
+  it('cadastro seguinte cria outra empresa e isola os dados', async () => {
+    const app = createApp(db);
+    const primeira = await request(app).post('/api/auth/registrar').send({
+      nome: 'Marcos',
+      email: 'marcos@fabrica.com',
+      senha: 'senha-segura-1',
+      empresa: 'Confecção Norte',
+    });
+    expect(primeira.status).toBe(201);
+    expect(primeira.body.empresa).toMatchObject({ id: 1, nome: 'Confecção Norte' });
+    const cookie1 = String(primeira.headers['set-cookie']?.[0]).split(';')[0];
+
+    const cliente1 = await request(app)
+      .post('/api/clientes')
+      .set('Cookie', cookie1)
+      .send({ nome: 'Cliente Norte' });
+    expect(cliente1.status).toBe(201);
+
+    const segunda = await request(app).post('/api/auth/registrar').send({
+      nome: 'Ana',
+      email: 'ana@sul.local',
+      senha: 'senha-segura-2',
+      empresa: 'Confecção Sul',
+    });
+    expect(segunda.status).toBe(201);
+    expect(segunda.body.empresa.id).toBeGreaterThan(1);
+    expect(segunda.body.empresa.nome).toBe('Confecção Sul');
+    const cookie2 = String(segunda.headers['set-cookie']?.[0]).split(';')[0];
+
+    const lista2 = await request(app).get('/api/clientes').set('Cookie', cookie2);
+    expect(lista2.status).toBe(200);
+    expect(lista2.body.total).toBe(0);
+
+    const getCruzado = await request(app)
+      .get(`/api/clientes/${cliente1.body.id}`)
+      .set('Cookie', cookie2);
+    expect(getCruzado.status).toBe(404);
+
+    const lista1 = await request(app).get('/api/clientes').set('Cookie', cookie1);
+    expect(lista1.body.total).toBe(1);
+    expect(lista1.body.data[0].nome).toBe('Cliente Norte');
+  });
+
+  it('cadastro seguinte sem nome de empresa usa Minha empresa', async () => {
+    const app = createApp(db);
+    await request(app).post('/api/auth/registrar').send(USUARIO_TESTE);
+    const segunda = await request(app).post('/api/auth/registrar').send({
+      nome: 'Outra',
+      email: 'outra@gestao.local',
+      senha: 'senha-teste-2',
+    });
+    expect(segunda.status).toBe(201);
+    expect(segunda.body.empresa.id).toBeGreaterThan(1);
+    expect(segunda.body.empresa.nome).toBe('Minha empresa');
+  });
 });

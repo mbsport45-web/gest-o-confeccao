@@ -75,10 +75,11 @@ export function LoginPage({ onEntrou }: { onEntrou: (sessao: SessaoAtual) => voi
                 <input
                   value={empresa}
                   onChange={(e) => setEmpresa(e.target.value)}
-                  placeholder="Opcional — fica na Empresa 1"
+                  placeholder="Sua confecção"
                   autoComplete="organization"
                 />
               </label>
+              <p className="login__dica">Cada nova conta cria uma empresa separada.</p>
             </>
           )}
           <label>

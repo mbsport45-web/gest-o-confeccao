@@ -142,15 +142,28 @@ export function createAuthRouter(db: AppDatabase): Router {
     const totalUsuarios = (db.prepare('SELECT COUNT(*) AS n FROM usuarios').get() as { n: number }).n;
     const senhaHash = hashSync(data.senha, BCRYPT_ROUNDS);
     const info = db.transaction(() => {
-      if (totalUsuarios === 0 && data.empresa) {
-        db.prepare(`UPDATE empresas SET nome = ? WHERE id = 1`).run(data.empresa);
+      let empresaId = 1;
+      if (totalUsuarios === 0) {
+        if (data.empresa) {
+          db.prepare(`UPDATE empresas SET nome = ? WHERE id = 1`).run(data.empresa);
+        }
+      } else {
+        const nova = db
+          .prepare(`INSERT INTO empresas (nome, status) VALUES (?, 'ativa')`)
+          .run(data.empresa ?? 'Minha empresa');
+        empresaId = Number(nova.lastInsertRowid);
       }
       return db
         .prepare(
           `INSERT INTO usuarios (empresa_id, nome, email, senha_hash)
-           VALUES (1, @nome, @email, @senha_hash)`,
+           VALUES (@empresa_id, @nome, @email, @senha_hash)`,
         )
-        .run({ nome: data.nome, email: data.email, senha_hash: senhaHash });
+        .run({
+          empresa_id: empresaId,
+          nome: data.nome,
+          email: data.email,
+          senha_hash: senhaHash,
+        });
     })();
     const id = Number(info.lastInsertRowid);
     const token = criarSessao(db, id);
