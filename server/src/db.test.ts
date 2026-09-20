@@ -46,4 +46,37 @@ describe('migração empresa_id', () => {
     };
     expect(row).toEqual({ nome: 'Loja antiga', empresa_id: 1 });
   });
+
+  it('preenche papel dono em usuarios já existentes', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'gc-papel-')), 'gestao.sqlite');
+    const antigo = new Database(path);
+    antigo.exec(`
+      CREATE TABLE empresas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ativa',
+        criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO empresas (id, nome, status) VALUES (1, 'Empresa 1', 'ativa');
+      CREATE TABLE usuarios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER NOT NULL DEFAULT 1,
+        nome TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        senha_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ativo',
+        criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+        atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO usuarios (nome, email, senha_hash) VALUES ('Antigo', 'antigo@gestao.local', 'hash');
+    `);
+    antigo.close();
+
+    db = createDatabase(path);
+    const row = db.prepare('SELECT email, papel FROM usuarios').get() as {
+      email: string;
+      papel: string;
+    };
+    expect(row).toEqual({ email: 'antigo@gestao.local', papel: 'dono' });
+  });
 });

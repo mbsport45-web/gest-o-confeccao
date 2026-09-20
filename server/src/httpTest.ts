@@ -35,3 +35,28 @@ export async function autenticarNovaEmpresa(
   }
   return { api, empresaId: Number(res.body.empresa.id) };
 }
+
+export async function autenticarPapel(
+  app: Express,
+  admin: TestApi,
+  papel: 'admin' | 'operador' | 'consulta',
+  opts?: { nome?: string; email?: string; senha?: string },
+): Promise<TestApi> {
+  const email = opts?.email ?? `${papel}-${crypto.randomUUID()}@gestao.local`;
+  const senha = opts?.senha ?? 'senha-teste-2';
+  const convite = await admin.post('/api/convites').send({ email, papel });
+  if (convite.status !== 201) {
+    throw new Error(`falha ao convidar ${papel}: ${convite.status} ${JSON.stringify(convite.body)}`);
+  }
+  const api = request.agent(app);
+  const res = await api.post('/api/auth/registrar').send({
+    nome: opts?.nome ?? `Membro ${papel}`,
+    email,
+    senha,
+    convite: convite.body.token,
+  });
+  if (res.status !== 201) {
+    throw new Error(`falha ao aceitar convite: ${res.status} ${JSON.stringify(res.body)}`);
+  }
+  return api;
+}

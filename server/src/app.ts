@@ -14,6 +14,8 @@ import { createRelatoriosRouter } from './relatorios.js';
 import { createPedidosRouter } from './pedidos.js';
 import { createExpedicaoRouter } from './expedicao.js';
 import { createAuthRouter, handleMe, requireAuth } from './auth.js';
+import { createConvitesRouter, createMembrosRouter } from './equipe.js';
+import { bloquearConsultaEmEscrita } from './papeis.js';
 import type { AppDatabase } from './db.js';
 
 export function createApp(db: AppDatabase): Express {
@@ -31,7 +33,10 @@ export function createApp(db: AppDatabase): Express {
   app.use('/api/auth', createAuthRouter(db));
   app.get('/api/me', requireAuth(db), handleMe(db));
   app.use('/api', requireAuth(db));
+  app.use('/api', bloquearConsultaEmEscrita());
 
+  app.use('/api/membros', createMembrosRouter(db));
+  app.use('/api/convites', createConvitesRouter(db));
   app.use('/api/clientes', createClientesRouter(db));
   app.use('/api/produtos', createProdutosRouter(db));
   app.use('/api/materias-primas', createMateriasPrimasRouter(db));
