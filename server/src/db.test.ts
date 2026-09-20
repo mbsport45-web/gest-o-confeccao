@@ -18,7 +18,22 @@ describe('migração empresa_id', () => {
     antigo.exec(`
       CREATE TABLE clientes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT NOT NULL
+        nome TEXT NOT NULL,
+        cpf_cnpj TEXT,
+        contato TEXT,
+        telefone TEXT,
+        whatsapp TEXT,
+        email TEXT,
+        endereco TEXT,
+        cidade TEXT,
+        estado TEXT,
+        cep TEXT,
+        condicao_pagamento TEXT,
+        limite_credito REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'ativo',
+        observacoes TEXT,
+        criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+        atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
       );
       INSERT INTO clientes (nome) VALUES ('Loja antiga');
     `);
