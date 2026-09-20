@@ -14,6 +14,13 @@ const ABAS = [
 
 type Aba = (typeof ABAS)[number]['id'];
 
+function dadosCompativeis(aba: Aba, dados: Record<string, unknown> | null): boolean {
+  if (!dados) return false;
+  if (aba === 'resumo') return 'ordens' in dados && !('data' in dados);
+  if (aba === 'custos') return 'por_material' in dados && 'totais' in dados;
+  return Array.isArray(dados.data);
+}
+
 export function RelatoriosPage() {
   const [aba, setAba] = useState<Aba>('resumo');
   const [de, setDe] = useState('');
@@ -23,9 +30,10 @@ export function RelatoriosPage() {
   const [carregando, setCarregando] = useState(true);
 
   const recarregar = useCallback(async () => {
+    const alvo = aba;
     try {
       setCarregando(true);
-      const json = await obterRelatorio(aba, { de: de || undefined, ate: ate || undefined, pagina: 1, por_pagina: 20 });
+      const json = await obterRelatorio(alvo, { de: de || undefined, ate: ate || undefined, pagina: 1, por_pagina: 20 });
       setDados(json);
       setErro(null);
     } catch (e) {
@@ -40,9 +48,10 @@ export function RelatoriosPage() {
   }, [recarregar]);
 
   const csv = aba === 'resumo' ? null : urlRelatorioCsv(aba, { de: de || undefined, ate: ate || undefined });
+  const pronto = !carregando && dadosCompativeis(aba, dados);
 
   return (
-    <main className="relatorios">
+    <main className="relatorios" data-aba={aba}>
       <div className="card__head">
         <div className="nav" aria-label="Tipos de relatório">
           {ABAS.map((a) => (
@@ -50,7 +59,11 @@ export function RelatoriosPage() {
               key={a.id}
               type="button"
               className={aba === a.id ? 'nav__item nav__item--ativo' : 'nav__item'}
-              onClick={() => setAba(a.id)}
+              onClick={() => {
+                setAba(a.id);
+                setCarregando(true);
+                setDados(null);
+              }}
             >
               {a.label}
             </button>
@@ -69,9 +82,9 @@ export function RelatoriosPage() {
       </div>
 
       {erro && <p className="erro">{erro}</p>}
-      {carregando ? (
+      {!pronto || !dados ? (
         <p className="vazio">Carregando relatório…</p>
-      ) : !dados ? null : (
+      ) : (
         <RelatorioConteudo aba={aba} dados={dados} />
       )}
     </main>
