@@ -62,7 +62,7 @@ npm run dev:web
 | `POST`   | `/api/convites` | Convida e-mail com papel; devolve o token uma vez. |
 | `DELETE` | `/api/convites/:id` | Cancela convite pendente. |
 | `GET`    | `/api/planos` | Catálogo Básico, Profissional e Enterprise (limites e recursos). Cobrança desativada. |
-| `GET`    | `/api/assinatura` | Plano da empresa da sessão. |
+| `GET`    | `/api/assinatura` | Plano da empresa da sessão, com uso atual de cada limite. |
 | `PATCH`  | `/api/assinatura` | Troca o plano (`basico`/`profissional`/`enterprise`) sem pagamento. |
 | `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
 | `POST`   | `/api/ordens`       | Cria uma ordem de produção (código, produto/variante, BOM). |
@@ -151,7 +151,9 @@ Papéis por empresa, com permissões de visualizar/criar/editar/excluir por mód
 
 A API recusa (403) ação fora do papel e responde 404 quando o registro é de outra empresa. `/api/health` continua público. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query.
 
-Cada empresa tem uma **assinatura** com um plano (**Básico**, **Profissional** ou **Enterprise**), limites e recursos. A cobrança fica **desativada**: não há gateway, preço nem pagamento. Trocar o plano (proprietário/administrador) só atualiza a associação. PostgreSQL/RLS ainda não entra nesta etapa.
+Cada empresa tem uma **assinatura** com um plano (**Básico**, **Profissional** ou **Enterprise**), limites e recursos. A cobrança fica **desativada**: não há gateway, preço nem pagamento. Trocar o plano (proprietário/administrador) só atualiza a associação.
+
+Os limites são **aplicados de verdade** na API (e refletidos na interface). Criar além do teto responde **409** com `codigo: "limite_plano"`, o uso atual, o máximo e um aviso de upgrade. A contagem usa só a empresa da sessão — `empresa_id` no body não contorna o limite. Convites pendentes ocupam vaga de usuário. Pedidos e OPs contam no mês calendário (`criado_em`). PostgreSQL/RLS ainda não entra nesta etapa.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

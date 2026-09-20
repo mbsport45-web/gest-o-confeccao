@@ -18,7 +18,9 @@ import {
   type PedidoVenda,
   type Produto,
   type StatusPedido,
+  type AssinaturaEmpresa,
 } from './api';
+import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -49,7 +51,13 @@ function formatarData(valor: string | null | undefined): string {
   return `${d}/${m}/${y}`;
 }
 
-export function PedidosPage({ onAbrirOp }: { onAbrirOp?: (id: number) => void }) {
+export function PedidosPage({
+  onAbrirOp,
+  sessao,
+}: {
+  onAbrirOp?: (id: number) => void;
+  sessao: { assinatura: AssinaturaEmpresa };
+}) {
   const [pedidos, setPedidos] = useState<PedidoVenda[]>([]);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -263,7 +271,9 @@ export function PedidosPage({ onAbrirOp }: { onAbrirOp?: (id: number) => void })
             <button
               type="button"
               className="btn-secundario"
+              disabled={!podeCriarNoPlano(sessao.assinatura, 'pedidos_mes')}
               onClick={() => {
+                if (!podeCriarNoPlano(sessao.assinatura, 'pedidos_mes')) return;
                 setForm(FORM_VAZIO);
                 setEditandoId(null);
                 setModo('criar');
@@ -273,6 +283,7 @@ export function PedidosPage({ onAbrirOp }: { onAbrirOp?: (id: number) => void })
             </button>
           </div>
         </div>
+        <AvisoLimite assinatura={sessao.assinatura} chave="pedidos_mes" />
 
         <div className="filtros filtros--pedidos">
           <input
@@ -350,7 +361,11 @@ export function PedidosPage({ onAbrirOp }: { onAbrirOp?: (id: number) => void })
                       </button>
                     )}
                     {p.status === 'confirmado' && (
-                      <button type="button" onClick={() => void acao(() => gerarOpPedido(p.id))}>
+                      <button
+                        type="button"
+                        disabled={!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')}
+                        onClick={() => void acao(() => gerarOpPedido(p.id))}
+                      >
                         Gerar OP
                       </button>
                     )}
@@ -572,7 +587,12 @@ export function PedidosPage({ onAbrirOp }: { onAbrirOp?: (id: number) => void })
               </button>
             )}
             {podeGerarOp && (
-              <button type="button" className="btn-secundario" disabled={salvando} onClick={() => void acao(() => gerarOpPedido(detalhe.id))}>
+              <button
+                type="button"
+                className="btn-secundario"
+                disabled={salvando || !podeCriarNoPlano(sessao.assinatura, 'ordens_mes')}
+                onClick={() => void acao(() => gerarOpPedido(detalhe.id))}
+              >
                 Gerar OP
               </button>
             )}

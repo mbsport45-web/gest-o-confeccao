@@ -20,7 +20,9 @@ import {
   type PrioridadeOp,
   type Produto,
   type Status,
+  type AssinaturaEmpresa,
 } from './api';
+import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 
@@ -57,7 +59,7 @@ function formatarData(valor: string | null): string {
   return `${day}/${m}/${y}`;
 }
 
-export function OrdensPage() {
+export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa } }) {
   const [ordens, setOrdens] = useState<OrdemProducao[]>([]);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -154,6 +156,7 @@ export function OrdensPage() {
   }, [modo, form.produtoId, form.varianteId]);
 
   function abrirCriar() {
+    if (!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')) return;
     setForm(FORM_VAZIO);
     setEditandoId(null);
     setDetalhe(null);
@@ -277,11 +280,17 @@ export function OrdensPage() {
             <span className="badge">
               {total} OP{total === 1 ? '' : 's'}
             </span>
-            <button type="button" className="btn-secundario" onClick={abrirCriar}>
+            <button
+              type="button"
+              className="btn-secundario"
+              onClick={abrirCriar}
+              disabled={!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')}
+            >
               Nova OP
             </button>
           </div>
         </div>
+        <AvisoLimite assinatura={sessao.assinatura} chave="ordens_mes" />
 
         <div className="filtros filtros--ordens">
           <input

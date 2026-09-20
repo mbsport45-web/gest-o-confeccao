@@ -13,7 +13,9 @@ import {
   type MateriaPrimaPayload,
   type StatusMateria,
   type TipoMateria,
+  type AssinaturaEmpresa,
 } from './api';
+import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 
@@ -64,7 +66,7 @@ const moeda = new Intl.NumberFormat('pt-BR', {
   currency: 'BRL',
 });
 
-export function MateriasPrimasPage() {
+export function MateriasPrimasPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa } }) {
   const [materias, setMaterias] = useState<MateriaPrima[]>([]);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -121,6 +123,7 @@ export function MateriasPrimasPage() {
   }, [recarregar]);
 
   function abrirCriar() {
+    if (!podeCriarNoPlano(sessao.assinatura, 'materiais')) return;
     setForm(FORM_VAZIO);
     setEditandoId(null);
     setDetalhe(null);
@@ -205,10 +208,16 @@ export function MateriasPrimasPage() {
       <section className="card card--wide">
         <div className="card__head">
           <h2>Matérias-primas</h2>
-          <button type="button" className="btn-secundario" onClick={abrirCriar}>
+          <button
+            type="button"
+            className="btn-secundario"
+            onClick={abrirCriar}
+            disabled={!podeCriarNoPlano(sessao.assinatura, 'materiais')}
+          >
             Nova matéria-prima
           </button>
         </div>
+        <AvisoLimite assinatura={sessao.assinatura} chave="materiais" />
 
         <div className="filtros filtros--materias">
           <input

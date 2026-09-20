@@ -62,6 +62,8 @@ describe('planos e assinatura por empresa', () => {
     expect(assinatura.body.cobranca).toBe('desativada');
     expect(assinatura.body.plano.codigo).toBe('basico');
     expect(assinatura.body.gateway).toBeNull();
+    expect(assinatura.body.uso.usuarios).toEqual({ atual: 1, maximo: 3, atingido: false });
+    expect(assinatura.body.uso.clientes.maximo).toBe(50);
   });
 
   it('o proprietário troca o plano sem gateway e a cobrança permanece desativada', async () => {
