@@ -582,6 +582,20 @@ export function createOrdensRouter(db: AppDatabase): Router {
     };
   }
 
+  function garantirVarianteDoProduto(
+    produtoId: number,
+    varianteId: number | null,
+    empresaId: number,
+  ) {
+    if (!varianteId) return;
+    const variante = getVariante.get(varianteId, empresaId) as
+      | { id: number; produto_id: number }
+      | undefined;
+    if (!variante || variante.produto_id !== produtoId) {
+      throw Object.assign(new Error('Variante não encontrada'), { status: 404 });
+    }
+  }
+
   router.get('/ficha-tecnica', (req, res) => {
     const produtoId = Number(req.query.produto_id ?? 0);
     const varianteId = Number(req.query.variante_id ?? 0) || null;
@@ -591,6 +605,12 @@ export function createOrdensRouter(db: AppDatabase): Router {
     const empresaId = empresaDaSessao(req);
     const produto = getProduto.get(produtoId, empresaId);
     if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
+    try {
+      garantirVarianteDoProduto(produtoId, varianteId, empresaId);
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
     const itens = carregarBom(produtoId, varianteId, empresaId).map((i) => ({
       materia_prima_id: i.materia_prima_id,
       quantidade: i.quantidade,
@@ -613,6 +633,11 @@ export function createOrdensRouter(db: AppDatabase): Router {
     const produto = getProduto.get(parsed.data.produto_id, empresaId);
     if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
     try {
+      garantirVarianteDoProduto(
+        parsed.data.produto_id,
+        parsed.data.variante_id ?? null,
+        empresaId,
+      );
       gravarBom(parsed.data.produto_id, parsed.data.variante_id ?? null, parsed.data.itens, empresaId);
     } catch (e) {
       const err = e as Error & { status?: number };
