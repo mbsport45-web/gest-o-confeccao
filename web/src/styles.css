@@ -1182,3 +1182,35 @@ a.btn-secundario {
   pointer-events: none;
   opacity: 0.8;
 }
+
+.planos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.plano {
+  border: 1px solid var(--borda, #2a3548);
+  border-radius: 12px;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.plano--atual {
+  border-color: #7c8cff;
+}
+
+.plano h3 {
+  margin: 0 0 0.4rem;
+}
+
+.plano__lista {
+  margin: 0.6rem 0 1rem;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+}
+
+.plano button {
+  width: 100%;
+}

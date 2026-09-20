@@ -1593,6 +1593,7 @@ export const MODULOS = [
   'compras',
   'financeiro',
   'relatorios',
+  'assinatura',
 ] as const;
 export type Modulo = (typeof MODULOS)[number];
 export type AcaoModulo = 'visualizar' | 'criar' | 'editar' | 'excluir';
@@ -1604,9 +1605,47 @@ export interface PermissoesSessao {
   modulos: Record<Modulo, AcoesModulo>;
 }
 
+export interface LimitesPlano {
+  usuarios: number | null;
+  clientes: number | null;
+  produtos: number | null;
+  materiais: number | null;
+  pedidos_mes: number | null;
+  ordens_mes: number | null;
+}
+
+export interface RecursosPlano {
+  expedicao: boolean;
+  financeiro: boolean;
+  relatorios_avancados: boolean;
+  api_externa: boolean;
+  suporte_prioritario: boolean;
+}
+
+export interface PlanoEmpresa {
+  codigo: string;
+  nome: string;
+  descricao: string;
+  limites: LimitesPlano;
+  recursos: RecursosPlano;
+  preco_mensal: number | null;
+  preco_anual: number | null;
+}
+
+export interface AssinaturaEmpresa {
+  status: string;
+  cobranca: 'desativada' | string;
+  ciclo: string;
+  inicia_em: string;
+  renova_em: string | null;
+  gateway: string | null;
+  plano: PlanoEmpresa;
+}
+
 export interface SessaoAtual {
   usuario: { id: number; nome: string; email: string; papel: PapelUsuario };
   empresa: { id: number; nome: string; status: string };
+  assinatura: AssinaturaEmpresa;
   permissoes: PermissoesSessao;
 }
 
@@ -1735,6 +1774,28 @@ export async function criarConvite(dados: {
 export async function cancelarConvite(id: number): Promise<void> {
   const res = await apiFetch(`/api/convites/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function listarPlanos(): Promise<{ data: PlanoEmpresa[]; cobranca: string }> {
+  const res = await apiFetch('/api/planos');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterAssinatura(): Promise<AssinaturaEmpresa> {
+  const res = await apiFetch('/api/assinatura');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function alterarPlano(codigo: string): Promise<AssinaturaEmpresa> {
+  const res = await apiFetch('/api/assinatura', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plano: codigo }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
 }
 
 export async function entrar(dados: { email: string; senha: string }): Promise<SessaoAtual> {

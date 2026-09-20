@@ -13,6 +13,7 @@ import { ProdutosPage } from './ProdutosPage';
 import { RelatoriosPage } from './RelatoriosPage';
 import { ExpedicaoPage } from './ExpedicaoPage';
 import { EquipePage } from './EquipePage';
+import { PlanoPage } from './PlanoPage';
 import { LoginPage } from './LoginPage';
 import {
   obterSessao,
@@ -37,7 +38,8 @@ type Pagina =
   | 'compras'
   | 'financeiro'
   | 'relatorios'
-  | 'equipe';
+  | 'equipe'
+  | 'plano';
 
 const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -53,6 +55,7 @@ const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'financeiro', label: 'Financeiro', modulo: 'financeiro' },
   { id: 'relatorios', label: 'Relatórios', modulo: 'relatorios' },
   { id: 'equipe', label: 'Equipe', modulo: 'equipe' },
+  { id: 'plano', label: 'Plano', modulo: 'assinatura' },
 ];
 
 const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
@@ -108,6 +111,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
     titulo: 'Equipe',
     sub: 'Membros, convites e papéis',
   },
+  plano: {
+    titulo: 'Plano',
+    sub: 'Limites e recursos da empresa',
+  },
 };
 
 export function App() {
@@ -127,15 +134,23 @@ export function App() {
     );
   }
   if (!sessao) return <LoginPage onEntrou={setSessao} />;
-  return <AppAutenticado sessao={sessao} onSair={() => setSessao(null)} />;
+  return (
+    <AppAutenticado
+      sessao={sessao}
+      onSair={() => setSessao(null)}
+      onSessao={setSessao}
+    />
+  );
 }
 
 function AppAutenticado({
   sessao,
   onSair,
+  onSessao,
 }: {
   sessao: SessaoAtual;
   onSair: () => void;
+  onSessao: (sessao: SessaoAtual) => void;
 }) {
   const [pagina, setPagina] = useState<Pagina>('dashboard');
   const [ordemId, setOrdemId] = useState<number | null>(null);
@@ -223,7 +238,8 @@ function AppAutenticado({
             <span>
               {sessao.usuario.nome}
               <small>
-                {sessao.empresa.nome} · {PAPEL_LABEL[sessao.usuario.papel]}
+                {sessao.empresa.nome} · {PAPEL_LABEL[sessao.usuario.papel]} ·{' '}
+                {sessao.assinatura.plano.nome}
               </small>
             </span>
             <button
@@ -268,6 +284,12 @@ function AppAutenticado({
               {paginaAtual === 'financeiro' && <FinanceiroPage />}
               {paginaAtual === 'relatorios' && <RelatoriosPage />}
               {paginaAtual === 'equipe' && podeEquipe && <EquipePage sessao={sessao} />}
+              {paginaAtual === 'plano' && (
+                <PlanoPage
+                  sessao={sessao}
+                  onAssinatura={(assinatura) => onSessao({ ...sessao, assinatura })}
+                />
+              )}
             </>
           )}
         </div>
