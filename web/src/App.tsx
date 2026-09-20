@@ -12,8 +12,17 @@ import { PedidosPage } from './PedidosPage';
 import { ProdutosPage } from './ProdutosPage';
 import { RelatoriosPage } from './RelatoriosPage';
 import { ExpedicaoPage } from './ExpedicaoPage';
+import { EquipePage } from './EquipePage';
 import { LoginPage } from './LoginPage';
-import { obterSessao, sair, type SessaoAtual } from './api';
+import {
+  obterSessao,
+  PAPEL_LABEL,
+  sair,
+  temPermissao,
+  moduloSomenteLeitura,
+  type Modulo,
+  type SessaoAtual,
+} from './api';
 
 type Pagina =
   | 'dashboard'
@@ -27,21 +36,23 @@ type Pagina =
   | 'etapas'
   | 'compras'
   | 'financeiro'
-  | 'relatorios';
+  | 'relatorios'
+  | 'equipe';
 
-const NAV: Array<{ id: Pagina; label: string }> = [
+const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'clientes', label: 'Clientes' },
-  { id: 'produtos', label: 'Produtos' },
-  { id: 'materiais', label: 'Materiais' },
-  { id: 'estoque', label: 'Estoque' },
-  { id: 'pedidos', label: 'Pedidos' },
-  { id: 'expedicao', label: 'Expedição' },
-  { id: 'ordens', label: 'Ordens de Produção' },
-  { id: 'etapas', label: 'Produção/Etapas' },
-  { id: 'compras', label: 'Compras' },
-  { id: 'financeiro', label: 'Financeiro' },
-  { id: 'relatorios', label: 'Relatórios' },
+  { id: 'clientes', label: 'Clientes', modulo: 'clientes' },
+  { id: 'produtos', label: 'Produtos', modulo: 'produtos' },
+  { id: 'materiais', label: 'Materiais', modulo: 'materiais' },
+  { id: 'estoque', label: 'Estoque', modulo: 'estoque' },
+  { id: 'pedidos', label: 'Pedidos', modulo: 'pedidos' },
+  { id: 'expedicao', label: 'Expedição', modulo: 'expedicao' },
+  { id: 'ordens', label: 'Ordens de Produção', modulo: 'ordens' },
+  { id: 'etapas', label: 'Produção/Etapas', modulo: 'etapas' },
+  { id: 'compras', label: 'Compras', modulo: ['compras', 'fornecedores'] },
+  { id: 'financeiro', label: 'Financeiro', modulo: 'financeiro' },
+  { id: 'relatorios', label: 'Relatórios', modulo: 'relatorios' },
+  { id: 'equipe', label: 'Equipe', modulo: 'equipe' },
 ];
 
 const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
@@ -93,6 +104,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
     titulo: 'Relatórios',
     sub: 'Indicadores da confecção',
   },
+  equipe: {
+    titulo: 'Equipe',
+    sub: 'Membros, convites e papéis',
+  },
 };
 
 export function App() {
@@ -138,20 +153,33 @@ function AppAutenticado({
     setMenuAberto(false);
   }
 
-  const ativo = ordemId ? 'ordens' : pagina;
+  const nav = NAV.filter(
+    (item) => !item.modulo || temPermissao(sessao.permissoes, item.modulo),
+  );
+  const paginaAtual = nav.some((item) => item.id === pagina) ? pagina : 'dashboard';
+  const ativo = ordemId ? 'ordens' : paginaAtual;
   const titulo = ordemId
     ? { titulo: 'Detalhe da OP', sub: 'Fluxo visual de produção' }
-    : TITULOS[pagina];
+    : TITULOS[paginaAtual];
+  const moduloAtual = ordemId
+    ? 'ordens'
+    : NAV.find((item) => item.id === paginaAtual)?.modulo;
+  const podeEquipe = temPermissao(sessao.permissoes, 'equipe');
+  const somenteLeitura = moduloAtual
+    ? moduloSomenteLeitura(sessao.permissoes, moduloAtual)
+    : false;
 
   return (
-    <div className={`shell${menuAberto ? ' shell--menu' : ''}`}>
+    <div
+      className={`shell${menuAberto ? ' shell--menu' : ''}${somenteLeitura ? ' shell--leitura' : ''}`}
+    >
       <aside className="shell__sidebar" id="menu-lateral">
         <div className="shell__marca">
           <strong>Gestão de Confecção</strong>
           <span>Chão de fábrica</span>
         </div>
         <nav className="menu" aria-label="Navegação principal">
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -194,7 +222,9 @@ function AppAutenticado({
           <div className="shell__sessao">
             <span>
               {sessao.usuario.nome}
-              <small>{sessao.empresa.nome}</small>
+              <small>
+                {sessao.empresa.nome} · {PAPEL_LABEL[sessao.usuario.papel]}
+              </small>
             </span>
             <button
               type="button"
@@ -209,27 +239,35 @@ function AppAutenticado({
         </header>
 
         <div className="shell__conteudo">
-          {ordemId ? (
+          {somenteLeitura && (
+            <p className="aviso-leitura">Seu papel é somente leitura neste módulo.</p>
+          )}
+          {ordemId && temPermissao(sessao.permissoes, 'ordens') ? (
             <OrdemDetalhePage
               ordemId={ordemId}
               onVoltar={() => setOrdemId(null)}
             />
           ) : (
             <>
-              {pagina === 'dashboard' && (
-                <DashboardPage onAbrirOp={abrirOp} onIr={(p) => ir(p as Pagina)} />
+              {paginaAtual === 'dashboard' && (
+                <DashboardPage
+                  permissoes={sessao.permissoes}
+                  onAbrirOp={abrirOp}
+                  onIr={(p) => ir(p as Pagina)}
+                />
               )}
-              {pagina === 'clientes' && <ClientesPage />}
-              {pagina === 'produtos' && <ProdutosPage />}
-              {pagina === 'materiais' && <MateriasPrimasPage />}
-              {pagina === 'estoque' && <EstoquePage />}
-              {pagina === 'pedidos' && <PedidosPage onAbrirOp={abrirOp} />}
-              {pagina === 'expedicao' && <ExpedicaoPage />}
-              {pagina === 'ordens' && <OrdensPage />}
-              {pagina === 'etapas' && <EtapasPage />}
-              {pagina === 'compras' && <ComprasPage />}
-              {pagina === 'financeiro' && <FinanceiroPage />}
-              {pagina === 'relatorios' && <RelatoriosPage />}
+              {paginaAtual === 'clientes' && <ClientesPage />}
+              {paginaAtual === 'produtos' && <ProdutosPage />}
+              {paginaAtual === 'materiais' && <MateriasPrimasPage />}
+              {paginaAtual === 'estoque' && <EstoquePage />}
+              {paginaAtual === 'pedidos' && <PedidosPage onAbrirOp={abrirOp} />}
+              {paginaAtual === 'expedicao' && <ExpedicaoPage />}
+              {paginaAtual === 'ordens' && <OrdensPage />}
+              {paginaAtual === 'etapas' && <EtapasPage />}
+              {paginaAtual === 'compras' && <ComprasPage />}
+              {paginaAtual === 'financeiro' && <FinanceiroPage />}
+              {paginaAtual === 'relatorios' && <RelatoriosPage />}
+              {paginaAtual === 'equipe' && podeEquipe && <EquipePage sessao={sessao} />}
             </>
           )}
         </div>

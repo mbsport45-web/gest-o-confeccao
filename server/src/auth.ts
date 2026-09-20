@@ -3,6 +3,7 @@ import { Router, type RequestHandler } from 'express';
 import { hashSync, compareSync } from 'bcryptjs';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { isPapel, permissoesDoPapel, type Papel } from './papeis.js';
 
 export const COOKIE_SESSAO = 'gc_sessao';
 const SESSAO_MS = 7 * 24 * 60 * 60 * 1000;
@@ -17,6 +18,7 @@ declare global {
         nome: string;
         email: string;
         empresaId: number;
+        papel: Papel;
       };
     }
   }
@@ -36,9 +38,16 @@ const registrarSchema = credenciaisSchema.extend({
     .optional()
     .or(z.literal(''))
     .transform((v) => (v ? v : undefined)),
+  convite: z
+    .string()
+    .trim()
+    .max(200)
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (v ? v : undefined)),
 });
 
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
@@ -52,17 +61,27 @@ function cookieOpcoes() {
   };
 }
 
-function mapUsuario(row: { id: number; nome: string; email: string; empresa_id: number; empresa_nome: string; empresa_status: string }) {
+function mapUsuario(row: {
+  id: number;
+  nome: string;
+  email: string;
+  empresa_id: number;
+  empresa_nome: string;
+  empresa_status: string;
+  papel: string;
+}) {
+  const papel: Papel = isPapel(row.papel) ? row.papel : 'producao';
   return {
-    usuario: { id: row.id, nome: row.nome, email: row.email },
+    usuario: { id: row.id, nome: row.nome, email: row.email, papel },
     empresa: { id: row.empresa_id, nome: row.empresa_nome, status: row.empresa_status },
+    permissoes: permissoesDoPapel(papel),
   };
 }
 
 function buscarUsuarioPorId(db: AppDatabase, id: number) {
   return db
     .prepare(
-      `SELECT u.id, u.nome, u.email, u.empresa_id, e.nome AS empresa_nome, e.status AS empresa_status
+      `SELECT u.id, u.nome, u.email, u.empresa_id, u.papel, e.nome AS empresa_nome, e.status AS empresa_status
          FROM usuarios u JOIN empresas e ON e.id = u.empresa_id
         WHERE u.id = ?`,
     )
@@ -72,6 +91,7 @@ function buscarUsuarioPorId(db: AppDatabase, id: number) {
         nome: string;
         email: string;
         empresa_id: number;
+        papel: string;
         empresa_nome: string;
         empresa_status: string;
       }
@@ -95,7 +115,7 @@ export function requireAuth(db: AppDatabase): RequestHandler {
     }
     const sessao = db
       .prepare(
-        `SELECT s.id, s.usuario_id, u.nome, u.email, u.empresa_id, u.status
+        `SELECT s.id, s.usuario_id, u.nome, u.email, u.empresa_id, u.papel, u.status
            FROM sessoes s
            JOIN usuarios u ON u.id = s.usuario_id
           WHERE s.token_hash = ? AND datetime(s.expira_em) > datetime('now')`,
@@ -107,6 +127,7 @@ export function requireAuth(db: AppDatabase): RequestHandler {
           nome: string;
           email: string;
           empresa_id: number;
+          papel: string;
           status: string;
         }
       | undefined;
@@ -118,13 +139,76 @@ export function requireAuth(db: AppDatabase): RequestHandler {
       nome: sessao.nome,
       email: sessao.email,
       empresaId: sessao.empresa_id,
+      papel: isPapel(sessao.papel) ? sessao.papel : 'producao',
     };
     next();
   };
 }
 
+function buscarConvitePorToken(db: AppDatabase, token: string) {
+  return db
+    .prepare(
+      `SELECT c.id, c.empresa_id, c.email, c.papel, c.status, c.expira_em, e.nome AS empresa_nome
+         FROM convites c
+         JOIN empresas e ON e.id = c.empresa_id
+        WHERE c.token_hash = ?`,
+    )
+    .get(hashToken(token)) as
+    | {
+        id: number;
+        empresa_id: number;
+        email: string;
+        papel: string;
+        status: string;
+        expira_em: string;
+        empresa_nome: string;
+      }
+    | undefined;
+}
+
+function conviteValido(
+  convite:
+    | {
+        id: number;
+        empresa_id: number;
+        email: string;
+        papel: string;
+        status: string;
+        expira_em: string;
+        empresa_nome: string;
+      }
+    | undefined,
+  db: AppDatabase,
+) {
+  if (!convite) return { ok: false as const, erro: 'Convite não encontrado', status: 404 };
+  if (convite.status !== 'pendente') {
+    return { ok: false as const, erro: 'Este convite já foi usado ou cancelado', status: 409 };
+  }
+  if (convite.expira_em < new Date().toISOString().slice(0, 19).replace('T', ' ')) {
+    db.prepare(`UPDATE convites SET status = 'expirado' WHERE id = ? AND status = 'pendente'`).run(
+      convite.id,
+    );
+    return { ok: false as const, erro: 'Convite expirado', status: 410 };
+  }
+  return { ok: true as const, convite };
+}
+
 export function createAuthRouter(db: AppDatabase): Router {
   const router = Router();
+
+  router.get('/convite/:token', (req, res) => {
+    const token = String(req.params.token ?? '');
+    const checagem = conviteValido(buscarConvitePorToken(db, token), db);
+    if (!checagem.ok) {
+      return res.status(checagem.status).json({ erro: checagem.erro });
+    }
+    res.json({
+      email: checagem.convite.email,
+      papel: checagem.convite.papel,
+      empresa: { id: checagem.convite.empresa_id, nome: checagem.convite.empresa_nome },
+      expira_em: checagem.convite.expira_em,
+    });
+  });
 
   router.post('/registrar', (req, res) => {
     const parsed = registrarSchema.safeParse(req.body);
@@ -139,32 +223,61 @@ export function createAuthRouter(db: AppDatabase): Router {
     if (existente) {
       return res.status(409).json({ erro: 'E-mail já cadastrado' });
     }
+    const conviteInfo = data.convite
+      ? conviteValido(buscarConvitePorToken(db, data.convite), db)
+      : null;
+    if (data.convite && conviteInfo && !conviteInfo.ok) {
+      return res.status(conviteInfo.status).json({ erro: conviteInfo.erro });
+    }
+    if (conviteInfo?.ok && conviteInfo.convite.email !== data.email) {
+      return res.status(400).json({ erro: 'Este convite foi enviado para outro e-mail' });
+    }
+
     const totalUsuarios = (db.prepare('SELECT COUNT(*) AS n FROM usuarios').get() as { n: number }).n;
     const senhaHash = hashSync(data.senha, BCRYPT_ROUNDS);
-    const info = db.transaction(() => {
-      let empresaId = 1;
-      if (totalUsuarios === 0) {
-        if (data.empresa) {
-          db.prepare(`UPDATE empresas SET nome = ? WHERE id = 1`).run(data.empresa);
+    let info: { lastInsertRowid: number | bigint };
+    try {
+      info = db.transaction(() => {
+        let empresaId = 1;
+        let papel: Papel = 'proprietario';
+        if (conviteInfo?.ok) {
+          empresaId = conviteInfo.convite.empresa_id;
+          papel = isPapel(conviteInfo.convite.papel) ? conviteInfo.convite.papel : 'producao';
+        } else if (totalUsuarios === 0) {
+          if (data.empresa) {
+            db.prepare(`UPDATE empresas SET nome = ? WHERE id = 1`).run(data.empresa);
+          }
+        } else {
+          const nova = db
+            .prepare(`INSERT INTO empresas (nome, status) VALUES (?, 'ativa')`)
+            .run(data.empresa ?? 'Minha empresa');
+          empresaId = Number(nova.lastInsertRowid);
         }
-      } else {
-        const nova = db
-          .prepare(`INSERT INTO empresas (nome, status) VALUES (?, 'ativa')`)
-          .run(data.empresa ?? 'Minha empresa');
-        empresaId = Number(nova.lastInsertRowid);
+        const criado = db
+          .prepare(
+            `INSERT INTO usuarios (empresa_id, nome, email, senha_hash, papel)
+             VALUES (@empresa_id, @nome, @email, @senha_hash, @papel)`,
+          )
+          .run({
+            empresa_id: empresaId,
+            nome: data.nome,
+            email: data.email,
+            senha_hash: senhaHash,
+            papel,
+          });
+        if (conviteInfo?.ok) {
+          db.prepare(
+            `UPDATE convites SET status = 'aceito', aceito_em = datetime('now') WHERE id = ?`,
+          ).run(conviteInfo.convite.id);
+        }
+        return criado;
+      })();
+    } catch (err) {
+      if (err instanceof Error && /UNIQUE/i.test(err.message)) {
+        return res.status(409).json({ erro: 'E-mail já cadastrado' });
       }
-      return db
-        .prepare(
-          `INSERT INTO usuarios (empresa_id, nome, email, senha_hash)
-           VALUES (@empresa_id, @nome, @email, @senha_hash)`,
-        )
-        .run({
-          empresa_id: empresaId,
-          nome: data.nome,
-          email: data.email,
-          senha_hash: senhaHash,
-        });
-    })();
+      throw err;
+    }
     const id = Number(info.lastInsertRowid);
     const token = criarSessao(db, id);
     const usuario = buscarUsuarioPorId(db, id);

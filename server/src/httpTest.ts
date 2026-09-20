@@ -1,5 +1,6 @@
 import request from 'supertest';
 import type { Express } from 'express';
+import type { PapelConvite } from './papeis.js';
 
 export type TestApi = ReturnType<typeof request.agent>;
 
@@ -34,4 +35,29 @@ export async function autenticarNovaEmpresa(
     throw new Error(`falha ao cadastrar empresa extra: ${res.status} ${JSON.stringify(res.body)}`);
   }
   return { api, empresaId: Number(res.body.empresa.id) };
+}
+
+export async function autenticarPapel(
+  app: Express,
+  admin: TestApi,
+  papel: PapelConvite,
+  opts?: { nome?: string; email?: string; senha?: string },
+): Promise<TestApi> {
+  const email = opts?.email ?? `${papel}-${crypto.randomUUID()}@gestao.local`;
+  const senha = opts?.senha ?? 'senha-teste-2';
+  const convite = await admin.post('/api/convites').send({ email, papel });
+  if (convite.status !== 201) {
+    throw new Error(`falha ao convidar ${papel}: ${convite.status} ${JSON.stringify(convite.body)}`);
+  }
+  const api = request.agent(app);
+  const res = await api.post('/api/auth/registrar').send({
+    nome: opts?.nome ?? `Membro ${papel}`,
+    email,
+    senha,
+    convite: convite.body.token,
+  });
+  if (res.status !== 201) {
+    throw new Error(`falha ao aceitar convite: ${res.status} ${JSON.stringify(res.body)}`);
+  }
+  return api;
 }

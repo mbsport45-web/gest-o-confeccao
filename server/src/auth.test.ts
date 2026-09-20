@@ -52,7 +52,11 @@ describe('API de autenticação e sessão', () => {
     const me = await request(app).get('/api/me').set('Cookie', cookie.split(';')[0]);
     expect(me.status).toBe(200);
     expect(me.body.usuario.email).toBe('marcos@fabrica.com');
+    expect(me.body.usuario.papel).toBe('proprietario');
     expect(me.body.empresa.id).toBe(1);
+    expect(me.body.permissoes.escrever).toBe(true);
+    expect(me.body.permissoes.equipe).toBe(true);
+    expect(me.body.permissoes.modulos.equipe.editar).toBe(true);
   });
 
   it('rejeita e-mail duplicado, senha curta e login inválido', async () => {

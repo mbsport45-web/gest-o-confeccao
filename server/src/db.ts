@@ -472,6 +472,7 @@ export function createDatabase(location: string) {
       nome TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       senha_hash TEXT NOT NULL,
+      papel TEXT NOT NULL DEFAULT 'proprietario',
       status TEXT NOT NULL DEFAULT 'ativo',
       criado_em TEXT NOT NULL DEFAULT (datetime('now')),
       atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
@@ -493,6 +494,7 @@ export function createDatabase(location: string) {
   ).run();
 
   aplicarColunaEmpresaId(db);
+  aplicarSchemaEquipe(db);
 
   return db;
 }
@@ -602,5 +604,43 @@ function aplicarColunaEmpresaId(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS pedidos_empresa ON pedidos (empresa_id);
     CREATE INDEX IF NOT EXISTS etapas_producao_empresa ON etapas_producao (empresa_id);
     CREATE INDEX IF NOT EXISTS expedicoes_empresa ON expedicoes (empresa_id);
+  `);
+}
+
+function aplicarSchemaEquipe(db: AppDatabase) {
+  if (tabelaExiste(db, 'usuarios')) {
+    const cols = db.prepare('PRAGMA table_info(usuarios)').all() as { name: string }[];
+    if (!cols.some((col) => col.name === 'papel')) {
+      db.exec(`ALTER TABLE usuarios ADD COLUMN papel TEXT NOT NULL DEFAULT 'proprietario'`);
+    }
+    db.exec(`
+      UPDATE usuarios SET papel = 'proprietario' WHERE papel = 'dono';
+      UPDATE usuarios SET papel = 'administrador' WHERE papel = 'admin';
+      UPDATE usuarios SET papel = 'producao' WHERE papel = 'operador';
+      UPDATE usuarios SET papel = 'vendas' WHERE papel = 'consulta';
+    `);
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS convites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL REFERENCES empresas(id),
+      email TEXT NOT NULL,
+      papel TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      convidado_por INTEGER REFERENCES usuarios(id),
+      expira_em TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      aceito_em TEXT
+    );
+    CREATE INDEX IF NOT EXISTS convites_empresa ON convites (empresa_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS convites_pendentes
+      ON convites (empresa_id, email)
+      WHERE status = 'pendente';
+    UPDATE convites SET papel = 'proprietario' WHERE papel = 'dono';
+    UPDATE convites SET papel = 'administrador' WHERE papel = 'admin';
+    UPDATE convites SET papel = 'producao' WHERE papel = 'operador';
+    UPDATE convites SET papel = 'vendas' WHERE papel = 'consulta';
   `);
 }

@@ -51,10 +51,16 @@ npm run dev:web
 | Método   | Rota                | Descrição                        |
 | -------- | ------------------- | -------------------------------- |
 | `GET`    | `/api/health`       | Health check (público).          |
-| `POST`   | `/api/auth/registrar` | Primeiro usuário na Empresa 1; cadastros seguintes criam uma empresa nova. Cookie httpOnly. |
+| `POST`   | `/api/auth/registrar` | Sem convite: primeiro usuário na Empresa 1; cadastros seguintes criam empresa nova. Com `convite`: entra na empresa convidada. Cookie httpOnly. |
 | `POST`   | `/api/auth/login`   | Abre sessão.                     |
 | `POST`   | `/api/auth/logout`  | Encerra a sessão.                |
-| `GET`    | `/api/auth/me` / `/api/me` | Usuário e empresa da sessão. |
+| `GET`    | `/api/auth/me` / `/api/me` | Usuário, papel, empresa e permissões da sessão. |
+| `GET`    | `/api/auth/convite/:token` | Dados públicos de um convite pendente. |
+| `GET`    | `/api/membros` | Lista membros da empresa da sessão (proprietário/administrador). |
+| `PATCH`  | `/api/membros/:id` | Altera papel (`administrador`/`financeiro`/`vendas`/`estoque`/`producao`) ou ativa/inativa. |
+| `GET`    | `/api/convites` | Lista convites (padrão: pendentes). |
+| `POST`   | `/api/convites` | Convida e-mail com papel; devolve o token uma vez. |
+| `DELETE` | `/api/convites/:id` | Cancela convite pendente. |
 | `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
 | `POST`   | `/api/ordens`       | Cria uma ordem de produção (código, produto/variante, BOM). |
 | `GET`    | `/api/ordens/ficha-tecnica` | Lê a ficha técnica/BOM do produto ou variante. |
@@ -130,7 +136,17 @@ Pedidos de venda usam `pedidos` e `pedido_itens` (cliente, produto e variante ex
 
 Expedição usa a tabela `expedicoes` ligada ao pedido. A fila mostra pedidos `pronto` ou `faturado`. Dali é possível marcar **pronto para envio**, **registrar a expedição** e **marcar entregue** (atualiza o status do pedido). Não há integração com transportadoras nesta etapa.
 
-A API de negócio exige sessão. O primeiro cadastro cria um usuário na **Empresa 1** (dados atuais ficam nela) e grava o cookie httpOnly `gc_sessao` (SameSite=Lax). Cadastros seguintes criam uma empresa nova e isolada. `/api/health` continua público. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query. Planos, cobrança e PostgreSQL/RLS ainda não entram nesta etapa.
+A API de negócio exige sessão. O primeiro cadastro cria um usuário **proprietário** na **Empresa 1** e grava o cookie httpOnly `gc_sessao` (SameSite=Lax). Cadastros seguintes, sem convite, criam uma empresa nova e isolada. Com um convite válido (`POST /api/auth/registrar` com `convite`), a pessoa entra na empresa que convidou, no papel combinado, e **não** cria outra confecção.
+
+Papéis por empresa, com permissões de visualizar/criar/editar/excluir por módulo:
+
+- **proprietário** e **administrador**: acesso completo, inclusive equipe. O proprietário não pode ser alterado nem inativado; convites não criam outro proprietário.
+- **financeiro**: CRUD no financeiro; visualiza relatórios, compras, fornecedores, pedidos e clientes.
+- **vendas**: CRUD em clientes, produtos, pedidos e expedição; visualiza relatórios.
+- **estoque**: CRUD em materiais, estoque, compras e fornecedores; visualiza produtos.
+- **produção**: CRUD em ordens e etapas; visualiza produtos, materiais, estoque e clientes.
+
+A API recusa (403) ação fora do papel e responde 404 quando o registro é de outra empresa. `/api/health` continua público. As APIs usam só a empresa da sessão autenticada — nunca `empresa_id` do body ou da query. Planos, cobrança e PostgreSQL/RLS ainda não entram nesta etapa.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

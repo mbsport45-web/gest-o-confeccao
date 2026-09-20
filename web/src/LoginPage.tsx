@@ -1,5 +1,12 @@
-import { useState, type FormEvent } from 'react';
-import { entrar, registrarUsuario, type SessaoAtual } from './api';
+import { useEffect, useState, type FormEvent } from 'react';
+import {
+  entrar,
+  obterConvitePublico,
+  PAPEL_LABEL,
+  registrarUsuario,
+  type ConvitePublico,
+  type SessaoAtual,
+} from './api';
 
 type Modo = 'entrar' | 'criar';
 
@@ -11,6 +18,22 @@ export function LoginPage({ onEntrou }: { onEntrou: (sessao: SessaoAtual) => voi
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
+  const [tokenConvite, setTokenConvite] = useState<string | null>(null);
+  const [convite, setConvite] = useState<ConvitePublico | null>(null);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('convite')?.trim() || null;
+    if (!token) return;
+    setTokenConvite(token);
+    setModo('criar');
+    void obterConvitePublico(token)
+      .then((info) => {
+        setConvite(info);
+        setEmail(info.email);
+        setErro(null);
+      })
+      .catch((err) => setErro((err as Error).message));
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -23,9 +46,15 @@ export function LoginPage({ onEntrou }: { onEntrou: (sessao: SessaoAtual) => voi
               nome,
               email,
               senha,
-              empresa: empresa || undefined,
+              empresa: tokenConvite ? undefined : empresa || undefined,
+              convite: tokenConvite || undefined,
             })
           : await entrar({ email, senha });
+      if (tokenConvite) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('convite');
+        window.history.replaceState({}, '', url.pathname + url.search);
+      }
       onEntrou(sessao);
     } catch (err) {
       setErro((err as Error).message);
@@ -64,22 +93,32 @@ export function LoginPage({ onEntrou }: { onEntrou: (sessao: SessaoAtual) => voi
           </button>
         </div>
         <form className="form" onSubmit={(e) => void handleSubmit(e)}>
+          {modo === 'criar' && convite && (
+            <p className="login__dica">
+              Convite para <strong>{convite.empresa.nome}</strong> como{' '}
+              {PAPEL_LABEL[convite.papel]}. Você entra nesta empresa, sem criar outra.
+            </p>
+          )}
           {modo === 'criar' && (
             <>
               <label>
                 Seu nome
                 <input value={nome} onChange={(e) => setNome(e.target.value)} required autoComplete="name" />
               </label>
-              <label>
-                Nome da empresa
-                <input
-                  value={empresa}
-                  onChange={(e) => setEmpresa(e.target.value)}
-                  placeholder="Sua confecção"
-                  autoComplete="organization"
-                />
-              </label>
-              <p className="login__dica">Cada nova conta cria uma empresa separada.</p>
+              {!tokenConvite && (
+                <>
+                  <label>
+                    Nome da empresa
+                    <input
+                      value={empresa}
+                      onChange={(e) => setEmpresa(e.target.value)}
+                      placeholder="Sua confecção"
+                      autoComplete="organization"
+                    />
+                  </label>
+                  <p className="login__dica">Cada nova conta cria uma empresa separada.</p>
+                </>
+              )}
             </>
           )}
           <label>
@@ -90,6 +129,7 @@ export function LoginPage({ onEntrou }: { onEntrou: (sessao: SessaoAtual) => voi
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="username"
+              readOnly={Boolean(tokenConvite && modo === 'criar')}
             />
           </label>
           <label>
