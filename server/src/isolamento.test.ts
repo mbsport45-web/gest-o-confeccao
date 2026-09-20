@@ -508,6 +508,25 @@ describe('isolamento por empresa da sessão', () => {
       ).status,
     ).toBe(404);
 
+    const relatorios = [
+      '/api/relatorios/estoque',
+      '/api/relatorios/compras',
+      '/api/relatorios/producao',
+      '/api/relatorios/vendas',
+    ];
+    for (const rota of relatorios) {
+      const res = await empresa2.get(rota);
+      expect(res.status).toBe(200);
+      expect(res.body.total ?? 0).toBe(0);
+    }
+    const financeiroRel = await empresa2.get('/api/relatorios/financeiro');
+    expect(financeiroRel.status).toBe(200);
+    expect(financeiroRel.body.total).toBe(0);
+    const custos = await empresa2.get('/api/relatorios/custos');
+    expect(custos.status).toBe(200);
+    expect(custos.body.totais.compras).toBe(0);
+    expect(custos.body.totais.estoque_materiais).toBe(0);
+
     const proprioCliente = await empresa2.post('/api/clientes').send({ nome: 'Cliente Isolado' });
     const proprioProduto = await empresa2.post('/api/produtos').send({
       sku: 'CAM-ISO',
@@ -516,7 +535,6 @@ describe('isolamento por empresa da sessão', () => {
       tamanhos: ['M'],
       preco_venda: 40,
     });
-    const propriaVariante = (proprioProduto.body.variantes as Array<{ id: number }>)[0];
     const proprioPedido = await empresa2.post('/api/pedidos').send({
       cliente_id: proprioCliente.body.id,
     });
@@ -559,24 +577,9 @@ describe('isolamento por empresa da sessão', () => {
     expect(me1.body.empresa.id).toBe(1);
     expect(me2.body.empresa.id).not.toBe(me1.body.empresa.id);
 
-    const relatorios = [
-      '/api/relatorios/estoque',
-      '/api/relatorios/compras',
-      '/api/relatorios/producao',
-      '/api/relatorios/vendas',
-    ];
-    for (const rota of relatorios) {
-      const res = await empresa2.get(rota);
-      expect(res.status).toBe(200);
-      expect(res.body.total ?? res.body.data?.length ?? 0).toBe(0);
-    }
-    const financeiroRel = await empresa2.get('/api/relatorios/financeiro');
-    expect(financeiroRel.status).toBe(200);
-    expect(financeiroRel.body.total).toBe(0);
-    const custos = await empresa2.get('/api/relatorios/custos');
-    expect(custos.status).toBe(200);
-    expect(custos.body.totais.compras).toBe(0);
-    expect(custos.body.totais.estoque_materiais).toBe(0);
+    const vendasProprias = await empresa2.get('/api/relatorios/vendas');
+    expect(vendasProprias.status).toBe(200);
+    expect((vendasProprias.body.data as Array<{ id: number }>).map((p) => p.id)).not.toContain(ids.pedido);
 
     const categorias1 = await empresa1.get('/api/financeiro/categorias');
     const categorias2 = await empresa2.get('/api/financeiro/categorias');
