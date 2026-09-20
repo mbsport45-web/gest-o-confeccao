@@ -5,6 +5,9 @@ import { EtapasPage } from './EtapasPage';
 import { EstoquePage } from './EstoquePage';
 import { MateriasPrimasPage } from './MateriasPrimasPage';
 import { ModuloEmBreve } from './ModuloEmBreve';
+import { ComprasPage } from './ComprasPage';
+import { FinanceiroPage } from './FinanceiroPage';
+import { RelatoriosPage } from './RelatoriosPage';
 import { OrdemDetalhePage } from './OrdemDetalhePage';
 import { OrdensPage } from './OrdensPage';
 import { ProdutosPage } from './ProdutosPage';
@@ -178,24 +181,9 @@ export function App() {
               )}
               {pagina === 'ordens' && <OrdensPage />}
               {pagina === 'etapas' && <EtapasPage />}
-              {pagina === 'compras' && (
-                <ModuloEmBreve
-                  titulo="Compras"
-                  descricao="O módulo de compras ainda não foi implantado."
-                />
-              )}
-              {pagina === 'financeiro' && (
-                <ModuloEmBreve
-                  titulo="Financeiro"
-                  descricao="O módulo financeiro ainda não foi implantado."
-                />
-              )}
-              {pagina === 'relatorios' && (
-                <ModuloEmBreve
-                  titulo="Relatórios"
-                  descricao="O módulo de relatórios ainda não foi implantado."
-                />
-              )}
+              {pagina === 'compras' && <ComprasPage />}
+              {pagina === 'financeiro' && <FinanceiroPage />}
+              {pagina === 'relatorios' && <RelatoriosPage />}
             </>
           )}
         </div>

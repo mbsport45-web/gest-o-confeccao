@@ -924,3 +924,348 @@ export async function removerEtapa(id: number): Promise<void> {
   const res = await fetch(`/api/etapas/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
+
+export const STATUS_COMPRA = [
+  'rascunho',
+  'aberta',
+  'parcial',
+  'recebida',
+  'cancelada',
+] as const;
+export type StatusCompra = (typeof STATUS_COMPRA)[number];
+export const STATUS_COMPRA_LABEL: Record<StatusCompra, string> = {
+  rascunho: 'Rascunho',
+  aberta: 'Aberta',
+  parcial: 'Parcial',
+  recebida: 'Recebida',
+  cancelada: 'Cancelada',
+};
+
+export interface Fornecedor {
+  id: number;
+  codigo: string | null;
+  nome: string;
+  cpf_cnpj: string | null;
+  contato: string | null;
+  telefone: string | null;
+  email: string | null;
+  cidade: string | null;
+  estado: string | null;
+  condicao_pagamento: string | null;
+  status: 'ativo' | 'inativo';
+}
+
+export interface CompraItem {
+  id: number;
+  compra_id: number;
+  materia_prima_id: number | null;
+  produto_id: number | null;
+  variante_id: number | null;
+  quantidade: number;
+  quantidade_recebida: number;
+  custo_unitario: number;
+  total: number;
+  unidade: string | null;
+  nome?: string | null;
+  codigo?: string | null;
+}
+
+export interface PedidoCompra {
+  id: number;
+  codigo: string | null;
+  fornecedor_id: number;
+  data_emissao: string;
+  data_prevista: string | null;
+  status: StatusCompra;
+  observacoes: string | null;
+  subtotal: number;
+  desconto: number;
+  frete: number;
+  total: number;
+  forma_pagamento: string | null;
+  condicao_pagamento: string | null;
+  vencimento: string | null;
+  fornecedor?: string;
+  itens?: CompraItem[];
+}
+
+export interface ListaPadrao<T> {
+  data: T[];
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  total_paginas: number;
+}
+
+export async function listarFornecedores(
+  filtros: { q?: string; status?: string; pagina?: number; por_pagina?: number } = {},
+): Promise<ListaPadrao<Fornecedor>> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.status) params.set('status', filtros.status);
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await fetch(`/api/fornecedores?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarFornecedor(dados: {
+  nome: string;
+  cpf_cnpj?: string;
+  contato?: string;
+  telefone?: string;
+  cidade?: string;
+  estado?: string;
+  condicao_pagamento?: string;
+}): Promise<Fornecedor> {
+  const res = await fetch('/api/fornecedores', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarCompras(
+  filtros: {
+    q?: string;
+    status?: string;
+    fornecedor_id?: number;
+    de?: string;
+    ate?: string;
+    pagina?: number;
+    por_pagina?: number;
+  } = {},
+): Promise<ListaPadrao<PedidoCompra>> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.status) params.set('status', filtros.status);
+  if (filtros.fornecedor_id) params.set('fornecedor_id', String(filtros.fornecedor_id));
+  if (filtros.de) params.set('de', filtros.de);
+  if (filtros.ate) params.set('ate', filtros.ate);
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await fetch(`/api/compras?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterCompra(id: number): Promise<PedidoCompra> {
+  const res = await fetch(`/api/compras/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export type CompraPayload = {
+  fornecedor_id: number;
+  data_emissao?: string;
+  data_prevista?: string;
+  status?: StatusCompra;
+  observacoes?: string;
+  desconto?: number;
+  frete?: number;
+  forma_pagamento?: string;
+  condicao_pagamento?: string;
+  vencimento?: string;
+  itens?: Array<{
+    materia_prima_id?: number;
+    produto_id?: number;
+    variante_id?: number;
+    quantidade: number;
+    custo_unitario: number;
+    unidade?: string;
+  }>;
+};
+
+export async function criarCompra(dados: CompraPayload): Promise<PedidoCompra> {
+  const res = await fetch('/api/compras', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarCompra(
+  id: number,
+  dados: Partial<CompraPayload>,
+): Promise<PedidoCompra> {
+  const res = await fetch(`/api/compras/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function receberCompra(
+  id: number,
+  itens?: Array<{ item_id: number; quantidade: number }>,
+): Promise<PedidoCompra> {
+  const res = await fetch(`/api/compras/${id}/receber`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(itens ? { itens } : {}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerCompra(id: number): Promise<void> {
+  const res = await fetch(`/api/compras/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export const TIPOS_LANCAMENTO = ['pagar', 'receber'] as const;
+export type TipoLancamento = (typeof TIPOS_LANCAMENTO)[number];
+export const STATUS_LANCAMENTO = [
+  'pendente',
+  'pago',
+  'recebido',
+  'vencido',
+  'cancelado',
+] as const;
+export type StatusLancamento = (typeof STATUS_LANCAMENTO)[number];
+export const TIPO_LANCAMENTO_LABEL: Record<TipoLancamento, string> = {
+  pagar: 'Contas a pagar',
+  receber: 'Contas a receber',
+};
+export const STATUS_LANCAMENTO_LABEL: Record<StatusLancamento, string> = {
+  pendente: 'Pendente',
+  pago: 'Pago',
+  recebido: 'Recebido',
+  vencido: 'Vencido',
+  cancelado: 'Cancelado',
+};
+
+export interface FinanceiroCategoria {
+  id: number;
+  nome: string;
+  tipo: string;
+  status: string;
+}
+
+export interface FinanceiroLancamento {
+  id: number;
+  tipo: TipoLancamento;
+  categoria_id: number | null;
+  descricao: string;
+  valor: number;
+  status: StatusLancamento;
+  vencimento: string | null;
+  data_pagamento: string | null;
+  fornecedor_id: number | null;
+  cliente_id: number | null;
+  compra_id: number | null;
+  observacoes: string | null;
+  categoria?: string | null;
+  fornecedor?: string | null;
+  cliente?: string | null;
+  compra_codigo?: string | null;
+}
+
+export interface FinanceiroResumo {
+  saldo: number;
+  contas_pagar: number;
+  contas_receber: number;
+  vencidos: number;
+  previsto: number;
+  realizado: number;
+  realizado_pagar: number;
+  realizado_receber: number;
+  fluxo: Array<{ mes: string; entradas: number; saidas: number; saldo: number }>;
+  recentes: FinanceiroLancamento[];
+}
+
+export async function listarCategoriasFinanceiro(): Promise<{
+  data: FinanceiroCategoria[];
+  total: number;
+}> {
+  const res = await fetch('/api/financeiro/categorias');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterResumoFinanceiro(filtros: { de?: string; ate?: string } = {}): Promise<FinanceiroResumo> {
+  const params = new URLSearchParams();
+  if (filtros.de) params.set('de', filtros.de);
+  if (filtros.ate) params.set('ate', filtros.ate);
+  const res = await fetch(`/api/financeiro/resumo?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarLancamentos(
+  filtros: {
+    q?: string;
+    tipo?: string;
+    status?: string;
+    categoria_id?: number;
+    de?: string;
+    ate?: string;
+    pagina?: number;
+    por_pagina?: number;
+  } = {},
+): Promise<ListaPadrao<FinanceiroLancamento>> {
+  const params = new URLSearchParams();
+  Object.entries(filtros).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  });
+  const res = await fetch(`/api/financeiro/lancamentos?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarLancamento(dados: {
+  tipo: TipoLancamento;
+  descricao: string;
+  valor: number;
+  categoria_id?: number;
+  vencimento?: string;
+  fornecedor_id?: number;
+  cliente_id?: number;
+}): Promise<FinanceiroLancamento> {
+  const res = await fetch('/api/financeiro/lancamentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarLancamento(
+  id: number,
+  dados: Partial<{ status: StatusLancamento; valor: number; descricao: string }>,
+): Promise<FinanceiroLancamento> {
+  const res = await fetch(`/api/financeiro/lancamentos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterRelatorio(tipo: string, filtros: Record<string, string | number | undefined> = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filtros).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  });
+  const res = await fetch(`/api/relatorios/${tipo}?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export function urlRelatorioCsv(tipo: string, filtros: Record<string, string | undefined> = {}) {
+  const params = new URLSearchParams({ formato: 'csv' });
+  Object.entries(filtros).forEach(([k, v]) => {
+    if (v) params.set(k, v);
+  });
+  return `/api/relatorios/${tipo}?${params.toString()}`;
+}
+

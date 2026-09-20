@@ -174,7 +174,9 @@ body {
 .app__main--materias,
 .app__main--estoque,
 .app__main--ordens,
-.app__main--etapas {
+.app__main--etapas,
+.app__main--compras,
+.app__main--financeiro {
   grid-template-columns: 1fr 400px;
 }
 
@@ -553,6 +555,35 @@ button {
   grid-template-columns: 1.6fr 1fr 1fr;
 }
 
+.filtros--compras {
+  grid-template-columns: 1.4fr 1fr 1fr 0.9fr 0.9fr;
+}
+
+.filtros--financeiro {
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 0.9fr 0.9fr;
+}
+
+.filtros--relatorios {
+  grid-template-columns: 1fr 1fr;
+  max-width: 420px;
+}
+
+.financeiro-topo {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.relatorios .card__head {
+  align-items: flex-start;
+}
+
+a.btn-secundario {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .card__head-acoes {
   display: flex;
   align-items: center;
@@ -777,6 +808,30 @@ button {
   background: rgba(248, 113, 113, 0.12);
 }
 
+.pill--rascunho,
+.pill--pendente {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.pill--aberta,
+.pill--pago,
+.pill--recebido,
+.pill--recebida {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+}
+
+.pill--parcial {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+}
+
+.pill--vencido {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+}
+
 .op-ficha dl {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -935,12 +990,16 @@ button {
   .app__main--estoque,
   .app__main--ordens,
   .app__main--etapas,
+  .app__main--compras,
+  .app__main--financeiro,
   .filtros,
   .filtros--produtos,
   .filtros--materias,
   .filtros--estoque,
   .filtros--ordens,
-  .filtros--etapas {
+  .filtros--etapas,
+  .filtros--compras,
+  .filtros--financeiro {
     grid-template-columns: 1fr;
   }
 

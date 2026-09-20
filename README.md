@@ -89,12 +89,26 @@ npm run dev:web
 | `GET`    | `/api/etapas/:id` | Detalha uma etapa (operador, início, término). |
 | `PATCH`  | `/api/etapas/:id` | Atualiza status, operador ou timestamps. |
 | `DELETE` | `/api/etapas/:id` | Remove etapa pendente ou cancelada. |
+| `GET`    | `/api/fornecedores` | Lista fornecedores (busca, filtros, paginação). |
+| `POST`   | `/api/fornecedores` | Cria um fornecedor. |
+| `GET`    | `/api/compras`      | Lista pedidos de compra (filtros e paginação). |
+| `POST`   | `/api/compras`      | Cria uma compra (itens, totais). |
+| `GET`    | `/api/compras/:id`  | Detalha compra com itens. |
+| `PATCH`  | `/api/compras/:id`  | Edita rascunho ou abre/cancela. |
+| `POST`   | `/api/compras/:id/receber` | Recebe itens e gera entrada de estoque. |
+| `GET`    | `/api/financeiro/resumo` | Saldo, pagar/receber, vencidos, fluxo. |
+| `GET`    | `/api/financeiro/lancamentos` | Contas a pagar/receber. |
+| `POST`   | `/api/financeiro/lancamentos` | Cria lançamento. |
+| `PATCH`  | `/api/financeiro/lancamentos/:id` | Baixa pagamento/recebimento. |
+| `GET`    | `/api/relatorios/:tipo` | Estoque, compras, financeiro, produção, custos, resumo (`?formato=csv`). |
 
 Cada variante possui SKU e código de barras únicos. O cadastro de produtos fica pronto para ficha técnica/BOM, matérias-primas, estoque, pedidos de venda e OPs (`produto_id` / `variante_id`). Matérias-primas usam `materias_primas.id` para os mesmos vínculos futuros. O estoque guarda saldo atual em `estoque_saldos` e o histórico em `estoque_movimentos`.
 
 Ordens de produção têm código (`OP-0001`), prioridade, data prevista, responsável, observações e status de chão de fábrica (`planejada`, `corte`, `costura`, `acabamento`, `qualidade`, `embalagem`, `concluida`, `cancelada`). A ficha técnica/BOM do produto ou variante vira requisito da OP; ao avançar para corte o sistema dá saída no estoque das matérias (e estorna se a OP for cancelada). O contrato antigo (`cliente`/`produto`/`tamanho` + `pendente`/`em_producao`) continua válido.
 
 O fluxo de produção vive em `etapas_producao`, vinculado à OP: Corte, Costura, Acabamento, Controle de qualidade e Embalagem, com sequência, status, operador e horários de início/término. A etapa seguinte só inicia depois que a anterior for concluída.
+
+Compras usam `fornecedores`, `pedidos_compra` e `pedido_compra_itens`. Ao receber uma compra o sistema reutiliza o movimento de estoque (`entrada`). Abrir a compra gera uma conta a pagar em `financeiro_lancamentos` vinculada a `compra_id`. Relatórios leem os dados reais e podem exportar CSV.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).
