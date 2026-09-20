@@ -1,0 +1,9 @@
+{
+  "name": "gestão de confecção",
+  "install": "cd /workspace && if [ -f package.json ]; then if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi; else echo '[install] No package.json at /workspace on this revision - skipping npm install'; fi",
+  "start": "bash /workspace/.cursor/start.sh",
+  "ports": [
+    { "name": "api", "port": 3002 },
+    { "name": "web", "port": 5173 }
+  ]
+}
