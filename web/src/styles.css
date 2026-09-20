@@ -231,6 +231,26 @@ body {
   grid-template-columns: 1fr;
 }
 
+.app__main--equipe {
+  grid-template-columns: 1fr;
+}
+
+.app__main--equipe .form__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px auto;
+  align-items: end;
+}
+
+.app__main--equipe .form__row > button {
+  width: auto;
+}
+
+@media (max-width: 720px) {
+  .app__main--equipe .form__row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .app__main--expedicao .kpi-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }

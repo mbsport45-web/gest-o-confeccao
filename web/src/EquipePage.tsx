@@ -114,7 +114,7 @@ export function EquipePage({ sessao }: { sessao: SessaoAtual }) {
   }
 
   return (
-    <main className="app__main">
+    <main className="app__main app__main--equipe">
       <section className="card card--wide">
         <div className="card__head">
           <h2>Equipe</h2>
