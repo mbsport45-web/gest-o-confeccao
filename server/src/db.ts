@@ -408,6 +408,19 @@ export function createDatabase(location: string) {
       quantidade_reservada INTEGER NOT NULL DEFAULT 0,
       criado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS expedicoes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pedido_id INTEGER NOT NULL UNIQUE REFERENCES pedidos(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pronto_envio',
+      data_pronta TEXT,
+      data_expedicao TEXT,
+      data_entrega TEXT,
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS expedicoes_status ON expedicoes (status);
   `);
 
   const finCols = db

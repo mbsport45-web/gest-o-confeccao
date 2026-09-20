@@ -98,6 +98,11 @@ npm run dev:web
 | `PATCH`  | `/api/pedidos/:id`  | Edita orçamento/aberto ou transiciona status. |
 | `POST`   | `/api/pedidos/:id/gerar-op` | Gera OP a partir dos itens confirmados. |
 | `POST`   | `/api/pedidos/:id/financeiro` | Gera conta a receber (sem duplicar). |
+| `GET`    | `/api/expedicao` | Fila de pedidos prontos/faturados para envio. |
+| `GET`    | `/api/expedicao/resumo` | Contagens da fila, prontos para envio, expedidos e entregues. |
+| `POST`   | `/api/expedicao/:id/pronto-envio` | Marca o pedido como pronto para envio. |
+| `POST`   | `/api/expedicao/:id/expedir` | Registra a expedição (data e observações; sem transportadora). |
+| `POST`   | `/api/expedicao/:id/entregar` | Marca o pedido como entregue. |
 | `GET`    | `/api/compras`      | Lista pedidos de compra (filtros e paginação). |
 | `POST`   | `/api/compras`      | Cria uma compra (itens, totais). |
 | `GET`    | `/api/compras/:id`  | Detalha compra com itens. |
@@ -118,6 +123,8 @@ O fluxo de produção vive em `etapas_producao`, vinculado à OP: Corte, Costura
 Compras usam `fornecedores`, `pedidos_compra` e `pedido_compra_itens`. Ao receber uma compra o sistema reutiliza o movimento de estoque (`entrada`). Abrir a compra gera uma conta a pagar em `financeiro_lancamentos` vinculada a `compra_id`. Relatórios leem os dados reais e podem exportar CSV. O relatório de **vendas** usa `pedidos` / `pedido_itens` (total, quantidade, faturamento por período, por produto e por cliente) com filtros de período (`data_pedido`) e status.
 
 Pedidos de venda usam `pedidos` e `pedido_itens` (cliente, produto e variante existentes). Confirmar o pedido reserva a quantidade no próprio item (não baixa estoque de produto acabado). **Gerar OP** cria registros em `ordens_producao` com `pedido_id` / `pedido_item_id`, copiando cliente, produto, variante, quantidade, prioridade e previsão. **Gerar financeiro** cria uma conta a receber em `financeiro_lancamentos` (`pedido_id`) sem duplicar.
+
+Expedição usa a tabela `expedicoes` ligada ao pedido. A fila mostra pedidos `pronto` ou `faturado`. Dali é possível marcar **pronto para envio**, **registrar a expedição** e **marcar entregue** (atualiza o status do pedido). Não há integração com transportadoras nesta etapa.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

@@ -1470,3 +1470,90 @@ export function urlRelatorioCsv(tipo: string, filtros: Record<string, string | u
   return `/api/relatorios/${tipo}?${params.toString()}`;
 }
 
+export const STATUS_EXPEDICAO = ['pronto_envio', 'expedido', 'entregue'] as const;
+export type StatusExpedicao = (typeof STATUS_EXPEDICAO)[number];
+export const STATUS_EXPEDICAO_LABEL: Record<StatusExpedicao, string> = {
+  pronto_envio: 'Pronto para envio',
+  expedido: 'Expedido',
+  entregue: 'Entregue',
+};
+
+export interface ExpedicaoItem {
+  pedido_id: number;
+  codigo: string | null;
+  cliente: string;
+  quantidade: number;
+  valor: number;
+  data_pedido: string;
+  data_prevista: string | null;
+  pedido_status: StatusPedido;
+  expedicao_id: number | null;
+  expedicao_status: StatusExpedicao | null;
+  status: string;
+  data_pronta: string | null;
+  data_expedicao: string | null;
+  data_entrega: string | null;
+  observacoes: string | null;
+}
+
+export interface ExpedicaoResumo {
+  fila: number;
+  prontos_envio: number;
+  expedidos: number;
+  entregues: number;
+}
+
+export async function obterResumoExpedicao(): Promise<ExpedicaoResumo> {
+  const res = await fetch('/api/expedicao/resumo');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarExpedicao(
+  filtros: { q?: string; fila?: string; pagina?: number; por_pagina?: number } = {},
+): Promise<ListaPadrao<ExpedicaoItem>> {
+  const params = new URLSearchParams();
+  Object.entries(filtros).forEach(([k, v]) => {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  });
+  const res = await fetch(`/api/expedicao?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function marcarProntoEnvio(pedidoId: number): Promise<ExpedicaoItem> {
+  const res = await fetch(`/api/expedicao/${pedidoId}/pronto-envio`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function registrarExpedicao(
+  pedidoId: number,
+  dados: { data_expedicao?: string; observacoes?: string } = {},
+): Promise<ExpedicaoItem> {
+  const res = await fetch(`/api/expedicao/${pedidoId}/expedir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function marcarEntrega(
+  pedidoId: number,
+  dados: { data_entrega?: string } = {},
+): Promise<ExpedicaoItem> {
+  const res = await fetch(`/api/expedicao/${pedidoId}/entregar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+

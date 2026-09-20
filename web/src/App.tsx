@@ -11,6 +11,7 @@ import { OrdensPage } from './OrdensPage';
 import { PedidosPage } from './PedidosPage';
 import { ProdutosPage } from './ProdutosPage';
 import { RelatoriosPage } from './RelatoriosPage';
+import { ExpedicaoPage } from './ExpedicaoPage';
 
 type Pagina =
   | 'dashboard'
@@ -19,6 +20,7 @@ type Pagina =
   | 'materiais'
   | 'estoque'
   | 'pedidos'
+  | 'expedicao'
   | 'ordens'
   | 'etapas'
   | 'compras'
@@ -32,6 +34,7 @@ const NAV: Array<{ id: Pagina; label: string }> = [
   { id: 'materiais', label: 'Materiais' },
   { id: 'estoque', label: 'Estoque' },
   { id: 'pedidos', label: 'Pedidos' },
+  { id: 'expedicao', label: 'Expedição' },
   { id: 'ordens', label: 'Ordens de Produção' },
   { id: 'etapas', label: 'Produção/Etapas' },
   { id: 'compras', label: 'Compras' },
@@ -63,6 +66,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
   pedidos: {
     titulo: 'Pedidos',
     sub: 'Pedidos de venda',
+  },
+  expedicao: {
+    titulo: 'Expedição',
+    sub: 'Pronto para envio e entrega',
   },
   ordens: {
     titulo: 'Ordens de Produção',
@@ -174,6 +181,7 @@ export function App() {
               {pagina === 'materiais' && <MateriasPrimasPage />}
               {pagina === 'estoque' && <EstoquePage />}
               {pagina === 'pedidos' && <PedidosPage onAbrirOp={abrirOp} />}
+              {pagina === 'expedicao' && <ExpedicaoPage />}
               {pagina === 'ordens' && <OrdensPage />}
               {pagina === 'etapas' && <EtapasPage />}
               {pagina === 'compras' && <ComprasPage />}

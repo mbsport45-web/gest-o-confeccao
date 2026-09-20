@@ -568,6 +568,11 @@ button {
   grid-template-columns: 1.4fr 1fr 1fr 1fr 0.9fr 0.9fr;
 }
 
+.filtros--expedicao {
+  grid-template-columns: 1fr;
+  max-width: 420px;
+}
+
 .filtros--relatorios {
   grid-template-columns: 1fr 1fr;
   max-width: 420px;
@@ -846,6 +851,16 @@ a.btn-secundario {
   background: rgba(52, 211, 153, 0.12);
 }
 
+.pill--pronto_envio {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+}
+
+.pill--expedido {
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.14);
+}
+
 .pill--cancelado {
   color: #f87171;
   background: rgba(248, 113, 113, 0.12);
@@ -1021,6 +1036,7 @@ a.btn-secundario {
   .app__main--etapas,
   .app__main--compras,
   .app__main--pedidos,
+  .app__main--expedicao,
   .app__main--financeiro,
   .filtros,
   .filtros--produtos,
@@ -1030,6 +1046,7 @@ a.btn-secundario {
   .filtros--etapas,
   .filtros--compras,
   .filtros--pedidos,
+  .filtros--expedicao,
   .filtros--financeiro {
     grid-template-columns: 1fr;
   }
