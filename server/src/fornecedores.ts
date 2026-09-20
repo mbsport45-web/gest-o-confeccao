@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { UFS_BRASIL } from './clientes.js';
 import { apenasDigitos, cpfCnpjValido } from './cpfCnpj.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_FORNECEDOR = ['ativo', 'inativo'] as const;
 
@@ -130,7 +131,7 @@ function campos(data: Partial<z.infer<typeof fornecedorBaseSchema>>, parciais = 
 
 export function createFornecedoresRouter(db: AppDatabase): Router {
   const router = Router();
-  const getStmt = db.prepare('SELECT * FROM fornecedores WHERE id = ?');
+  const getStmt = db.prepare('SELECT * FROM fornecedores WHERE id = ? AND empresa_id = ?');
 
   router.get('/', (req, res) => {
     const pagina = Math.max(1, Number(req.query.pagina ?? 1) || 1);
@@ -143,6 +144,7 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req);
     if (q) {
       where.push(
         `(nome LIKE @q OR ifnull(codigo,'') LIKE @q OR ifnull(cpf_cnpj,'') LIKE @q
@@ -178,7 +180,7 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
   });
 
   router.get('/:id', (req, res) => {
-    const row = getStmt.get(Number(req.params.id));
+    const row = getStmt.get(Number(req.params.id), empresaDaSessao(req));
     if (!row) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
     res.json(row);
   });
@@ -192,26 +194,30 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
       });
     }
     const row = campos(parsed.data);
+    const empresaId = empresaDaSessao(req);
     try {
       const info = db
         .prepare(
           `INSERT INTO fornecedores (
-             codigo, nome, cpf_cnpj, contato, telefone, email, endereco, cidade, estado, cep,
+             empresa_id, codigo, nome, cpf_cnpj, contato, telefone, email, endereco, cidade, estado, cep,
              condicao_pagamento, status, observacoes
            ) VALUES (
-             @codigo, @nome, @cpf_cnpj, @contato, @telefone, @email, @endereco, @cidade, @estado, @cep,
+             @empresa_id, @codigo, @nome, @cpf_cnpj, @contato, @telefone, @email, @endereco, @cidade, @estado, @cep,
              @condicao_pagamento, @status, @observacoes
            )`,
         )
-        .run(row);
+        .run({ ...row, empresa_id: empresaId });
       const id = Number(info.lastInsertRowid);
       if (!row.codigo) {
-        db.prepare(`UPDATE fornecedores SET codigo = @codigo WHERE id = @id`).run({
+        db.prepare(
+          `UPDATE fornecedores SET codigo = @codigo WHERE id = @id AND empresa_id = @empresa_id`,
+        ).run({
           id,
+          empresa_id: empresaId,
           codigo: `FOR-${String(id).padStart(4, '0')}`,
         });
       }
-      res.status(201).json(getStmt.get(id));
+      res.status(201).json(getStmt.get(id, empresaId));
     } catch (err) {
       if (erroDuplicidade(err)) {
         return res.status(409).json({ erro: 'Fornecedor já cadastrado (código ou CPF/CNPJ)' });
@@ -222,7 +228,8 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
 
   router.patch('/:id', (req, res) => {
     const id = Number(req.params.id);
-    if (!getStmt.get(id)) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
+    const empresaId = empresaDaSessao(req);
+    if (!getStmt.get(id, empresaId)) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
     const parsed = atualizarSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -237,9 +244,10 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
       .join(', ');
     try {
       db.prepare(
-        `UPDATE fornecedores SET ${sets}, atualizado_em = datetime('now') WHERE id = @id`,
-      ).run({ ...row, id });
-      res.json(getStmt.get(id));
+        `UPDATE fornecedores SET ${sets}, atualizado_em = datetime('now')
+          WHERE id = @id AND empresa_id = @empresa_id`,
+      ).run({ ...row, id, empresa_id: empresaId });
+      res.json(getStmt.get(id, empresaId));
     } catch (err) {
       if (erroDuplicidade(err)) {
         return res.status(409).json({ erro: 'Fornecedor já cadastrado (código ou CPF/CNPJ)' });
@@ -250,7 +258,8 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
 
   router.delete('/:id', (req, res) => {
     const id = Number(req.params.id);
-    if (!getStmt.get(id)) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
+    const empresaId = empresaDaSessao(req);
+    if (!getStmt.get(id, empresaId)) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
     const compras = (
       db.prepare('SELECT COUNT(*) AS n FROM pedidos_compra WHERE fornecedor_id = ?').get(id) as {
         n: number;
@@ -262,7 +271,7 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
         vinculos: compras,
       });
     }
-    db.prepare('DELETE FROM fornecedores WHERE id = ?').run(id);
+    db.prepare('DELETE FROM fornecedores WHERE id = ? AND empresa_id = ?').run(id, empresaId);
     res.status(204).send();
   });
 

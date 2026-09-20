@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const TIPOS_ETAPA = [
   'corte',
@@ -125,22 +126,22 @@ const SELECT = `
 
 export function createEtapasRouter(db: AppDatabase): Router {
   const router = Router();
-  const getStmt = db.prepare(`${SELECT} WHERE e.id = ?`);
-  const getOrdem = db.prepare('SELECT id FROM ordens_producao WHERE id = ?');
+  const getStmt = db.prepare(`${SELECT} WHERE e.id = ? AND e.empresa_id = ?`);
+  const getOrdem = db.prepare('SELECT id, empresa_id FROM ordens_producao WHERE id = ? AND empresa_id = ?');
   const countByOrdem = db.prepare(
-    'SELECT COUNT(*) AS n FROM etapas_producao WHERE ordem_id = ?',
+    'SELECT COUNT(*) AS n FROM etapas_producao WHERE ordem_id = ? AND empresa_id = ?',
   );
   const maxSeq = db.prepare(
-    'SELECT ifnull(MAX(sequencia), 0) AS n FROM etapas_producao WHERE ordem_id = ?',
+    'SELECT ifnull(MAX(sequencia), 0) AS n FROM etapas_producao WHERE ordem_id = ? AND empresa_id = ?',
   );
   const insertStmt = db.prepare(
     `INSERT INTO etapas_producao (
-       ordem_id, tipo, sequencia, status, responsavel, observacoes
+       empresa_id, ordem_id, tipo, sequencia, status, responsavel, observacoes
      ) VALUES (
-       @ordem_id, @tipo, @sequencia, 'pendente', @responsavel, @observacoes
+       @empresa_id, @ordem_id, @tipo, @sequencia, 'pendente', @responsavel, @observacoes
      )`,
   );
-  const deleteStmt = db.prepare('DELETE FROM etapas_producao WHERE id = ?');
+  const deleteStmt = db.prepare('DELETE FROM etapas_producao WHERE id = ? AND empresa_id = ?');
   const anteriorStmt = db.prepare(
     `SELECT * FROM etapas_producao
       WHERE ordem_id = ? AND sequencia < ?
@@ -151,12 +152,12 @@ export function createEtapasRouter(db: AppDatabase): Router {
       WHERE ordem_id = ? AND status = 'em_andamento' AND id != ?`,
   );
 
-  function map(id: number): EtapaProducao | undefined {
-    return getStmt.get(id) as EtapaProducao | undefined;
+  function map(id: number, empresaId: number): EtapaProducao | undefined {
+    return getStmt.get(id, empresaId) as EtapaProducao | undefined;
   }
 
-  function garantirOrdem(ordemId: number) {
-    const ordem = getOrdem.get(ordemId) as { id: number } | undefined;
+  function garantirOrdem(ordemId: number, empresaId: number) {
+    const ordem = getOrdem.get(ordemId, empresaId) as { id: number } | undefined;
     if (!ordem) {
       throw Object.assign(new Error('Ordem de produção não encontrada'), { status: 404 });
     }
@@ -171,12 +172,13 @@ export function createEtapasRouter(db: AppDatabase): Router {
       });
     }
     try {
-      garantirOrdem(parsed.data.ordem_id);
+      garantirOrdem(parsed.data.ordem_id, empresaDaSessao(req));
     } catch (e) {
       const err = e as Error & { status?: number };
       return res.status(err.status ?? 400).json({ erro: err.message });
     }
-    const existentes = (countByOrdem.get(parsed.data.ordem_id) as { n: number }).n;
+    const empresaId = empresaDaSessao(req);
+    const existentes = (countByOrdem.get(parsed.data.ordem_id, empresaId) as { n: number }).n;
     if (existentes > 0) {
       return res.status(409).json({ erro: 'Esta OP já possui um fluxo de etapas' });
     }
@@ -185,6 +187,7 @@ export function createEtapasRouter(db: AppDatabase): Router {
       const ids: number[] = [];
       for (const etapa of ETAPAS_PADRAO) {
         const info = insertStmt.run({
+          empresa_id: empresaId,
           ordem_id: parsed.data.ordem_id,
           tipo: etapa.tipo,
           sequencia: etapa.sequencia,
@@ -198,7 +201,7 @@ export function createEtapasRouter(db: AppDatabase): Router {
     const ids = criar();
     res.status(201).json({
       ordem_id: parsed.data.ordem_id,
-      data: ids.map((id) => map(id)),
+      data: ids.map((id) => map(id, empresaId)),
     });
   });
 
@@ -215,6 +218,7 @@ export function createEtapasRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'e.empresa_id');
     if (q) {
       where.push(
         `(ifnull(o.codigo,'') LIKE @q OR o.cliente LIKE @q OR o.produto LIKE @q
@@ -268,7 +272,7 @@ export function createEtapasRouter(db: AppDatabase): Router {
   });
 
   router.get('/:id', (req, res) => {
-    const etapa = map(Number(req.params.id));
+    const etapa = map(Number(req.params.id), empresaDaSessao(req));
     if (!etapa) return res.status(404).json({ erro: 'Etapa não encontrada' });
     res.json(etapa);
   });
@@ -282,23 +286,25 @@ export function createEtapasRouter(db: AppDatabase): Router {
       });
     }
     try {
-      garantirOrdem(parsed.data.ordem_id);
+      garantirOrdem(parsed.data.ordem_id, empresaDaSessao(req));
     } catch (e) {
       const err = e as Error & { status?: number };
       return res.status(err.status ?? 400).json({ erro: err.message });
     }
+    const empresaId = empresaDaSessao(req);
     const sequencia =
       parsed.data.sequencia ??
-      (maxSeq.get(parsed.data.ordem_id) as { n: number }).n + 1;
+      (maxSeq.get(parsed.data.ordem_id, empresaId) as { n: number }).n + 1;
     try {
       const info = insertStmt.run({
+        empresa_id: empresaId,
         ordem_id: parsed.data.ordem_id,
         tipo: parsed.data.tipo,
         sequencia,
         responsavel: parsed.data.responsavel ?? null,
         observacoes: parsed.data.observacoes ?? null,
       });
-      res.status(201).json(map(Number(info.lastInsertRowid)));
+      res.status(201).json(map(Number(info.lastInsertRowid), empresaId));
     } catch (e) {
       const msg = String((e as Error).message);
       if (msg.includes('UNIQUE')) {
@@ -317,9 +323,10 @@ export function createEtapasRouter(db: AppDatabase): Router {
       });
     }
     const id = Number(req.params.id);
+    const empresaId = empresaDaSessao(req);
     const atual = db
-      .prepare('SELECT * FROM etapas_producao WHERE id = ?')
-      .get(id) as {
+      .prepare('SELECT * FROM etapas_producao WHERE id = ? AND empresa_id = ?')
+      .get(id, empresaId) as {
       id: number;
       ordem_id: number;
       sequencia: number;
@@ -378,9 +385,10 @@ export function createEtapasRouter(db: AppDatabase): Router {
            finalizado_em = @finalizado_em,
            observacoes = @observacoes,
            atualizado_em = datetime('now')
-         WHERE id = @id`,
+         WHERE id = @id AND empresa_id = @empresa_id`,
       ).run({
         id,
+        empresa_id: empresaId,
         status: novoStatus,
         sequencia: data.sequencia ?? atual.sequencia,
         responsavel: data.responsavel === undefined ? atual.responsavel : data.responsavel,
@@ -395,21 +403,22 @@ export function createEtapasRouter(db: AppDatabase): Router {
       }
       throw e;
     }
-    res.json(map(id));
+    res.json(map(id, empresaId));
   });
 
   router.delete('/:id', (req, res) => {
     const id = Number(req.params.id);
+    const empresaId = empresaDaSessao(req);
     const atual = db
-      .prepare('SELECT status FROM etapas_producao WHERE id = ?')
-      .get(id) as { status: string } | undefined;
+      .prepare('SELECT status FROM etapas_producao WHERE id = ? AND empresa_id = ?')
+      .get(id, empresaId) as { status: string } | undefined;
     if (!atual) return res.status(404).json({ erro: 'Etapa não encontrada' });
     if (atual.status !== 'pendente' && atual.status !== 'cancelada') {
       return res.status(409).json({
         erro: 'Só é possível excluir etapas pendentes ou canceladas',
       });
     }
-    deleteStmt.run(id);
+    deleteStmt.run(id, empresaId);
     res.status(204).send();
   });
 

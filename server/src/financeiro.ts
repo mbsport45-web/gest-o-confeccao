@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const TIPOS_LANCAMENTO = ['pagar', 'receber'] as const;
 export const STATUS_LANCAMENTO = [
@@ -22,6 +23,7 @@ export interface FinanceiroCategoria {
 
 export interface FinanceiroLancamento {
   id: number;
+  empresa_id?: number;
   tipo: (typeof TIPOS_LANCAMENTO)[number];
   categoria_id: number | null;
   descricao: string;
@@ -138,6 +140,7 @@ export function sincronizarContaReceberPedido(
     total: number;
     data_prevista: string | null;
     status: string;
+    empresa_id: number;
   },
   opts: { criar: boolean; vencimento?: string | null } = { criar: false },
 ): FinanceiroLancamento | undefined {
@@ -185,14 +188,15 @@ export function sincronizarContaReceberPedido(
   const info = db
     .prepare(
       `INSERT INTO financeiro_lancamentos (
-         tipo, categoria_id, descricao, valor, status, vencimento,
+         empresa_id, tipo, categoria_id, descricao, valor, status, vencimento,
          cliente_id, pedido_id
        ) VALUES (
-         'receber', @categoria_id, @descricao, @valor, 'pendente', @vencimento,
+         @empresa_id, 'receber', @categoria_id, @descricao, @valor, 'pendente', @vencimento,
          @cliente_id, @pedido_id
        )`,
     )
     .run({
+      empresa_id: pedido.empresa_id,
       categoria_id: categoriaVendasId(db),
       descricao: `Pedido ${pedido.codigo ?? pedido.id}`,
       valor: arredondarDinheiro(pedido.total),
@@ -223,6 +227,7 @@ export function sincronizarContaPagarCompra(
     total: number;
     vencimento: string | null;
     status: string;
+    empresa_id: number;
   },
 ): void {
   const atual = db
@@ -264,13 +269,14 @@ export function sincronizarContaPagarCompra(
 
   db.prepare(
     `INSERT INTO financeiro_lancamentos (
-       tipo, categoria_id, descricao, valor, status, vencimento,
+       empresa_id, tipo, categoria_id, descricao, valor, status, vencimento,
        fornecedor_id, compra_id
      ) VALUES (
-       'pagar', @categoria_id, @descricao, @valor, 'pendente', @vencimento,
+       @empresa_id, 'pagar', @categoria_id, @descricao, @valor, 'pendente', @vencimento,
        @fornecedor_id, @compra_id
      )`,
   ).run({
+    empresa_id: compra.empresa_id,
     categoria_id: categoriaComprasId(db),
     descricao: `Compra ${compra.codigo ?? compra.id}`,
     valor: arredondarDinheiro(compra.total),
@@ -289,7 +295,7 @@ function mapLancamento(row: FinanceiroLancamento): FinanceiroLancamento {
 
 export function createFinanceiroRouter(db: AppDatabase): Router {
   const router = Router();
-  const getLancamento = db.prepare(`${LANCAMENTO_SELECT} WHERE l.id = ?`);
+  const getLancamento = db.prepare(`${LANCAMENTO_SELECT} WHERE l.id = ? AND l.empresa_id = ?`);
   const getCategoria = db.prepare('SELECT * FROM financeiro_categorias WHERE id = ?');
 
   router.get('/categorias', (req, res) => {
@@ -343,10 +349,11 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
   });
 
   router.get('/resumo', (req, res) => {
+    const empresaId = empresaDaSessao(req);
     const de = String(req.query.de ?? '').trim();
     const ate = String(req.query.ate ?? '').trim();
-    const params: Record<string, string> = {};
-    const periodoPag: string[] = ["status IN ('pago','recebido')"];
+    const params: Record<string, string | number> = { empresa_id: empresaId };
+    const periodoPag: string[] = ["status IN ('pago','recebido')", 'empresa_id = @empresa_id'];
     if (de) {
       periodoPag.push(`date(ifnull(data_pagamento, criado_em)) >= date(@de)`);
       params.de = de;
@@ -364,15 +371,15 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
 
     const pagarAberto = soma(
       `SELECT ifnull(SUM(valor),0) AS n FROM financeiro_lancamentos
-        WHERE tipo = 'pagar' AND status = 'pendente'`,
+        WHERE empresa_id = @empresa_id AND tipo = 'pagar' AND status = 'pendente'`,
     );
     const receberAberto = soma(
       `SELECT ifnull(SUM(valor),0) AS n FROM financeiro_lancamentos
-        WHERE tipo = 'receber' AND status = 'pendente'`,
+        WHERE empresa_id = @empresa_id AND tipo = 'receber' AND status = 'pendente'`,
     );
     const vencidos = soma(
       `SELECT ifnull(SUM(valor),0) AS n FROM financeiro_lancamentos
-        WHERE status = 'pendente' AND vencimento IS NOT NULL
+        WHERE empresa_id = @empresa_id AND status = 'pendente' AND vencimento IS NOT NULL
           AND date(vencimento) < date('now')`,
     );
     const realizadoPagar = soma(
@@ -385,15 +392,17 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
     );
     const previstoPagar = soma(
       `SELECT ifnull(SUM(valor),0) AS n FROM financeiro_lancamentos
-        WHERE tipo = 'pagar' AND status = 'pendente'`,
+        WHERE empresa_id = @empresa_id AND tipo = 'pagar' AND status = 'pendente'`,
     );
     const previstoReceber = soma(
       `SELECT ifnull(SUM(valor),0) AS n FROM financeiro_lancamentos
-        WHERE tipo = 'receber' AND status = 'pendente'`,
+        WHERE empresa_id = @empresa_id AND tipo = 'receber' AND status = 'pendente'`,
     );
 
     const recentes = (
-      db.prepare(`${LANCAMENTO_SELECT} ORDER BY datetime(l.atualizado_em) DESC, l.id DESC LIMIT 8`).all() as FinanceiroLancamento[]
+      db.prepare(
+        `${LANCAMENTO_SELECT} WHERE l.empresa_id = ? ORDER BY datetime(l.atualizado_em) DESC, l.id DESC LIMIT 8`,
+      ).all(empresaId) as FinanceiroLancamento[]
     ).map(mapLancamento);
 
     const fluxo = db
@@ -403,12 +412,12 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
            SUM(CASE WHEN tipo = 'receber' AND status IN ('recebido','pago') THEN valor ELSE 0 END) AS entradas,
            SUM(CASE WHEN tipo = 'pagar' AND status IN ('pago','recebido') THEN valor ELSE 0 END) AS saidas
          FROM financeiro_lancamentos
-         WHERE status IN ('pago','recebido')
+         WHERE empresa_id = ? AND status IN ('pago','recebido')
          GROUP BY mes
          ORDER BY mes DESC
          LIMIT 6`,
       )
-      .all() as Array<{ mes: string; entradas: number; saidas: number }>;
+      .all(empresaId) as Array<{ mes: string; entradas: number; saidas: number }>;
 
     res.json({
       saldo: arredondarDinheiro(realizadoReceber - realizadoPagar),
@@ -442,6 +451,7 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'l.empresa_id');
     if (q) {
       where.push(
         `(l.descricao LIKE @q OR ifnull(f.nome,'') LIKE @q OR ifnull(cl.nome,'') LIKE @q
@@ -508,7 +518,7 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
   });
 
   router.get('/lancamentos/:id', (req, res) => {
-    const row = getLancamento.get(Number(req.params.id)) as FinanceiroLancamento | undefined;
+    const row = getLancamento.get(Number(req.params.id), empresaDaSessao(req)) as FinanceiroLancamento | undefined;
     if (!row) return res.status(404).json({ erro: 'Lançamento não encontrado' });
     res.json(mapLancamento(row));
   });
@@ -522,6 +532,7 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       });
     }
     const data = parsed.data;
+    const empresaId = empresaDaSessao(req);
     if (data.tipo === 'pagar' && data.status === 'recebido') {
       return res.status(400).json({ erro: 'Conta a pagar não usa status recebido' });
     }
@@ -529,25 +540,26 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       return res.status(400).json({ erro: 'Conta a receber não usa status pago' });
     }
     if (data.fornecedor_id) {
-      const f = db.prepare('SELECT id FROM fornecedores WHERE id = ?').get(data.fornecedor_id);
+      const f = db.prepare('SELECT id FROM fornecedores WHERE id = ? AND empresa_id = ?').get(data.fornecedor_id, empresaId);
       if (!f) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
     }
     if (data.cliente_id) {
-      const c = db.prepare('SELECT id FROM clientes WHERE id = ?').get(data.cliente_id);
+      const c = db.prepare('SELECT id FROM clientes WHERE id = ? AND empresa_id = ?').get(data.cliente_id, empresaId);
       if (!c) return res.status(404).json({ erro: 'Cliente não encontrado' });
     }
     const status = data.status ?? 'pendente';
     const info = db
       .prepare(
         `INSERT INTO financeiro_lancamentos (
-           tipo, categoria_id, descricao, valor, status, vencimento, data_pagamento,
+           empresa_id, tipo, categoria_id, descricao, valor, status, vencimento, data_pagamento,
            fornecedor_id, cliente_id, compra_id, ordem_id, pedido_id, observacoes
          ) VALUES (
-           @tipo, @categoria_id, @descricao, @valor, @status, @vencimento, @data_pagamento,
+           @empresa_id, @tipo, @categoria_id, @descricao, @valor, @status, @vencimento, @data_pagamento,
            @fornecedor_id, @cliente_id, @compra_id, @ordem_id, @pedido_id, @observacoes
          )`,
       )
       .run({
+        empresa_id: empresaId,
         tipo: data.tipo,
         categoria_id: data.categoria_id ?? null,
         descricao: data.descricao,
@@ -562,14 +574,15 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
         pedido_id: data.pedido_id ?? null,
         observacoes: data.observacoes ?? null,
       });
-    res.status(201).json(mapLancamento(getLancamento.get(Number(info.lastInsertRowid)) as FinanceiroLancamento));
+    res.status(201).json(mapLancamento(getLancamento.get(Number(info.lastInsertRowid), empresaId) as FinanceiroLancamento));
   });
 
   router.patch('/lancamentos/:id', (req, res) => {
     const id = Number(req.params.id);
+    const empresaId = empresaDaSessao(req);
     const atual = db
-      .prepare('SELECT * FROM financeiro_lancamentos WHERE id = ?')
-      .get(id) as FinanceiroLancamento | undefined;
+      .prepare('SELECT * FROM financeiro_lancamentos WHERE id = ? AND empresa_id = ?')
+      .get(id, empresaId) as FinanceiroLancamento | undefined;
     if (!atual) return res.status(404).json({ erro: 'Lançamento não encontrado' });
     const parsed = atualizarLancamentoSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -613,9 +626,10 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
          cliente_id = @cliente_id,
          observacoes = @observacoes,
          atualizado_em = datetime('now')
-       WHERE id = @id`,
+       WHERE id = @id AND empresa_id = @empresa_id`,
     ).run({
       id,
+      empresa_id: empresaId,
       tipo,
       categoria_id: data.categoria_id !== undefined ? data.categoria_id : atual.categoria_id,
       descricao: data.descricao ?? atual.descricao,
@@ -627,14 +641,15 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       cliente_id: data.cliente_id !== undefined ? data.cliente_id : atual.cliente_id,
       observacoes: data.observacoes !== undefined ? data.observacoes ?? null : atual.observacoes,
     });
-    res.json(mapLancamento(getLancamento.get(id) as FinanceiroLancamento));
+    res.json(mapLancamento(getLancamento.get(id, empresaId) as FinanceiroLancamento));
   });
 
   router.delete('/lancamentos/:id', (req, res) => {
     const id = Number(req.params.id);
+    const empresaId = empresaDaSessao(req);
     const atual = db
-      .prepare('SELECT * FROM financeiro_lancamentos WHERE id = ?')
-      .get(id) as FinanceiroLancamento | undefined;
+      .prepare('SELECT * FROM financeiro_lancamentos WHERE id = ? AND empresa_id = ?')
+      .get(id, empresaId) as FinanceiroLancamento | undefined;
     if (!atual) return res.status(404).json({ erro: 'Lançamento não encontrado' });
     if (atual.compra_id) {
       return res.status(409).json({
@@ -649,7 +664,7 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
     if (atual.status === 'pago' || atual.status === 'recebido') {
       return res.status(409).json({ erro: 'Não exclua um lançamento já baixado' });
     }
-    db.prepare('DELETE FROM financeiro_lancamentos WHERE id = ?').run(id);
+    db.prepare('DELETE FROM financeiro_lancamentos WHERE id = ? AND empresa_id = ?').run(id, empresaId);
     res.status(204).send();
   });
 

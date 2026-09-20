@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { arredondarDinheiro, sincronizarContaReceberPedido } from './financeiro.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_PEDIDO = [
   'orcamento',
@@ -104,6 +105,7 @@ export interface PedidoItem {
 
 export interface PedidoVenda {
   id: number;
+  empresa_id: number;
   codigo: string | null;
   cliente_id: number;
   data_pedido: string;
@@ -180,36 +182,37 @@ function podeTransicionar(de: StatusPedido, para: StatusPedido): boolean {
 
 export function sincronizarStatusPedidoFromOps(db: AppDatabase, ordemId: number) {
   const op = db
-    .prepare('SELECT pedido_id FROM ordens_producao WHERE id = ?')
-    .get(ordemId) as { pedido_id: number | null } | undefined;
+    .prepare('SELECT pedido_id, empresa_id FROM ordens_producao WHERE id = ?')
+    .get(ordemId) as { pedido_id: number | null; empresa_id: number } | undefined;
   if (!op?.pedido_id) return;
   const pedido = db
-    .prepare('SELECT id, status FROM pedidos WHERE id = ?')
-    .get(op.pedido_id) as { id: number; status: string } | undefined;
+    .prepare('SELECT id, status FROM pedidos WHERE id = ? AND empresa_id = ?')
+    .get(op.pedido_id, op.empresa_id) as { id: number; status: string } | undefined;
   if (!pedido || pedido.status !== 'em_producao') return;
   const ops = db
-    .prepare(`SELECT status FROM ordens_producao WHERE pedido_id = ?`)
-    .all(pedido.id) as { status: string }[];
+    .prepare(`SELECT status FROM ordens_producao WHERE pedido_id = ? AND empresa_id = ?`)
+    .all(pedido.id, op.empresa_id) as { status: string }[];
   const ativas = ops.filter((o) => o.status !== 'cancelada');
   if (ativas.length === 0) return;
   if (ativas.every((o) => o.status === 'concluida')) {
     db.prepare(
-      `UPDATE pedidos SET status = 'pronto', atualizado_em = datetime('now') WHERE id = ?`,
-    ).run(pedido.id);
+      `UPDATE pedidos SET status = 'pronto', atualizado_em = datetime('now')
+        WHERE id = ? AND empresa_id = ?`,
+    ).run(pedido.id, op.empresa_id);
   }
 }
 
 export function createPedidosRouter(db: AppDatabase): Router {
   const router = Router();
-  const getPedidoStmt = db.prepare(`${PEDIDO_SELECT} WHERE p.id = ?`);
+  const getPedidoStmt = db.prepare(`${PEDIDO_SELECT} WHERE p.id = ? AND p.empresa_id = ?`);
   const listItensStmt = db.prepare(`${ITEM_SELECT} WHERE i.pedido_id = ? ORDER BY i.id ASC`);
 
   function mapItens(pedidoId: number): PedidoItem[] {
     return listItensStmt.all(pedidoId) as PedidoItem[];
   }
 
-  function mapPedido(id: number, detalhe = false): PedidoVenda | undefined {
-    const row = getPedidoStmt.get(id) as PedidoVenda | undefined;
+  function mapPedido(id: number, empresaId: number, detalhe = false): PedidoVenda | undefined {
+    const row = getPedidoStmt.get(id, empresaId) as PedidoVenda | undefined;
     if (!row) return undefined;
     if (detalhe) {
       row.itens = mapItens(id);
@@ -232,34 +235,37 @@ export function createPedidosRouter(db: AppDatabase): Router {
     return row;
   }
 
-  function recalc(pedidoId: number) {
+  function recalc(pedidoId: number, empresaId: number) {
     const itens = db
       .prepare(`SELECT ifnull(SUM(total),0) AS subtotal FROM pedido_itens WHERE pedido_id = ?`)
       .get(pedidoId) as { subtotal: number };
     const pedido = db
-      .prepare('SELECT desconto, frete, status FROM pedidos WHERE id = ?')
-      .get(pedidoId) as { desconto: number; frete: number; status: string };
+      .prepare('SELECT desconto, frete, status FROM pedidos WHERE id = ? AND empresa_id = ?')
+      .get(pedidoId, empresaId) as { desconto: number; frete: number; status: string };
     const subtotal = arredondarDinheiro(itens.subtotal);
     const desconto = Math.min(pedido.desconto, subtotal);
     const total = arredondarDinheiro(subtotal - desconto + pedido.frete);
     db.prepare(
       `UPDATE pedidos
           SET subtotal = @subtotal, desconto = @desconto, total = @total, atualizado_em = datetime('now')
-        WHERE id = @id`,
-    ).run({ id: pedidoId, subtotal, desconto, total });
-    const atual = mapPedido(pedidoId);
+        WHERE id = @id AND empresa_id = @empresa_id`,
+    ).run({ id: pedidoId, empresa_id: empresaId, subtotal, desconto, total });
+    const atual = mapPedido(pedidoId, empresaId);
     if (atual) sincronizarContaReceberPedido(db, atual, { criar: false });
     return atual;
   }
 
-  function validarItem(item: z.infer<typeof itemSchema>): {
+  function validarItem(
+    item: z.infer<typeof itemSchema>,
+    empresaId: number,
+  ): {
     produtoId: number;
     varianteId: number | null;
     preco: number;
   } {
     const produto = db
-      .prepare('SELECT id, preco_venda FROM produtos WHERE id = ?')
-      .get(item.produto_id) as { id: number; preco_venda: number } | undefined;
+      .prepare('SELECT id, preco_venda FROM produtos WHERE id = ? AND empresa_id = ?')
+      .get(item.produto_id, empresaId) as { id: number; preco_venda: number } | undefined;
     if (!produto) {
       throw Object.assign(new Error('Produto não encontrado'), { status: 404 });
     }
@@ -273,9 +279,11 @@ export function createPedidosRouter(db: AppDatabase): Router {
     if (varianteId) {
       const v = db
         .prepare(
-          'SELECT id, produto_id, preco_venda FROM produto_variantes WHERE id = ?',
+          `SELECT v.id, v.produto_id, v.preco_venda FROM produto_variantes v
+            JOIN produtos p ON p.id = v.produto_id
+           WHERE v.id = ? AND p.empresa_id = ?`,
         )
-        .get(varianteId) as
+        .get(varianteId, empresaId) as
         | { id: number; produto_id: number; preco_venda: number | null }
         | undefined;
       if (!v) throw Object.assign(new Error('Variante não encontrada'), { status: 404 });
@@ -297,19 +305,20 @@ export function createPedidosRouter(db: AppDatabase): Router {
     return arredondarDinheiro(Math.max(0, qtd * preco - desconto));
   }
 
-  function inserirItem(pedidoId: number, item: z.infer<typeof itemSchema>) {
-    const alvo = validarItem(item);
+  function inserirItem(pedidoId: number, empresaId: number, item: z.infer<typeof itemSchema>) {
+    const alvo = validarItem(item, empresaId);
     const desconto = item.desconto ?? 0;
     const total = totalItem(item.quantidade, alvo.preco, desconto);
     const info = db
       .prepare(
         `INSERT INTO pedido_itens (
-           pedido_id, produto_id, variante_id, quantidade, preco_unitario, desconto, total
+           empresa_id, pedido_id, produto_id, variante_id, quantidade, preco_unitario, desconto, total
          ) VALUES (
-           @pedido_id, @produto_id, @variante_id, @quantidade, @preco_unitario, @desconto, @total
+           @empresa_id, @pedido_id, @produto_id, @variante_id, @quantidade, @preco_unitario, @desconto, @total
          )`,
       )
       .run({
+        empresa_id: empresaId,
         pedido_id: pedidoId,
         produto_id: alvo.produtoId,
         variante_id: alvo.varianteId,
@@ -329,29 +338,37 @@ export function createPedidosRouter(db: AppDatabase): Router {
     ).run(pedidoId);
   }
 
-  function copiarBom(ordemId: number, produtoId: number, varianteId: number | null, qtd: number) {
+  function copiarBom(
+    ordemId: number,
+    empresaId: number,
+    produtoId: number,
+    varianteId: number | null,
+    qtd: number,
+  ) {
     let linhas = varianteId
       ? (db
           .prepare(
-            `SELECT materia_prima_id, quantidade, unidade FROM produto_bom_itens WHERE variante_id = ?`,
+            `SELECT materia_prima_id, quantidade, unidade FROM produto_bom_itens
+              WHERE variante_id = ? AND empresa_id = ?`,
           )
-          .all(varianteId) as Array<{ materia_prima_id: number; quantidade: number; unidade: string | null }>)
+          .all(varianteId, empresaId) as Array<{ materia_prima_id: number; quantidade: number; unidade: string | null }>)
       : [];
     if (!linhas.length) {
       linhas = db
         .prepare(
           `SELECT materia_prima_id, quantidade, unidade FROM produto_bom_itens
-            WHERE produto_id = ? AND variante_id IS NULL`,
+            WHERE produto_id = ? AND variante_id IS NULL AND empresa_id = ?`,
         )
-        .all(produtoId) as Array<{ materia_prima_id: number; quantidade: number; unidade: string | null }>;
+        .all(produtoId, empresaId) as Array<{ materia_prima_id: number; quantidade: number; unidade: string | null }>;
     }
     const insert = db.prepare(
       `INSERT INTO ordem_requisitos (
-         ordem_id, materia_prima_id, quantidade_unitaria, quantidade_total, unidade
-       ) VALUES (?, ?, ?, ?, ?)`,
+         empresa_id, ordem_id, materia_prima_id, quantidade_unitaria, quantidade_total, unidade
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
     );
     for (const linha of linhas) {
       insert.run(
+        empresaId,
         ordemId,
         linha.materia_prima_id,
         linha.quantidade,
@@ -364,10 +381,10 @@ export function createPedidosRouter(db: AppDatabase): Router {
   function criarOpDoItem(pedido: PedidoVenda, item: PedidoItem, forcar: boolean) {
     const existente = db
       .prepare(
-        `SELECT id, codigo FROM ordens_producao
-          WHERE pedido_item_id = ? AND status != 'cancelada'`,
+          `SELECT id, codigo FROM ordens_producao
+            WHERE pedido_item_id = ? AND empresa_id = ? AND status != 'cancelada'`,
       )
-      .get(item.id) as { id: number; codigo: string | null } | undefined;
+      .get(item.id, pedido.empresa_id) as { id: number; codigo: string | null } | undefined;
     if (existente && !forcar) {
       throw Object.assign(
         new Error(`Item já possui OP ${existente.codigo ?? existente.id}`),
@@ -376,16 +393,16 @@ export function createPedidosRouter(db: AppDatabase): Router {
     }
 
     const cliente = db
-      .prepare('SELECT nome FROM clientes WHERE id = ?')
-      .get(pedido.cliente_id) as { nome: string };
+      .prepare('SELECT nome FROM clientes WHERE id = ? AND empresa_id = ?')
+      .get(pedido.cliente_id, pedido.empresa_id) as { nome: string };
     const produto = db
-      .prepare('SELECT nome FROM produtos WHERE id = ?')
-      .get(item.produto_id) as { nome: string };
+      .prepare('SELECT nome FROM produtos WHERE id = ? AND empresa_id = ?')
+      .get(item.produto_id, pedido.empresa_id) as { nome: string };
     let tamanho = item.tamanho ?? '';
     if (item.variante_id) {
       const v = db
-        .prepare('SELECT tamanho FROM produto_variantes WHERE id = ?')
-        .get(item.variante_id) as { tamanho: string } | undefined;
+        .prepare('SELECT tamanho FROM produto_variantes WHERE id = ? AND empresa_id = ?')
+        .get(item.variante_id, pedido.empresa_id) as { tamanho: string } | undefined;
       tamanho = v?.tamanho ?? tamanho;
     }
     if (!tamanho) tamanho = 'U';
@@ -393,18 +410,19 @@ export function createPedidosRouter(db: AppDatabase): Router {
     const info = db
       .prepare(
         `INSERT INTO ordens_producao (
-           cliente, produto, tamanho, quantidade, status,
+           empresa_id, cliente, produto, tamanho, quantidade, status,
            cliente_id, produto_id, variante_id,
            prioridade, data_prevista, observacoes,
            pedido_id, pedido_item_id, atualizado_em
          ) VALUES (
-           @cliente, @produto, @tamanho, @quantidade, 'planejada',
+           @empresa_id, @cliente, @produto, @tamanho, @quantidade, 'planejada',
            @cliente_id, @produto_id, @variante_id,
            @prioridade, @data_prevista, @observacoes,
            @pedido_id, @pedido_item_id, datetime('now')
          )`,
       )
       .run({
+        empresa_id: pedido.empresa_id,
         cliente: cliente.nome,
         produto: produto.nome,
         tamanho,
@@ -423,11 +441,11 @@ export function createPedidosRouter(db: AppDatabase): Router {
     db.prepare(
       `UPDATE ordens_producao SET codigo = @codigo, atualizado_em = datetime('now') WHERE id = @id`,
     ).run({ id, codigo });
-    copiarBom(id, item.produto_id, item.variante_id, item.quantidade);
+    copiarBom(id, pedido.empresa_id, item.produto_id, item.variante_id, item.quantidade);
     return { id, codigo };
   }
 
-  function filtroListagem(req: { query: Record<string, unknown> }) {
+  function filtroListagem(req: import('express').Request) {
     const pagina = Math.max(1, Number(req.query.pagina ?? 1) || 1);
     const porPagina = Math.min(100, Math.max(1, Number(req.query.por_pagina ?? 10) || 10));
     const q = String(req.query.q ?? '').trim();
@@ -439,6 +457,7 @@ export function createPedidosRouter(db: AppDatabase): Router {
     const ate = String(req.query.ate ?? '').trim();
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req, 'p.empresa_id');
     if (q) {
       where.push(
         `(ifnull(p.codigo,'') LIKE @q OR c.nome LIKE @q OR ifnull(p.observacoes,'') LIKE @q
@@ -485,8 +504,8 @@ export function createPedidosRouter(db: AppDatabase): Router {
   router.get('/resumo', (req, res) => {
     const de = String(req.query.de ?? '').trim();
     const ate = String(req.query.ate ?? '').trim();
-    const where: string[] = [`status != 'cancelado'`];
-    const params: Record<string, string> = {};
+    const where: string[] = [`empresa_id = @empresa_id`, `status != 'cancelado'`];
+    const params: Record<string, string | number> = { empresa_id: empresaDaSessao(req) };
     if (de) {
       where.push('date(data_pedido) >= date(@de)');
       params.de = de;
@@ -565,7 +584,7 @@ export function createPedidosRouter(db: AppDatabase): Router {
   });
 
   router.get('/:id', (req, res) => {
-    const pedido = mapPedido(Number(req.params.id), true);
+    const pedido = mapPedido(Number(req.params.id), empresaDaSessao(req), true);
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     res.json(pedido);
   });
@@ -580,7 +599,10 @@ export function createPedidosRouter(db: AppDatabase): Router {
       });
     }
     const data = parsed.data;
-    const cliente = db.prepare('SELECT id FROM clientes WHERE id = ?').get(data.cliente_id);
+    const empresaId = empresaDaSessao(req);
+    const cliente = db
+      .prepare('SELECT id FROM clientes WHERE id = ? AND empresa_id = ?')
+      .get(data.cliente_id, empresaId);
     if (!cliente) return res.status(404).json({ erro: 'Cliente não encontrado' });
     if (data.status && !['orcamento', 'aberto'].includes(data.status)) {
       return res.status(400).json({ erro: 'Novo pedido deve nascer como orçamento ou aberto' });
@@ -594,14 +616,15 @@ export function createPedidosRouter(db: AppDatabase): Router {
         const info = db
           .prepare(
             `INSERT INTO pedidos (
-               codigo, cliente_id, data_pedido, data_prevista, status, prioridade,
+               empresa_id, codigo, cliente_id, data_pedido, data_prevista, status, prioridade,
                observacoes, desconto, frete
              ) VALUES (
-               @codigo, @cliente_id, @data_pedido, @data_prevista, @status, @prioridade,
+               @empresa_id, @codigo, @cliente_id, @data_pedido, @data_prevista, @status, @prioridade,
                @observacoes, @desconto, @frete
              )`,
           )
           .run({
+            empresa_id: empresaId,
             codigo: data.codigo ?? null,
             cliente_id: data.cliente_id,
             data_pedido: data.data_pedido ?? hoje(),
@@ -614,17 +637,20 @@ export function createPedidosRouter(db: AppDatabase): Router {
           });
         const id = Number(info.lastInsertRowid);
         if (!data.codigo) {
-          db.prepare('UPDATE pedidos SET codigo = @codigo WHERE id = @id').run({
+          db.prepare(
+            'UPDATE pedidos SET codigo = @codigo WHERE id = @id AND empresa_id = @empresa_id',
+          ).run({
             id,
+            empresa_id: empresaId,
             codigo: `PV-${String(id).padStart(4, '0')}`,
           });
         }
-        for (const item of data.itens ?? []) inserirItem(id, item);
-        recalc(id);
+        for (const item of data.itens ?? []) inserirItem(id, empresaId, item);
+        recalc(id, empresaId);
         return id;
       });
       const id = criar();
-      res.status(201).json(mapPedido(id, true));
+      res.status(201).json(mapPedido(id, empresaId, true));
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       if (err instanceof Error && /UNIQUE/i.test(err.message)) {
@@ -636,7 +662,8 @@ export function createPedidosRouter(db: AppDatabase): Router {
 
   router.patch('/:id', (req, res) => {
     const id = Number(req.params.id);
-    const atual = mapPedido(id, true);
+    const empresaId = empresaDaSessao(req);
+    const atual = mapPedido(id, empresaId, true);
     if (!atual) return res.status(404).json({ erro: 'Pedido não encontrado' });
     const parsed = atualizarPedidoSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -661,8 +688,8 @@ export function createPedidosRouter(db: AppDatabase): Router {
       }
       if (data.status === 'cancelado') {
         const ops = db
-          .prepare(`SELECT status FROM ordens_producao WHERE pedido_id = ?`)
-          .all(id) as { status: string }[];
+          .prepare(`SELECT status FROM ordens_producao WHERE pedido_id = ? AND empresa_id = ?`)
+          .all(id, empresaId) as { status: string }[];
         if (ops.some((o) => OP_EM_ANDAMENTO.has(o.status))) {
           return res.status(409).json({
             erro: 'Não cancele um pedido com OP já em produção',
@@ -680,7 +707,9 @@ export function createPedidosRouter(db: AppDatabase): Router {
       return res.status(409).json({ erro: 'Pedido confirmado só permite observações, previsão ou prioridade' });
     }
     if (data.cliente_id) {
-      const c = db.prepare('SELECT id FROM clientes WHERE id = ?').get(data.cliente_id);
+      const c = db
+        .prepare('SELECT id FROM clientes WHERE id = ? AND empresa_id = ?')
+        .get(data.cliente_id, empresaId);
       if (!c) return res.status(404).json({ erro: 'Cliente não encontrado' });
     }
 
@@ -698,9 +727,10 @@ export function createPedidosRouter(db: AppDatabase): Router {
              frete = @frete,
              codigo = @codigo,
              atualizado_em = datetime('now')
-           WHERE id = @id`,
+           WHERE id = @id AND empresa_id = @empresa_id`,
         ).run({
           id,
+          empresa_id: empresaId,
           cliente_id: data.cliente_id ?? atual.cliente_id,
           data_pedido: data.data_pedido ?? atual.data_pedido,
           data_prevista:
@@ -713,23 +743,26 @@ export function createPedidosRouter(db: AppDatabase): Router {
           codigo: data.codigo ?? atual.codigo,
         });
         if (data.itens) {
-          db.prepare('DELETE FROM pedido_itens WHERE pedido_id = ?').run(id);
-          for (const item of data.itens) inserirItem(id, item);
+          db.prepare('DELETE FROM pedido_itens WHERE pedido_id = ? AND empresa_id = ?').run(
+            id,
+            empresaId,
+          );
+          for (const item of data.itens) inserirItem(id, empresaId, item);
         }
         const novoStatus = (data.status ?? atual.status) as StatusPedido;
         if (novoStatus === 'confirmado' || novoStatus === 'em_producao') aplicarReserva(id, true);
         if (novoStatus === 'cancelado') aplicarReserva(id, false);
-        recalc(id);
-        const after = mapPedido(id);
+        recalc(id, empresaId);
+        const after = mapPedido(id, empresaId);
         if (after && novoStatus === 'cancelado') {
           sincronizarContaReceberPedido(db, after, { criar: false });
           db.prepare(
             `UPDATE ordens_producao SET status = 'cancelada', atualizado_em = datetime('now')
-              WHERE pedido_id = ? AND status IN ('planejada','pendente')`,
-          ).run(id);
+              WHERE pedido_id = ? AND empresa_id = ? AND status IN ('planejada','pendente')`,
+          ).run(id, empresaId);
         }
       })();
-      res.json(mapPedido(id, true));
+      res.json(mapPedido(id, empresaId, true));
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       return res.status(status).json({ erro: (err as Error).message });
@@ -737,7 +770,7 @@ export function createPedidosRouter(db: AppDatabase): Router {
   });
 
   router.post('/:id/itens', (req, res) => {
-    const pedido = mapPedido(Number(req.params.id));
+    const pedido = mapPedido(Number(req.params.id), empresaDaSessao(req));
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (!EDITAVEL.has(pedido.status)) {
       return res.status(409).json({ erro: 'Itens só podem ser incluídos em orçamento ou aberto' });
@@ -751,10 +784,10 @@ export function createPedidosRouter(db: AppDatabase): Router {
     }
     try {
       db.transaction(() => {
-        inserirItem(pedido.id, parsed.data);
-        recalc(pedido.id);
+        inserirItem(pedido.id, pedido.empresa_id, parsed.data);
+        recalc(pedido.id, pedido.empresa_id);
       })();
-      res.status(201).json(mapPedido(pedido.id, true));
+      res.status(201).json(mapPedido(pedido.id, pedido.empresa_id, true));
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       return res.status(status).json({ erro: (err as Error).message });
@@ -762,15 +795,15 @@ export function createPedidosRouter(db: AppDatabase): Router {
   });
 
   router.patch('/:id/itens/:itemId', (req, res) => {
-    const pedido = mapPedido(Number(req.params.id));
+    const pedido = mapPedido(Number(req.params.id), empresaDaSessao(req));
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (!EDITAVEL.has(pedido.status)) {
       return res.status(409).json({ erro: 'Itens só podem ser editados em orçamento ou aberto' });
     }
     const itemId = Number(req.params.itemId);
     const item = db
-      .prepare('SELECT * FROM pedido_itens WHERE id = ? AND pedido_id = ?')
-      .get(itemId, pedido.id) as PedidoItem | undefined;
+      .prepare('SELECT * FROM pedido_itens WHERE id = ? AND pedido_id = ? AND empresa_id = ?')
+      .get(itemId, pedido.id, pedido.empresa_id) as PedidoItem | undefined;
     if (!item) return res.status(404).json({ erro: 'Item não encontrado' });
     const parsed = itemSchema
       .partial()
@@ -787,13 +820,16 @@ export function createPedidosRouter(db: AppDatabase): Router {
     const data = parsed.data;
     const produtoId = data.produto_id ?? item.produto_id;
     const varianteId = data.variante_id !== undefined ? data.variante_id : item.variante_id;
-    validarItem({
-      produto_id: produtoId,
-      variante_id: varianteId,
-      quantidade: data.quantidade ?? item.quantidade,
-      preco_unitario: data.preco_unitario ?? item.preco_unitario,
-      desconto: data.desconto ?? item.desconto,
-    });
+    validarItem(
+      {
+        produto_id: produtoId,
+        variante_id: varianteId,
+        quantidade: data.quantidade ?? item.quantidade,
+        preco_unitario: data.preco_unitario ?? item.preco_unitario,
+        desconto: data.desconto ?? item.desconto,
+      },
+      pedido.empresa_id,
+    );
     const quantidade = data.quantidade ?? item.quantidade;
     const preco = data.preco_unitario ?? item.preco_unitario;
     const desconto = data.desconto ?? item.desconto;
@@ -802,9 +838,10 @@ export function createPedidosRouter(db: AppDatabase): Router {
          produto_id = @produto_id, variante_id = @variante_id,
          quantidade = @quantidade, preco_unitario = @preco_unitario,
          desconto = @desconto, total = @total
-       WHERE id = @id`,
+       WHERE id = @id AND empresa_id = @empresa_id`,
     ).run({
       id: itemId,
+      empresa_id: pedido.empresa_id,
       produto_id: produtoId,
       variante_id: varianteId,
       quantidade,
@@ -812,26 +849,26 @@ export function createPedidosRouter(db: AppDatabase): Router {
       desconto,
       total: totalItem(quantidade, preco, desconto),
     });
-    recalc(pedido.id);
-    res.json(mapPedido(pedido.id, true));
+    recalc(pedido.id, pedido.empresa_id);
+    res.json(mapPedido(pedido.id, pedido.empresa_id, true));
   });
 
   router.delete('/:id/itens/:itemId', (req, res) => {
-    const pedido = mapPedido(Number(req.params.id));
+    const pedido = mapPedido(Number(req.params.id), empresaDaSessao(req));
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (!EDITAVEL.has(pedido.status)) {
       return res.status(409).json({ erro: 'Itens só podem ser removidos em orçamento ou aberto' });
     }
     const info = db
-      .prepare('DELETE FROM pedido_itens WHERE id = ? AND pedido_id = ?')
-      .run(Number(req.params.itemId), pedido.id);
+      .prepare('DELETE FROM pedido_itens WHERE id = ? AND pedido_id = ? AND empresa_id = ?')
+      .run(Number(req.params.itemId), pedido.id, pedido.empresa_id);
     if (info.changes === 0) return res.status(404).json({ erro: 'Item não encontrado' });
-    recalc(pedido.id);
-    res.json(mapPedido(pedido.id, true));
+    recalc(pedido.id, pedido.empresa_id);
+    res.json(mapPedido(pedido.id, pedido.empresa_id, true));
   });
 
   router.post('/:id/gerar-op', (req, res) => {
-    const pedido = mapPedido(Number(req.params.id), true);
+    const pedido = mapPedido(Number(req.params.id), empresaDaSessao(req), true);
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (!['confirmado', 'em_producao', 'pronto'].includes(pedido.status)) {
       return res.status(409).json({ erro: 'Confirme o pedido antes de gerar OP' });
@@ -862,11 +899,12 @@ export function createPedidosRouter(db: AppDatabase): Router {
         }
         if (pedido.status === 'confirmado') {
           db.prepare(
-            `UPDATE pedidos SET status = 'em_producao', atualizado_em = datetime('now') WHERE id = ?`,
-          ).run(pedido.id);
+            `UPDATE pedidos SET status = 'em_producao', atualizado_em = datetime('now')
+              WHERE id = ? AND empresa_id = ?`,
+          ).run(pedido.id, pedido.empresa_id);
         }
       })();
-      const atualizado = mapPedido(pedido.id, true)!;
+      const atualizado = mapPedido(pedido.id, pedido.empresa_id, true)!;
       res.status(201).json({ ...atualizado, ops_geradas: geradas });
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
@@ -875,7 +913,7 @@ export function createPedidosRouter(db: AppDatabase): Router {
   });
 
   router.post('/:id/financeiro', (req, res) => {
-    const pedido = mapPedido(Number(req.params.id), true);
+    const pedido = mapPedido(Number(req.params.id), empresaDaSessao(req), true);
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (['orcamento', 'aberto', 'cancelado'].includes(pedido.status)) {
       return res.status(409).json({
@@ -893,9 +931,10 @@ export function createPedidosRouter(db: AppDatabase): Router {
     }
     const existente = db
       .prepare(
-        `SELECT id FROM financeiro_lancamentos WHERE pedido_id = ? AND tipo = 'receber'`,
+        `SELECT id FROM financeiro_lancamentos
+          WHERE pedido_id = ? AND tipo = 'receber' AND empresa_id = ?`,
       )
-      .get(pedido.id) as { id: number } | undefined;
+      .get(pedido.id, pedido.empresa_id) as { id: number } | undefined;
     if (existente) {
       return res.status(409).json({ erro: 'Este pedido já possui conta a receber' });
     }
@@ -907,11 +946,12 @@ export function createPedidosRouter(db: AppDatabase): Router {
         });
         if (['confirmado', 'em_producao', 'pronto'].includes(pedido.status)) {
           db.prepare(
-            `UPDATE pedidos SET status = 'faturado', atualizado_em = datetime('now') WHERE id = ?`,
-          ).run(pedido.id);
+            `UPDATE pedidos SET status = 'faturado', atualizado_em = datetime('now')
+              WHERE id = ? AND empresa_id = ?`,
+          ).run(pedido.id, pedido.empresa_id);
         }
       })();
-      res.status(201).json(mapPedido(pedido.id, true));
+      res.status(201).json(mapPedido(pedido.id, pedido.empresa_id, true));
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       return res.status(status).json({ erro: (err as Error).message });
@@ -919,21 +959,27 @@ export function createPedidosRouter(db: AppDatabase): Router {
   });
 
   router.delete('/:id', (req, res) => {
-    const pedido = mapPedido(Number(req.params.id), true);
+    const pedido = mapPedido(Number(req.params.id), empresaDaSessao(req), true);
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
     if (pedido.status !== 'orcamento' && pedido.status !== 'cancelado') {
       return res.status(409).json({ erro: 'Exclua apenas orçamentos ou pedidos cancelados' });
     }
     const ops = (
       db
-        .prepare(`SELECT COUNT(*) AS n FROM ordens_producao WHERE pedido_id = ?`)
-        .get(pedido.id) as { n: number }
+        .prepare(`SELECT COUNT(*) AS n FROM ordens_producao WHERE pedido_id = ? AND empresa_id = ?`)
+        .get(pedido.id, pedido.empresa_id) as { n: number }
     ).n;
     if (ops > 0) {
       return res.status(409).json({ erro: 'Pedido possui OPs vinculadas e não pode ser excluído' });
     }
-    db.prepare('DELETE FROM financeiro_lancamentos WHERE pedido_id = ?').run(pedido.id);
-    db.prepare('DELETE FROM pedidos WHERE id = ?').run(pedido.id);
+    db.prepare('DELETE FROM financeiro_lancamentos WHERE pedido_id = ? AND empresa_id = ?').run(
+      pedido.id,
+      pedido.empresa_id,
+    );
+    db.prepare('DELETE FROM pedidos WHERE id = ? AND empresa_id = ?').run(
+      pedido.id,
+      pedido.empresa_id,
+    );
     res.status(204).send();
   });
 

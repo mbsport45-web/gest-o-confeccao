@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_MATERIA = ['ativo', 'inativo'] as const;
 export const TIPOS_MATERIA = [
@@ -178,7 +179,7 @@ function camposMateria(
 
 export function createMateriasPrimasRouter(db: AppDatabase): Router {
   const router = Router();
-  const getStmt = db.prepare('SELECT * FROM materias_primas WHERE id = ?');
+  const getStmt = db.prepare('SELECT * FROM materias_primas WHERE id = ? AND empresa_id = ?');
 
   router.get('/', (req, res) => {
     const pagina = Math.max(1, Number(req.query.pagina ?? req.query.page ?? 1) || 1);
@@ -194,6 +195,7 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req);
 
     if (q) {
       where.push(
@@ -244,7 +246,7 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
   });
 
   router.get('/:id', (req, res) => {
-    const materia = getStmt.get(Number(req.params.id)) as MateriaPrima | undefined;
+    const materia = getStmt.get(Number(req.params.id), empresaDaSessao(req)) as MateriaPrima | undefined;
     if (!materia) {
       return res.status(404).json({ erro: 'Matéria-prima não encontrada' });
     }
@@ -261,21 +263,22 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
     }
 
     const row = camposMateria(parsed.data);
+    const empresaId = empresaDaSessao(req);
     try {
       const info = db
         .prepare(
           `INSERT INTO materias_primas (
-             codigo, nome, descricao, tipo, categoria, cor, composicao, largura_cm,
+             empresa_id, codigo, nome, descricao, tipo, categoria, cor, composicao, largura_cm,
              gramatura, unidade, custo, estoque_minimo, fornecedor, referencia_fornecedor,
              ncm, status, observacoes
            ) VALUES (
-             @codigo, @nome, @descricao, @tipo, @categoria, @cor, @composicao, @largura_cm,
+             @empresa_id, @codigo, @nome, @descricao, @tipo, @categoria, @cor, @composicao, @largura_cm,
              @gramatura, @unidade, @custo, @estoque_minimo, @fornecedor, @referencia_fornecedor,
              @ncm, @status, @observacoes
            )`,
         )
-        .run(row);
-      res.status(201).json(getStmt.get(info.lastInsertRowid));
+        .run({ ...row, empresa_id: empresaId });
+      res.status(201).json(getStmt.get(info.lastInsertRowid, empresaId));
     } catch (err) {
       if (erroDuplicidade(err)) {
         return res.status(409).json({ erro: 'Código já cadastrado' });
@@ -293,15 +296,17 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
       });
     }
     const id = Number(req.params.id);
+    const empresaId = empresaDaSessao(req);
     const info = db
       .prepare(
-        `UPDATE materias_primas SET status = @status, atualizado_em = datetime('now') WHERE id = @id`,
+        `UPDATE materias_primas SET status = @status, atualizado_em = datetime('now')
+          WHERE id = @id AND empresa_id = @empresa_id`,
       )
-      .run({ id, status: parsed.data.status });
+      .run({ id, empresa_id: empresaId, status: parsed.data.status });
     if (info.changes === 0) {
       return res.status(404).json({ erro: 'Matéria-prima não encontrada' });
     }
-    res.json(getStmt.get(id));
+    res.json(getStmt.get(id, empresaId));
   });
 
   router.patch('/:id', (req, res) => {
@@ -314,7 +319,8 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
     }
 
     const id = Number(req.params.id);
-    const atual = getStmt.get(id) as MateriaPrima | undefined;
+    const empresaId = empresaDaSessao(req);
+    const atual = getStmt.get(id, empresaId) as MateriaPrima | undefined;
     if (!atual) {
       return res.status(404).json({ erro: 'Matéria-prima não encontrada' });
     }
@@ -325,9 +331,10 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
       .join(', ');
     try {
       db.prepare(
-        `UPDATE materias_primas SET ${sets}, atualizado_em = datetime('now') WHERE id = @id`,
-      ).run({ ...row, id });
-      res.json(getStmt.get(id));
+        `UPDATE materias_primas SET ${sets}, atualizado_em = datetime('now')
+          WHERE id = @id AND empresa_id = @empresa_id`,
+      ).run({ ...row, id, empresa_id: empresaId });
+      res.json(getStmt.get(id, empresaId));
     } catch (err) {
       if (erroDuplicidade(err)) {
         return res.status(409).json({ erro: 'Código já cadastrado' });
@@ -338,7 +345,8 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
 
   router.delete('/:id', (req, res) => {
     const id = Number(req.params.id);
-    const materia = getStmt.get(id) as MateriaPrima | undefined;
+    const empresaId = empresaDaSessao(req);
+    const materia = getStmt.get(id, empresaId) as MateriaPrima | undefined;
     if (!materia) {
       return res.status(404).json({ erro: 'Matéria-prima não encontrada' });
     }
@@ -351,7 +359,7 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
       });
     }
 
-    db.prepare('DELETE FROM materias_primas WHERE id = ?').run(id);
+    db.prepare('DELETE FROM materias_primas WHERE id = ? AND empresa_id = ?').run(id, empresaId);
     res.status(204).send();
   });
 

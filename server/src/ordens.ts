@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { sincronizarStatusPedidoFromOps } from './pedidos.js';
+import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_OP = [
   'planejada',
@@ -148,6 +149,7 @@ export interface OrdemRequisito {
 
 export interface OrdemProducao {
   id: number;
+  empresa_id: number;
   codigo: string | null;
   cliente: string;
   produto: string;
@@ -178,31 +180,32 @@ function podeTransicionar(
 export function createOrdensRouter(db: AppDatabase): Router {
   const router = Router();
 
-  const getStmt = db.prepare('SELECT * FROM ordens_producao WHERE id = ?');
+  const getStmt = db.prepare('SELECT * FROM ordens_producao WHERE id = ? AND empresa_id = ?');
   const getByCodigo = db.prepare(
-    'SELECT id FROM ordens_producao WHERE codigo = ? AND id != ?',
+    'SELECT id FROM ordens_producao WHERE codigo = ? AND id != ? AND empresa_id = ?',
   );
   const insertStmt = db.prepare(
     `INSERT INTO ordens_producao (
-       cliente, produto, tamanho, quantidade, status,
+       empresa_id, cliente, produto, tamanho, quantidade, status,
        cliente_id, produto_id, variante_id,
        codigo, prioridade, data_prevista, observacoes, responsavel, atualizado_em
      ) VALUES (
-       @cliente, @produto, @tamanho, @quantidade, @status,
+       @empresa_id, @cliente, @produto, @tamanho, @quantidade, @status,
        @cliente_id, @produto_id, @variante_id,
        @codigo, @prioridade, @data_prevista, @observacoes, @responsavel, datetime('now')
      )`,
   );
   const setCodigoStmt = db.prepare(
-    `UPDATE ordens_producao SET codigo = @codigo, atualizado_em = datetime('now') WHERE id = @id`,
+    `UPDATE ordens_producao SET codigo = @codigo, atualizado_em = datetime('now')
+      WHERE id = @id AND empresa_id = @empresa_id`,
   );
-  const deleteStmt = db.prepare('DELETE FROM ordens_producao WHERE id = ?');
+  const deleteStmt = db.prepare('DELETE FROM ordens_producao WHERE id = ? AND empresa_id = ?');
   const deleteRequisitos = db.prepare('DELETE FROM ordem_requisitos WHERE ordem_id = ?');
   const insertRequisito = db.prepare(
     `INSERT INTO ordem_requisitos (
-       ordem_id, materia_prima_id, quantidade_unitaria, quantidade_total, unidade
+       empresa_id, ordem_id, materia_prima_id, quantidade_unitaria, quantidade_total, unidade
      ) VALUES (
-       @ordem_id, @materia_prima_id, @quantidade_unitaria, @quantidade_total, @unidade
+       @empresa_id, @ordem_id, @materia_prima_id, @quantidade_unitaria, @quantidade_total, @unidade
      )`,
   );
   const listRequisitosStmt = db.prepare(
@@ -213,7 +216,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
        ifnull(s.quantidade, 0) AS estoque_disponivel
      FROM ordem_requisitos r
      JOIN materias_primas m ON m.id = r.materia_prima_id
-     LEFT JOIN estoque_saldos s ON s.materia_prima_id = r.materia_prima_id
+     LEFT JOIN estoque_saldos s ON s.materia_prima_id = r.materia_prima_id AND s.empresa_id = r.empresa_id
      WHERE r.ordem_id = ?
      ORDER BY r.id ASC`,
   );
@@ -221,51 +224,53 @@ export function createOrdensRouter(db: AppDatabase): Router {
     `SELECT b.*, m.nome, m.codigo, m.unidade AS unidade_materia
      FROM produto_bom_itens b
      JOIN materias_primas m ON m.id = b.materia_prima_id
-     WHERE b.variante_id = ?
+     WHERE b.variante_id = ? AND b.empresa_id = ?
      ORDER BY b.id ASC`,
   );
   const listBomProduto = db.prepare(
     `SELECT b.*, m.nome, m.codigo, m.unidade AS unidade_materia
      FROM produto_bom_itens b
      JOIN materias_primas m ON m.id = b.materia_prima_id
-     WHERE b.produto_id = ? AND b.variante_id IS NULL
+     WHERE b.produto_id = ? AND b.variante_id IS NULL AND b.empresa_id = ?
      ORDER BY b.id ASC`,
   );
   const deleteBomVariante = db.prepare(
-    'DELETE FROM produto_bom_itens WHERE variante_id = ?',
+    'DELETE FROM produto_bom_itens WHERE variante_id = ? AND empresa_id = ?',
   );
   const deleteBomProduto = db.prepare(
-    'DELETE FROM produto_bom_itens WHERE produto_id = ? AND variante_id IS NULL',
+    'DELETE FROM produto_bom_itens WHERE produto_id = ? AND variante_id IS NULL AND empresa_id = ?',
   );
   const insertBom = db.prepare(
     `INSERT INTO produto_bom_itens (
-       produto_id, variante_id, materia_prima_id, quantidade, unidade
+       empresa_id, produto_id, variante_id, materia_prima_id, quantidade, unidade
      ) VALUES (
-       @produto_id, @variante_id, @materia_prima_id, @quantidade, @unidade
+       @empresa_id, @produto_id, @variante_id, @materia_prima_id, @quantidade, @unidade
      )`,
   );
-  const getMateria = db.prepare('SELECT * FROM materias_primas WHERE id = ?');
-  const getProduto = db.prepare('SELECT * FROM produtos WHERE id = ?');
-  const getVariante = db.prepare('SELECT * FROM produto_variantes WHERE id = ?');
-  const getCliente = db.prepare('SELECT * FROM clientes WHERE id = ?');
+  const getMateria = db.prepare('SELECT * FROM materias_primas WHERE id = ? AND empresa_id = ?');
+  const getProduto = db.prepare('SELECT * FROM produtos WHERE id = ? AND empresa_id = ?');
+  const getVariante = db.prepare(
+    'SELECT * FROM produto_variantes WHERE id = ? AND empresa_id = ?',
+  );
+  const getCliente = db.prepare('SELECT * FROM clientes WHERE id = ? AND empresa_id = ?');
   const getSaldoMateria = db.prepare(
-    'SELECT * FROM estoque_saldos WHERE materia_prima_id = ?',
+    'SELECT * FROM estoque_saldos WHERE materia_prima_id = ? AND empresa_id = ?',
   );
   const insertSaldoMateria = db.prepare(
-    `INSERT INTO estoque_saldos (tipo, materia_prima_id, quantidade)
-     VALUES ('materia', @materia_prima_id, 0)`,
+    `INSERT INTO estoque_saldos (empresa_id, tipo, materia_prima_id, quantidade)
+     VALUES (@empresa_id, 'materia', @materia_prima_id, 0)`,
   );
   const updateSaldo = db.prepare(
     `UPDATE estoque_saldos
         SET quantidade = @quantidade, atualizado_em = datetime('now')
-      WHERE id = @id`,
+      WHERE id = @id AND empresa_id = @empresa_id`,
   );
   const insertMovimento = db.prepare(
     `INSERT INTO estoque_movimentos (
-       saldo_id, tipo, quantidade, saldo_anterior, saldo_posterior,
+       empresa_id, saldo_id, tipo, quantidade, saldo_anterior, saldo_posterior,
        motivo, observacoes, materia_prima_id
      ) VALUES (
-       @saldo_id, @tipo, @quantidade, @saldo_anterior, @saldo_posterior,
+       @empresa_id, @saldo_id, @tipo, @quantidade, @saldo_anterior, @saldo_posterior,
        @motivo, @observacoes, @materia_prima_id
      )`,
   );
@@ -283,16 +288,16 @@ export function createOrdensRouter(db: AppDatabase): Router {
     }));
   }
 
-  function mapOrdem(id: number, comRequisitos = false): OrdemProducao | undefined {
-    const ordem = getStmt.get(id) as OrdemProducao | undefined;
+  function mapOrdem(id: number, empresaId: number, comRequisitos = false): OrdemProducao | undefined {
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
     if (!ordem) return undefined;
     if (comRequisitos) ordem.requisitos = mapRequisitos(id);
     return ordem;
   }
 
-  function carregarBom(produtoId: number, varianteId: number | null) {
+  function carregarBom(produtoId: number, varianteId: number | null, empresaId: number) {
     if (varianteId) {
-      const daVariante = listBomVariante.all(varianteId) as Array<{
+      const daVariante = listBomVariante.all(varianteId, empresaId) as Array<{
         materia_prima_id: number;
         quantidade: number;
         unidade: string | null;
@@ -302,7 +307,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
       }>;
       if (daVariante.length) return daVariante;
     }
-    return listBomProduto.all(produtoId) as Array<{
+    return listBomProduto.all(produtoId, empresaId) as Array<{
       materia_prima_id: number;
       quantidade: number;
       unidade: string | null;
@@ -316,6 +321,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
     db.exec(`
       CREATE TABLE IF NOT EXISTS ficha_tecnica_itens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER NOT NULL DEFAULT 1,
         materia_prima_id INTEGER NOT NULL,
         produto_id INTEGER,
         variante_id INTEGER,
@@ -329,27 +335,32 @@ export function createOrdensRouter(db: AppDatabase): Router {
     produtoId: number,
     varianteId: number | null,
     itens: Array<{ materia_prima_id: number; quantidade: number }>,
+    empresaId: number,
   ) {
-    if (varianteId) deleteBomVariante.run(varianteId);
-    else deleteBomProduto.run(produtoId);
+    if (varianteId) deleteBomVariante.run(varianteId, empresaId);
+    else deleteBomProduto.run(produtoId, empresaId);
 
     garantirFichaTabela();
     if (varianteId) {
-      db.prepare('DELETE FROM ficha_tecnica_itens WHERE variante_id = ?').run(varianteId);
+      db.prepare('DELETE FROM ficha_tecnica_itens WHERE variante_id = ? AND empresa_id = ?').run(
+        varianteId,
+        empresaId,
+      );
     } else {
       db.prepare(
-        'DELETE FROM ficha_tecnica_itens WHERE produto_id = ? AND variante_id IS NULL',
-      ).run(produtoId);
+        'DELETE FROM ficha_tecnica_itens WHERE produto_id = ? AND variante_id IS NULL AND empresa_id = ?',
+      ).run(produtoId, empresaId);
     }
 
     for (const item of itens) {
-      const materia = getMateria.get(item.materia_prima_id) as
+      const materia = getMateria.get(item.materia_prima_id, empresaId) as
         | { id: number; unidade: string }
         | undefined;
       if (!materia) {
         throw Object.assign(new Error('Matéria-prima não encontrada'), { status: 400 });
       }
       insertBom.run({
+        empresa_id: empresaId,
         produto_id: produtoId,
         variante_id: varianteId,
         materia_prima_id: item.materia_prima_id,
@@ -358,9 +369,10 @@ export function createOrdensRouter(db: AppDatabase): Router {
       });
       db.prepare(
         `INSERT INTO ficha_tecnica_itens (
-           materia_prima_id, produto_id, variante_id, quantidade, unidade
-         ) VALUES (?, ?, ?, ?, ?)`,
+           empresa_id, materia_prima_id, produto_id, variante_id, quantidade, unidade
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
       ).run(
+        empresaId,
         item.materia_prima_id,
         produtoId,
         varianteId,
@@ -374,16 +386,18 @@ export function createOrdensRouter(db: AppDatabase): Router {
     ordemId: number,
     quantidadeOp: number,
     itens: Array<{ materia_prima_id: number; quantidade: number }>,
+    empresaId: number,
   ) {
     deleteRequisitos.run(ordemId);
     for (const item of itens) {
-      const materia = getMateria.get(item.materia_prima_id) as
+      const materia = getMateria.get(item.materia_prima_id, empresaId) as
         | { id: number; unidade: string }
         | undefined;
       if (!materia) {
         throw Object.assign(new Error('Matéria-prima não encontrada'), { status: 400 });
       }
       insertRequisito.run({
+        empresa_id: empresaId,
         ordem_id: ordemId,
         materia_prima_id: item.materia_prima_id,
         quantidade_unitaria: item.quantidade,
@@ -393,10 +407,10 @@ export function createOrdensRouter(db: AppDatabase): Router {
     }
   }
 
-  function obterOuCriarSaldoMateria(materiaId: number): number {
-    const atual = getSaldoMateria.get(materiaId) as { id: number } | undefined;
+  function obterOuCriarSaldoMateria(materiaId: number, empresaId: number): number {
+    const atual = getSaldoMateria.get(materiaId, empresaId) as { id: number } | undefined;
     if (atual) return atual.id;
-    const info = insertSaldoMateria.run({ materia_prima_id: materiaId });
+    const info = insertSaldoMateria.run({ empresa_id: empresaId, materia_prima_id: materiaId });
     return Number(info.lastInsertRowid);
   }
 
@@ -405,9 +419,12 @@ export function createOrdensRouter(db: AppDatabase): Router {
     tipo: 'entrada' | 'saida',
     quantidade: number,
     motivo: string,
+    empresaId: number,
   ): { ok: true; movimentoId: number } | { ok: false; erro: string; status: number } {
-    const saldoId = obterOuCriarSaldoMateria(materiaId);
-    const saldo = db.prepare('SELECT * FROM estoque_saldos WHERE id = ?').get(saldoId) as {
+    const saldoId = obterOuCriarSaldoMateria(materiaId, empresaId);
+    const saldo = db
+      .prepare('SELECT * FROM estoque_saldos WHERE id = ? AND empresa_id = ?')
+      .get(saldoId, empresaId) as {
       id: number;
       quantidade: number;
     };
@@ -416,8 +433,9 @@ export function createOrdensRouter(db: AppDatabase): Router {
     if (posterior < 0) {
       return { ok: false, erro: 'Estoque insuficiente para os requisitos da OP', status: 409 };
     }
-    updateSaldo.run({ id: saldo.id, quantidade: posterior });
+    updateSaldo.run({ id: saldo.id, quantidade: posterior, empresa_id: empresaId });
     const info = insertMovimento.run({
+      empresa_id: empresaId,
       saldo_id: saldo.id,
       tipo,
       quantidade,
@@ -445,6 +463,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         'saida',
         req.quantidade_total,
         `Saída OP ${ordem.codigo ?? ordem.id}`,
+        ordem.empresa_id,
       );
       if (!mov.ok) {
         return { ok: false, erro: `${mov.erro} (${req.nome})`, status: mov.status };
@@ -468,19 +487,23 @@ export function createOrdensRouter(db: AppDatabase): Router {
         'entrada',
         req.quantidade_total,
         `Estorno OP ${ordem.codigo ?? ordem.id}`,
+        ordem.empresa_id,
       );
       setMovimentoRequisito.run({ id: req.id, movimento_id: null });
     }
   }
 
-  function resolverVinculos(input: {
-    cliente?: string;
-    produto?: string;
-    tamanho?: string;
-    cliente_id?: number | null;
-    produto_id?: number | null;
-    variante_id?: number | null;
-  }) {
+  function resolverVinculos(
+    input: {
+      cliente?: string;
+      produto?: string;
+      tamanho?: string;
+      cliente_id?: number | null;
+      produto_id?: number | null;
+      variante_id?: number | null;
+    },
+    empresaId: number,
+  ) {
     let clienteId = input.cliente_id ?? null;
     let produtoId = input.produto_id ?? null;
     let varianteId = input.variante_id ?? null;
@@ -489,20 +512,22 @@ export function createOrdensRouter(db: AppDatabase): Router {
     let tamanho = input.tamanho?.trim() ?? '';
 
     if (clienteId) {
-      const c = getCliente.get(clienteId) as { id: number; nome: string } | undefined;
+      const c = getCliente.get(clienteId, empresaId) as { id: number; nome: string } | undefined;
       if (!c) throw Object.assign(new Error('Cliente não encontrado'), { status: 400 });
       if (!clienteNome) clienteNome = c.nome;
     } else if (clienteNome) {
       const c = db
         .prepare(
-          `SELECT id FROM clientes WHERE lower(trim(nome)) = lower(trim(?)) ORDER BY id DESC LIMIT 1`,
+          `SELECT id FROM clientes
+            WHERE empresa_id = ? AND lower(trim(nome)) = lower(trim(?))
+            ORDER BY id DESC LIMIT 1`,
         )
-        .get(clienteNome) as { id: number } | undefined;
+        .get(empresaId, clienteNome) as { id: number } | undefined;
       clienteId = c?.id ?? null;
     }
 
     if (varianteId) {
-      const v = getVariante.get(varianteId) as
+      const v = getVariante.get(varianteId, empresaId) as
         | { id: number; produto_id: number; tamanho: string; cor: string }
         | undefined;
       if (!v) throw Object.assign(new Error('Variante não encontrada'), { status: 400 });
@@ -511,11 +536,11 @@ export function createOrdensRouter(db: AppDatabase): Router {
     }
 
     if (produtoId) {
-      const p = getProduto.get(produtoId) as { id: number; nome: string } | undefined;
+      const p = getProduto.get(produtoId, empresaId) as { id: number; nome: string } | undefined;
       if (!p) throw Object.assign(new Error('Produto não encontrado'), { status: 400 });
       if (!produtoNome) produtoNome = p.nome;
       if (varianteId) {
-        const v = getVariante.get(varianteId) as { produto_id: number } | undefined;
+        const v = getVariante.get(varianteId, empresaId) as { produto_id: number } | undefined;
         if (!v || v.produto_id !== produtoId) {
           throw Object.assign(new Error('Variante não pertence ao produto'), { status: 400 });
         }
@@ -523,19 +548,22 @@ export function createOrdensRouter(db: AppDatabase): Router {
     } else if (produtoNome) {
       const p = db
         .prepare(
-          `SELECT id FROM produtos WHERE lower(trim(nome)) = lower(trim(?)) ORDER BY id DESC LIMIT 1`,
+          `SELECT id FROM produtos
+            WHERE empresa_id = ? AND lower(trim(nome)) = lower(trim(?))
+            ORDER BY id DESC LIMIT 1`,
         )
-        .get(produtoNome) as { id: number } | undefined;
+        .get(empresaId, produtoNome) as { id: number } | undefined;
       produtoId = p?.id ?? null;
       if (produtoId && tamanho && !varianteId) {
         const v = db
           .prepare(
             `SELECT id FROM produto_variantes
              WHERE produto_id = ?
+               AND empresa_id = ?
                AND lower(trim(tamanho)) = lower(trim(?))
              ORDER BY id ASC LIMIT 1`,
           )
-          .get(produtoId, tamanho) as { id: number } | undefined;
+          .get(produtoId, empresaId, tamanho) as { id: number } | undefined;
         varianteId = v?.id ?? null;
       }
     }
@@ -560,7 +588,10 @@ export function createOrdensRouter(db: AppDatabase): Router {
     if (!produtoId) {
       return res.status(400).json({ erro: 'produto_id é obrigatório' });
     }
-    const itens = carregarBom(produtoId, varianteId).map((i) => ({
+    const empresaId = empresaDaSessao(req);
+    const produto = getProduto.get(produtoId, empresaId);
+    if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
+    const itens = carregarBom(produtoId, varianteId, empresaId).map((i) => ({
       materia_prima_id: i.materia_prima_id,
       quantidade: i.quantidade,
       unidade: i.unidade ?? i.unidade_materia,
@@ -578,15 +609,16 @@ export function createOrdensRouter(db: AppDatabase): Router {
         detalhes: parsed.error.flatten().fieldErrors,
       });
     }
-    const produto = getProduto.get(parsed.data.produto_id);
+    const empresaId = empresaDaSessao(req);
+    const produto = getProduto.get(parsed.data.produto_id, empresaId);
     if (!produto) return res.status(404).json({ erro: 'Produto não encontrado' });
     try {
-      gravarBom(parsed.data.produto_id, parsed.data.variante_id ?? null, parsed.data.itens);
+      gravarBom(parsed.data.produto_id, parsed.data.variante_id ?? null, parsed.data.itens, empresaId);
     } catch (e) {
       const err = e as Error & { status?: number };
       return res.status(err.status ?? 400).json({ erro: err.message });
     }
-    const itens = carregarBom(parsed.data.produto_id, parsed.data.variante_id ?? null);
+    const itens = carregarBom(parsed.data.produto_id, parsed.data.variante_id ?? null, empresaId);
     res.json({
       produto_id: parsed.data.produto_id,
       variante_id: parsed.data.variante_id ?? null,
@@ -615,6 +647,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
+    aplicarEmpresa(where, params, req);
     if (q) {
       where.push(
         `(ifnull(codigo,'') LIKE @q OR cliente LIKE @q OR produto LIKE @q
@@ -668,7 +701,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
   });
 
   router.get('/:id', (req, res) => {
-    const ordem = mapOrdem(Number(req.params.id), true);
+    const ordem = mapOrdem(Number(req.params.id), empresaDaSessao(req), true);
     if (!ordem) {
       return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
     }
@@ -686,12 +719,14 @@ export function createOrdensRouter(db: AppDatabase): Router {
 
     try {
       const data = parsed.data;
-      const vinculos = resolverVinculos(data);
-      if (data.codigo && getByCodigo.get(data.codigo, 0)) {
+      const empresaId = empresaDaSessao(req);
+      const vinculos = resolverVinculos(data, empresaId);
+      if (data.codigo && getByCodigo.get(data.codigo, 0, empresaId)) {
         return res.status(409).json({ erro: 'Já existe uma OP com este código' });
       }
 
       const info = insertStmt.run({
+        empresa_id: empresaId,
         cliente: vinculos.clienteNome,
         produto: vinculos.produtoNome,
         tamanho: vinculos.tamanho,
@@ -708,28 +743,28 @@ export function createOrdensRouter(db: AppDatabase): Router {
       });
       const id = Number(info.lastInsertRowid);
       if (!data.codigo) {
-        setCodigoStmt.run({ id, codigo: `OP-${String(id).padStart(4, '0')}` });
+        setCodigoStmt.run({ id, empresa_id: empresaId, codigo: `OP-${String(id).padStart(4, '0')}` });
       }
 
       let itens = data.requisitos ?? [];
       if (!itens.length && vinculos.produtoId) {
-        itens = carregarBom(vinculos.produtoId, vinculos.varianteId).map((i) => ({
+        itens = carregarBom(vinculos.produtoId, vinculos.varianteId, empresaId).map((i) => ({
           materia_prima_id: i.materia_prima_id,
           quantidade: i.quantidade,
         }));
       }
-      if (itens.length) gravarRequisitos(id, data.quantidade, itens);
+      if (itens.length) gravarRequisitos(id, data.quantidade, itens, empresaId);
 
-      const criada = mapOrdem(id, true)!;
+      const criada = mapOrdem(id, empresaId, true)!;
       if (CONSOME_ESTOQUE.has(criada.status)) {
         const cons = consumirMateriais(criada);
         if (!cons.ok) {
-          deleteStmt.run(id);
+          deleteStmt.run(id, empresaId);
           return res.status(cons.status).json({ erro: cons.erro });
         }
       }
 
-      res.status(201).json(mapOrdem(id, true));
+      res.status(201).json(mapOrdem(id, empresaId, true));
     } catch (e) {
       const err = e as Error & { status?: number };
       return res.status(err.status ?? 400).json({ erro: err.message });
@@ -746,7 +781,8 @@ export function createOrdensRouter(db: AppDatabase): Router {
     }
 
     const id = Number(req.params.id);
-    const atual = getStmt.get(id) as OrdemProducao | undefined;
+    const empresaId = empresaDaSessao(req);
+    const atual = getStmt.get(id, empresaId) as OrdemProducao | undefined;
     if (!atual) {
       return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
     }
@@ -763,7 +799,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
       }
     }
 
-    if (data.codigo && getByCodigo.get(data.codigo, id)) {
+    if (data.codigo && getByCodigo.get(data.codigo, id, empresaId)) {
       return res.status(409).json({ erro: 'Já existe uma OP com este código' });
     }
 
@@ -776,7 +812,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
           cliente_id: data.cliente_id === undefined ? atual.cliente_id : data.cliente_id,
           produto_id: data.produto_id === undefined ? atual.produto_id : data.produto_id,
           variante_id: data.variante_id === undefined ? atual.variante_id : data.variante_id,
-        });
+        }, empresaId);
 
         const quantidade = data.quantidade ?? atual.quantidade;
         const novoStatus = data.status ?? atual.status;
@@ -797,9 +833,10 @@ export function createOrdensRouter(db: AppDatabase): Router {
              observacoes = @observacoes,
              responsavel = @responsavel,
              atualizado_em = datetime('now')
-           WHERE id = @id`,
+           WHERE id = @id AND empresa_id = @empresa_id`,
         ).run({
           id,
+          empresa_id: empresaId,
           cliente: vinculos.clienteNome,
           produto: vinculos.produtoNome,
           tamanho: vinculos.tamanho,
@@ -817,7 +854,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         });
 
         if (data.requisitos) {
-          gravarRequisitos(id, quantidade, data.requisitos);
+          gravarRequisitos(id, quantidade, data.requisitos, empresaId);
         } else if (data.quantidade && data.quantidade !== atual.quantidade) {
           const atuais = listRequisitosStmt.all(id) as Array<{
             materia_prima_id: number;
@@ -830,10 +867,11 @@ export function createOrdensRouter(db: AppDatabase): Router {
               materia_prima_id: r.materia_prima_id,
               quantidade: r.quantidade_unitaria,
             })),
+            empresaId,
           );
         }
 
-        const depois = getStmt.get(id) as OrdemProducao;
+        const depois = getStmt.get(id, empresaId) as OrdemProducao;
         if (AINDA_PLANEJADA.has(atual.status) && CONSOME_ESTOQUE.has(novoStatus)) {
           const cons = consumirMateriais(depois);
           if (!cons.ok) {
@@ -847,7 +885,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
 
       aplicar();
       sincronizarStatusPedidoFromOps(db, id);
-      res.json(mapOrdem(id, !soStatus));
+      res.json(mapOrdem(id, empresaId, !soStatus));
     } catch (e) {
       const err = e as Error & { status?: number };
       return res.status(err.status ?? 400).json({ erro: err.message });
@@ -856,7 +894,8 @@ export function createOrdensRouter(db: AppDatabase): Router {
 
   router.delete('/:id', (req, res) => {
     const id = Number(req.params.id);
-    const atual = getStmt.get(id) as OrdemProducao | undefined;
+    const empresaId = empresaDaSessao(req);
+    const atual = getStmt.get(id, empresaId) as OrdemProducao | undefined;
     if (!atual) {
       return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
     }
@@ -865,7 +904,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         erro: 'Não é possível excluir uma OP em produção. Cancele-a primeiro.',
       });
     }
-    const info = deleteStmt.run(id);
+    const info = deleteStmt.run(id, empresaId);
     if (info.changes === 0) {
       return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
     }

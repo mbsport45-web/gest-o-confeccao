@@ -491,5 +491,115 @@ export function createDatabase(location: string) {
     `INSERT OR IGNORE INTO empresas (id, nome, status) VALUES (1, 'Empresa 1', 'ativa')`,
   ).run();
 
+  aplicarColunaEmpresaId(db);
+
   return db;
+}
+
+const TABELAS_TENANT = [
+  'clientes',
+  'produtos',
+  'produto_variantes',
+  'materias_primas',
+  'estoque_saldos',
+  'estoque_movimentos',
+  'produto_bom_itens',
+  'ordens_producao',
+  'ordem_requisitos',
+  'etapas_producao',
+  'fornecedores',
+  'pedidos_compra',
+  'pedido_compra_itens',
+  'financeiro_lancamentos',
+  'pedidos',
+  'pedido_itens',
+  'expedicoes',
+  'ficha_tecnica_itens',
+] as const;
+
+function tabelaExiste(db: AppDatabase, nome: string): boolean {
+  const row = db
+    .prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`)
+    .get(nome) as { ok: number } | undefined;
+  return Boolean(row);
+}
+
+function aplicarColunaEmpresaId(db: AppDatabase) {
+  for (const tabela of TABELAS_TENANT) {
+    if (!tabelaExiste(db, tabela)) continue;
+    const cols = db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[];
+    if (!cols.some((col) => col.name === 'empresa_id')) {
+      db.exec(
+        `ALTER TABLE ${tabela} ADD COLUMN empresa_id INTEGER NOT NULL DEFAULT 1 REFERENCES empresas(id)`,
+      );
+    }
+  }
+
+  db.exec(`
+    DROP INDEX IF EXISTS clientes_cpf_cnpj_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS clientes_cpf_cnpj_unique
+      ON clientes (empresa_id, cpf_cnpj)
+      WHERE cpf_cnpj IS NOT NULL AND cpf_cnpj != '';
+
+    DROP INDEX IF EXISTS produtos_sku_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS produtos_sku_unique
+      ON produtos (empresa_id, sku)
+      WHERE sku IS NOT NULL AND sku != '';
+
+    DROP INDEX IF EXISTS produtos_codigo_barras_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS produtos_codigo_barras_unique
+      ON produtos (empresa_id, codigo_barras)
+      WHERE codigo_barras IS NOT NULL AND codigo_barras != '';
+
+    DROP INDEX IF EXISTS produto_variantes_sku_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS produto_variantes_sku_unique
+      ON produto_variantes (empresa_id, sku);
+
+    DROP INDEX IF EXISTS produto_variantes_codigo_barras_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS produto_variantes_codigo_barras_unique
+      ON produto_variantes (empresa_id, codigo_barras)
+      WHERE codigo_barras IS NOT NULL AND codigo_barras != '';
+
+    DROP INDEX IF EXISTS materias_primas_codigo_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS materias_primas_codigo_unique
+      ON materias_primas (empresa_id, codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    DROP INDEX IF EXISTS ordens_producao_codigo_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS ordens_producao_codigo_unique
+      ON ordens_producao (empresa_id, codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    DROP INDEX IF EXISTS fornecedores_cpf_cnpj_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS fornecedores_cpf_cnpj_unique
+      ON fornecedores (empresa_id, cpf_cnpj)
+      WHERE cpf_cnpj IS NOT NULL AND cpf_cnpj != '';
+
+    DROP INDEX IF EXISTS fornecedores_codigo_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS fornecedores_codigo_unique
+      ON fornecedores (empresa_id, codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    DROP INDEX IF EXISTS pedidos_compra_codigo_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS pedidos_compra_codigo_unique
+      ON pedidos_compra (empresa_id, codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    DROP INDEX IF EXISTS pedidos_codigo_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS pedidos_codigo_unique
+      ON pedidos (empresa_id, codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    CREATE INDEX IF NOT EXISTS clientes_empresa ON clientes (empresa_id);
+    CREATE INDEX IF NOT EXISTS produtos_empresa ON produtos (empresa_id);
+    CREATE INDEX IF NOT EXISTS materias_primas_empresa ON materias_primas (empresa_id);
+    CREATE INDEX IF NOT EXISTS estoque_saldos_empresa ON estoque_saldos (empresa_id);
+    CREATE INDEX IF NOT EXISTS ordens_producao_empresa ON ordens_producao (empresa_id);
+    CREATE INDEX IF NOT EXISTS fornecedores_empresa ON fornecedores (empresa_id);
+    CREATE INDEX IF NOT EXISTS pedidos_compra_empresa ON pedidos_compra (empresa_id);
+    CREATE INDEX IF NOT EXISTS financeiro_lancamentos_empresa ON financeiro_lancamentos (empresa_id);
+    CREATE INDEX IF NOT EXISTS pedidos_empresa ON pedidos (empresa_id);
+    CREATE INDEX IF NOT EXISTS etapas_producao_empresa ON etapas_producao (empresa_id);
+    CREATE INDEX IF NOT EXISTS expedicoes_empresa ON expedicoes (empresa_id);
+  `);
 }
