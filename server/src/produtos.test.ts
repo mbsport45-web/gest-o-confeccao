@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
-import type { Express } from 'express';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
+import { autenticar, type TestApi } from './httpTest.js';
 
 const produtoBase = {
   sku: 'CAM-POLO',
@@ -26,12 +25,12 @@ const produtoBase = {
 };
 
 describe('API de produtos', () => {
-  let app: Express;
   let db: AppDatabase;
+  let api: TestApi;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createDatabase(':memory:');
-    app = createApp(db);
+    api = await autenticar(createApp(db));
   });
 
   afterEach(() => {
@@ -39,7 +38,7 @@ describe('API de produtos', () => {
   });
 
   it('lista vazia paginada', async () => {
-    const res = await request(app).get('/api/produtos');
+    const res = await api.get('/api/produtos');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       data: [],
@@ -51,7 +50,7 @@ describe('API de produtos', () => {
   });
 
   it('cria produto com variantes cor × tamanho e SKU/barcode únicos', async () => {
-    const res = await request(app).post('/api/produtos').send(produtoBase);
+    const res = await api.post('/api/produtos').send(produtoBase);
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
       sku: 'CAM-POLO',
@@ -88,7 +87,7 @@ describe('API de produtos', () => {
   });
 
   it('aceita override de SKU/barcode por variante', async () => {
-    const res = await request(app)
+    const res = await api
       .post('/api/produtos')
       .send({
         nome: 'Calça Jeans',
@@ -115,7 +114,7 @@ describe('API de produtos', () => {
   });
 
   it('rejeita nome vazio, preço negativo e gênero inválido', async () => {
-    const res = await request(app).post('/api/produtos').send({
+    const res = await api.post('/api/produtos').send({
       nome: '   ',
       preco_venda: -10,
       genero: 'outro',
@@ -128,15 +127,15 @@ describe('API de produtos', () => {
   });
 
   it('impede SKU duplicado entre produtos e variantes', async () => {
-    await request(app).post('/api/produtos').send(produtoBase);
-    const outro = await request(app).post('/api/produtos').send({
+    await api.post('/api/produtos').send(produtoBase);
+    const outro = await api.post('/api/produtos').send({
       nome: 'Outra Polo',
       sku: 'CAM-POLO',
     });
     expect(outro.status).toBe(409);
     expect(outro.body.erro).toBe('SKU já cadastrado');
 
-    const varianteSku = await request(app).post('/api/produtos').send({
+    const varianteSku = await api.post('/api/produtos').send({
       nome: 'Regata',
       sku: 'CAM-POLO-PRETO-M',
     });
@@ -144,8 +143,8 @@ describe('API de produtos', () => {
   });
 
   it('impede código de barras duplicado', async () => {
-    await request(app).post('/api/produtos').send(produtoBase);
-    const res = await request(app).post('/api/produtos').send({
+    await api.post('/api/produtos').send(produtoBase);
+    const res = await api.post('/api/produtos').send({
       nome: 'Outro',
       codigo_barras: '7891234567890',
     });
@@ -154,8 +153,8 @@ describe('API de produtos', () => {
   });
 
   it('busca, filtra e pagina', async () => {
-    await request(app).post('/api/produtos').send(produtoBase);
-    await request(app).post('/api/produtos').send({
+    await api.post('/api/produtos').send(produtoBase);
+    await api.post('/api/produtos').send({
       nome: 'Calça Jeans',
       sku: 'CALCA-01',
       categoria: 'Calça',
@@ -166,7 +165,7 @@ describe('API de produtos', () => {
       cores: ['Azul'],
       tamanhos: ['40', '42'],
     });
-    await request(app).post('/api/produtos').send({
+    await api.post('/api/produtos').send({
       nome: 'Vestido Midi',
       sku: 'VEST-01',
       categoria: 'Vestido',
@@ -175,30 +174,30 @@ describe('API de produtos', () => {
       colecao: 'Verão 2026',
     });
 
-    const busca = await request(app).get('/api/produtos').query({ q: 'Polo' });
+    const busca = await api.get('/api/produtos').query({ q: 'Polo' });
     expect(busca.status).toBe(200);
     expect(busca.body.total).toBe(1);
     expect(busca.body.data[0].nome).toBe('Camiseta Polo');
 
-    const porSkuVariante = await request(app)
+    const porSkuVariante = await api
       .get('/api/produtos')
       .query({ q: 'CAM-POLO-BRANCO-G' });
     expect(porSkuVariante.body.total).toBe(1);
 
-    const ativos = await request(app).get('/api/produtos').query({ status: 'ativo' });
+    const ativos = await api.get('/api/produtos').query({ status: 'ativo' });
     expect(ativos.body.total).toBe(2);
 
-    const marca = await request(app)
+    const marca = await api
       .get('/api/produtos')
       .query({ marca: 'Atelier' });
     expect(marca.body.total).toBe(2);
 
-    const genero = await request(app)
+    const genero = await api
       .get('/api/produtos')
       .query({ genero: 'feminino' });
     expect(genero.body.total).toBe(1);
 
-    const pagina = await request(app)
+    const pagina = await api
       .get('/api/produtos')
       .query({ pagina: 2, por_pagina: 2 });
     expect(pagina.body.pagina).toBe(2);
@@ -208,13 +207,13 @@ describe('API de produtos', () => {
   });
 
   it('detalha, edita, altera status e gera novas variantes', async () => {
-    const criada = await request(app).post('/api/produtos').send(produtoBase);
+    const criada = await api.post('/api/produtos').send(produtoBase);
 
-    const detalhe = await request(app).get(`/api/produtos/${criada.body.id}`);
+    const detalhe = await api.get(`/api/produtos/${criada.body.id}`);
     expect(detalhe.status).toBe(200);
     expect(detalhe.body.variantes).toHaveLength(6);
 
-    const editada = await request(app)
+    const editada = await api
       .patch(`/api/produtos/${criada.body.id}`)
       .send({
         preco_venda: 99.9,
@@ -227,27 +226,27 @@ describe('API de produtos', () => {
     expect(editada.body.estoque_minimo).toBe(20);
     expect(editada.body.variantes).toHaveLength(9);
 
-    const inativo = await request(app)
+    const inativo = await api
       .patch(`/api/produtos/${criada.body.id}/status`)
       .send({ status: 'inativo' });
     expect(inativo.status).toBe(200);
     expect(inativo.body.status).toBe('inativo');
 
-    const ativo = await request(app)
+    const ativo = await api
       .patch(`/api/produtos/${criada.body.id}/status`)
       .send({ status: 'ativo' });
     expect(ativo.body.status).toBe('ativo');
   });
 
   it('cria, edita e exclui variante avulsa', async () => {
-    const criada = await request(app).post('/api/produtos').send({
+    const criada = await api.post('/api/produtos').send({
       nome: 'Jaqueta',
       sku: 'JAQ',
       cores: ['Preto'],
       tamanhos: ['M'],
     });
 
-    const extra = await request(app)
+    const extra = await api
       .post(`/api/produtos/${criada.body.id}/variantes`)
       .send({ cor: 'Verde', tamanho: 'G', sku: 'JAQ-VERDE-G' });
     expect(extra.status).toBe(201);
@@ -258,7 +257,7 @@ describe('API de produtos', () => {
     const variante = extra.body.variantes.find(
       (v: { sku: string }) => v.sku === 'JAQ-VERDE-G',
     );
-    const editada = await request(app)
+    const editada = await api
       .patch(`/api/produtos/${criada.body.id}/variantes/${variante.id}`)
       .send({ codigo_barras: 'JAQVG01', status: 'inativo' });
     expect(editada.status).toBe(200);
@@ -268,61 +267,61 @@ describe('API de produtos', () => {
     expect(atualizada.codigo_barras).toBe('JAQVG01');
     expect(atualizada.status).toBe('inativo');
 
-    const del = await request(app).delete(
+    const del = await api.delete(
       `/api/produtos/${criada.body.id}/variantes/${variante.id}`,
     );
     expect(del.status).toBe(204);
-    const depois = await request(app).get(`/api/produtos/${criada.body.id}`);
+    const depois = await api.get(`/api/produtos/${criada.body.id}`);
     expect(depois.body.variantes).toHaveLength(1);
   });
 
   it('exclui produto sem vínculos e bloqueia quando há OP', async () => {
-    const livre = await request(app).post('/api/produtos').send({
+    const livre = await api.post('/api/produtos').send({
       nome: 'Produto Livre',
       sku: 'LIVRE',
     });
-    const delLivre = await request(app).delete(`/api/produtos/${livre.body.id}`);
+    const delLivre = await api.delete(`/api/produtos/${livre.body.id}`);
     expect(delLivre.status).toBe(204);
 
-    const vinculado = await request(app).post('/api/produtos').send({
+    const vinculado = await api.post('/api/produtos').send({
       nome: 'Camiseta OP',
       sku: 'CAM-OP',
       cores: ['Preto'],
       tamanhos: ['M'],
     });
-    await request(app).post('/api/ordens').send({
+    await api.post('/api/ordens').send({
       cliente: 'Loja Central',
       produto: 'Camiseta OP',
       tamanho: 'M',
       quantidade: 10,
     });
 
-    const delBloqueado = await request(app).delete(
+    const delBloqueado = await api.delete(
       `/api/produtos/${vinculado.body.id}`,
     );
     expect(delBloqueado.status).toBe(409);
     expect(delBloqueado.body.erro).toMatch(/ordens de produção/);
 
-    const aindaExiste = await request(app).get(
+    const aindaExiste = await api.get(
       `/api/produtos/${vinculado.body.id}`,
     );
     expect(aindaExiste.status).toBe(200);
 
     const variante = aindaExiste.body.variantes[0];
-    const delVariante = await request(app).delete(
+    const delVariante = await api.delete(
       `/api/produtos/${vinculado.body.id}/variantes/${variante.id}`,
     );
     expect(delVariante.status).toBe(409);
   });
 
   it('mantém contrato das ordens e vincula produto_id/variante_id', async () => {
-    const produto = await request(app).post('/api/produtos').send({
+    const produto = await api.post('/api/produtos').send({
       nome: 'Camiseta Polo',
       sku: 'POLO',
       cores: ['Preto'],
       tamanhos: ['M', 'G'],
     });
-    const ordem = await request(app).post('/api/ordens').send({
+    const ordem = await api.post('/api/ordens').send({
       cliente: 'Loja Central',
       produto: 'Camiseta Polo',
       tamanho: 'M',
@@ -344,7 +343,7 @@ describe('API de produtos', () => {
   });
 
   it('retorna 404 para produto inexistente', async () => {
-    const res = await request(app).get('/api/produtos/9999');
+    const res = await api.get('/api/produtos/9999');
     expect(res.status).toBe(404);
   });
 });

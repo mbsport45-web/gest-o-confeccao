@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
-import type { Express } from 'express';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
+import { autenticar, type TestApi } from './httpTest.js';
 
 const CPF_VALIDO = '52998224725';
 const CNPJ_VALIDO = '11444777000161';
@@ -24,12 +23,12 @@ const clienteBase = {
 };
 
 describe('API de clientes', () => {
-  let app: Express;
   let db: AppDatabase;
+  let api: TestApi;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createDatabase(':memory:');
-    app = createApp(db);
+    api = await autenticar(createApp(db));
   });
 
   afterEach(() => {
@@ -37,7 +36,7 @@ describe('API de clientes', () => {
   });
 
   it('lista vazia paginada', async () => {
-    const res = await request(app).get('/api/clientes');
+    const res = await api.get('/api/clientes');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       data: [],
@@ -49,7 +48,7 @@ describe('API de clientes', () => {
   });
 
   it('cria um cliente completo', async () => {
-    const res = await request(app).post('/api/clientes').send(clienteBase);
+    const res = await api.post('/api/clientes').send(clienteBase);
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
       nome: 'Loja Central Ltda',
@@ -67,7 +66,7 @@ describe('API de clientes', () => {
   });
 
   it('rejeita CPF/CNPJ inválido', async () => {
-    const res = await request(app).post('/api/clientes').send({
+    const res = await api.post('/api/clientes').send({
       nome: 'Pessoa',
       cpf_cnpj: '11111111111',
     });
@@ -76,7 +75,7 @@ describe('API de clientes', () => {
   });
 
   it('rejeita email inválido e nome vazio', async () => {
-    const res = await request(app).post('/api/clientes').send({
+    const res = await api.post('/api/clientes').send({
       nome: '   ',
       email: 'nao-e-email',
     });
@@ -86,8 +85,8 @@ describe('API de clientes', () => {
   });
 
   it('impede CPF/CNPJ duplicado', async () => {
-    await request(app).post('/api/clientes').send(clienteBase);
-    const res = await request(app).post('/api/clientes').send({
+    await api.post('/api/clientes').send(clienteBase);
+    const res = await api.post('/api/clientes').send({
       ...clienteBase,
       nome: 'Outra Loja',
     });
@@ -96,32 +95,32 @@ describe('API de clientes', () => {
   });
 
   it('busca, filtra e pagina', async () => {
-    await request(app).post('/api/clientes').send(clienteBase);
-    await request(app).post('/api/clientes').send({
+    await api.post('/api/clientes').send(clienteBase);
+    await api.post('/api/clientes').send({
       nome: 'Atelier Norte',
       cpf_cnpj: CPF_VALIDO,
       cidade: 'Campinas',
       estado: 'SP',
       status: 'inativo',
     });
-    await request(app).post('/api/clientes').send({
+    await api.post('/api/clientes').send({
       nome: 'Confecções Sul',
       cidade: 'Curitiba',
       estado: 'PR',
     });
 
-    const busca = await request(app).get('/api/clientes').query({ q: 'Central' });
+    const busca = await api.get('/api/clientes').query({ q: 'Central' });
     expect(busca.status).toBe(200);
     expect(busca.body.total).toBe(1);
     expect(busca.body.data[0].nome).toBe('Loja Central Ltda');
 
-    const ativos = await request(app).get('/api/clientes').query({ status: 'ativo' });
+    const ativos = await api.get('/api/clientes').query({ status: 'ativo' });
     expect(ativos.body.total).toBe(2);
 
-    const sp = await request(app).get('/api/clientes').query({ estado: 'SP' });
+    const sp = await api.get('/api/clientes').query({ estado: 'SP' });
     expect(sp.body.total).toBe(2);
 
-    const pagina = await request(app)
+    const pagina = await api
       .get('/api/clientes')
       .query({ pagina: 2, por_pagina: 2 });
     expect(pagina.body.pagina).toBe(2);
@@ -131,13 +130,13 @@ describe('API de clientes', () => {
   });
 
   it('detalha, edita e altera status', async () => {
-    const criada = await request(app).post('/api/clientes').send(clienteBase);
+    const criada = await api.post('/api/clientes').send(clienteBase);
 
-    const detalhe = await request(app).get(`/api/clientes/${criada.body.id}`);
+    const detalhe = await api.get(`/api/clientes/${criada.body.id}`);
     expect(detalhe.status).toBe(200);
     expect(detalhe.body.email).toBe('contato@lojacentral.com');
 
-    const editada = await request(app)
+    const editada = await api
       .patch(`/api/clientes/${criada.body.id}`)
       .send({ cidade: 'Guarulhos', limite_credito: 8000 });
     expect(editada.status).toBe(200);
@@ -145,50 +144,50 @@ describe('API de clientes', () => {
     expect(editada.body.limite_credito).toBe(8000);
     expect(editada.body.nome).toBe('Loja Central Ltda');
 
-    const inativo = await request(app)
+    const inativo = await api
       .patch(`/api/clientes/${criada.body.id}/status`)
       .send({ status: 'inativo' });
     expect(inativo.status).toBe(200);
     expect(inativo.body.status).toBe('inativo');
 
-    const ativo = await request(app)
+    const ativo = await api
       .patch(`/api/clientes/${criada.body.id}/status`)
       .send({ status: 'ativo' });
     expect(ativo.body.status).toBe('ativo');
   });
 
   it('exclui cliente sem vínculos e bloqueia quando há OP', async () => {
-    const livre = await request(app).post('/api/clientes').send({
+    const livre = await api.post('/api/clientes').send({
       nome: 'Cliente Livre',
     });
-    const delLivre = await request(app).delete(`/api/clientes/${livre.body.id}`);
+    const delLivre = await api.delete(`/api/clientes/${livre.body.id}`);
     expect(delLivre.status).toBe(204);
 
-    const vinculado = await request(app).post('/api/clientes').send({
+    const vinculado = await api.post('/api/clientes').send({
       nome: 'Cliente com OP',
       cpf_cnpj: CPF_VALIDO,
     });
-    await request(app).post('/api/ordens').send({
+    await api.post('/api/ordens').send({
       cliente: 'Cliente com OP',
       produto: 'Camiseta',
       tamanho: 'M',
       quantidade: 10,
     });
 
-    const delBloqueado = await request(app).delete(
+    const delBloqueado = await api.delete(
       `/api/clientes/${vinculado.body.id}`,
     );
     expect(delBloqueado.status).toBe(409);
     expect(delBloqueado.body.erro).toMatch(/ordens de produção/);
 
-    const aindaExiste = await request(app).get(
+    const aindaExiste = await api.get(
       `/api/clientes/${vinculado.body.id}`,
     );
     expect(aindaExiste.status).toBe(200);
   });
 
   it('retorna 404 para cliente inexistente', async () => {
-    const res = await request(app).get('/api/clientes/9999');
+    const res = await api.get('/api/clientes/9999');
     expect(res.status).toBe(404);
   });
 });

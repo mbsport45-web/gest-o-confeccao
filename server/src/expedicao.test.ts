@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
-import type { Express } from 'express';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
+import { autenticar, type TestApi } from './httpTest.js';
 
 describe('API de expedição', () => {
-  let app: Express;
   let db: AppDatabase;
+  let api: TestApi;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createDatabase(':memory:');
-    app = createApp(db);
+    api = await autenticar(createApp(db));
   });
 
   afterEach(() => {
@@ -18,12 +17,12 @@ describe('API de expedição', () => {
   });
 
   async function pedidoFaturado() {
-    const cliente = await request(app).post('/api/clientes').send({
+    const cliente = await api.post('/api/clientes').send({
       nome: 'Loja Expedição',
       cidade: 'Recife',
       estado: 'PE',
     });
-    const produto = await request(app).post('/api/produtos').send({
+    const produto = await api.post('/api/produtos').send({
       sku: 'CAM-EXP',
       nome: 'Camisa Expedição',
       cores: ['Preto'],
@@ -31,7 +30,7 @@ describe('API de expedição', () => {
       preco_venda: 80,
     });
     const variante = (produto.body.variantes as Array<{ id: number }>)[0];
-    const criado = await request(app).post('/api/pedidos').send({
+    const criado = await api.post('/api/pedidos').send({
       cliente_id: cliente.body.id,
       data_pedido: '2026-09-18',
       status: 'aberto',
@@ -44,11 +43,11 @@ describe('API de expedição', () => {
         },
       ],
     });
-    await request(app).patch(`/api/pedidos/${criado.body.id}`).send({ status: 'confirmado' });
-    await request(app).patch(`/api/pedidos/${criado.body.id}`).send({ status: 'faturado' });
+    await api.patch(`/api/pedidos/${criado.body.id}`).send({ status: 'confirmado' });
+    await api.patch(`/api/pedidos/${criado.body.id}`).send({ status: 'faturado' });
     return {
       cliente: cliente.body as { id: number; nome: string },
-      pedido: (await request(app).get(`/api/pedidos/${criado.body.id}`)).body as {
+      pedido: (await api.get(`/api/pedidos/${criado.body.id}`)).body as {
         id: number;
         codigo: string;
         status: string;
@@ -58,12 +57,12 @@ describe('API de expedição', () => {
   }
 
   it('lista vazia e ignora pedidos que ainda não estão prontos', async () => {
-    const vazia = await request(app).get('/api/expedicao');
+    const vazia = await api.get('/api/expedicao');
     expect(vazia.status).toBe(200);
     expect(vazia.body).toMatchObject({ data: [], total: 0, pagina: 1 });
 
-    const cliente = await request(app).post('/api/clientes').send({ nome: 'Loja Cedo' });
-    const produto = await request(app).post('/api/produtos').send({
+    const cliente = await api.post('/api/clientes').send({ nome: 'Loja Cedo' });
+    const produto = await api.post('/api/produtos').send({
       sku: 'CAM-CEDO',
       nome: 'Camisa Cedo',
       cores: ['Azul'],
@@ -71,23 +70,23 @@ describe('API de expedição', () => {
       preco_venda: 10,
     });
     const variante = (produto.body.variantes as Array<{ id: number }>)[0];
-    await request(app).post('/api/pedidos').send({
+    await api.post('/api/pedidos').send({
       cliente_id: cliente.body.id,
       status: 'aberto',
       itens: [{ produto_id: produto.body.id, variante_id: variante.id, quantidade: 1, preco_unitario: 10 }],
     });
 
-    const fila = await request(app).get('/api/expedicao');
+    const fila = await api.get('/api/expedicao');
     expect(fila.body.total).toBe(0);
 
-    const resumo = await request(app).get('/api/expedicao/resumo');
+    const resumo = await api.get('/api/expedicao/resumo');
     expect(resumo.body).toMatchObject({ fila: 0, prontos_envio: 0, expedidos: 0, entregues: 0 });
   });
 
   it('mostra pedido faturado, marca pronto para envio, expede e entrega', async () => {
     const { pedido } = await pedidoFaturado();
 
-    const fila = await request(app).get('/api/expedicao').query({ fila: 'prontos' });
+    const fila = await api.get('/api/expedicao').query({ fila: 'prontos' });
     expect(fila.status).toBe(200);
     expect(fila.body.total).toBe(1);
     expect(fila.body.data[0]).toMatchObject({
@@ -101,16 +100,16 @@ describe('API de expedição', () => {
       expedicao_status: null,
     });
 
-    const cedo = await request(app).post(`/api/expedicao/${pedido.id}/entregar`).send({});
+    const cedo = await api.post(`/api/expedicao/${pedido.id}/entregar`).send({});
     expect(cedo.status).toBe(409);
 
-    const pronto = await request(app).post(`/api/expedicao/${pedido.id}/pronto-envio`).send({});
+    const pronto = await api.post(`/api/expedicao/${pedido.id}/pronto-envio`).send({});
     expect(pronto.status).toBe(201);
     expect(pronto.body.expedicao_status).toBe('pronto_envio');
     expect(pronto.body.status).toBe('pronto_envio');
     expect(pronto.body.data_pronta).toBeTruthy();
 
-    const expedir = await request(app).post(`/api/expedicao/${pedido.id}/expedir`).send({
+    const expedir = await api.post(`/api/expedicao/${pedido.id}/expedir`).send({
       data_expedicao: '2026-09-21',
       observacoes: 'Saída pelo portão 2',
     });
@@ -121,14 +120,14 @@ describe('API de expedição', () => {
       observacoes: 'Saída pelo portão 2',
     });
 
-    const duplicada = await request(app).post(`/api/expedicao/${pedido.id}/expedir`).send({});
+    const duplicada = await api.post(`/api/expedicao/${pedido.id}/expedir`).send({});
     expect(duplicada.status).toBe(409);
 
-    const expedidos = await request(app).get('/api/expedicao').query({ fila: 'expedidos' });
+    const expedidos = await api.get('/api/expedicao').query({ fila: 'expedidos' });
     expect(expedidos.body.total).toBe(1);
     expect(expedidos.body.data[0].codigo).toBe('PV-0001');
 
-    const entregar = await request(app).post(`/api/expedicao/${pedido.id}/entregar`).send({
+    const entregar = await api.post(`/api/expedicao/${pedido.id}/entregar`).send({
       data_entrega: '2026-09-22',
     });
     expect(entregar.status).toBe(200);
@@ -136,22 +135,22 @@ describe('API de expedição', () => {
     expect(entregar.body.pedido_status).toBe('entregue');
     expect(entregar.body.data_entrega).toBe('2026-09-22');
 
-    const pedidoAtual = await request(app).get(`/api/pedidos/${pedido.id}`);
+    const pedidoAtual = await api.get(`/api/pedidos/${pedido.id}`);
     expect(pedidoAtual.body.status).toBe('entregue');
 
-    const resumo = await request(app).get('/api/expedicao/resumo');
+    const resumo = await api.get('/api/expedicao/resumo');
     expect(resumo.body).toMatchObject({ fila: 0, prontos_envio: 0, expedidos: 0, entregues: 1 });
 
-    const entregues = await request(app).get('/api/expedicao').query({ fila: 'entregues' });
+    const entregues = await api.get('/api/expedicao').query({ fila: 'entregues' });
     expect(entregues.body.total).toBe(1);
   });
 
   it('rejeita pedido inexistente e permite expedir direto do faturado', async () => {
-    const missing = await request(app).post('/api/expedicao/999/pronto-envio').send({});
+    const missing = await api.post('/api/expedicao/999/pronto-envio').send({});
     expect(missing.status).toBe(404);
 
     const { pedido } = await pedidoFaturado();
-    const expedir = await request(app).post(`/api/expedicao/${pedido.id}/expedir`).send({});
+    const expedir = await api.post(`/api/expedicao/${pedido.id}/expedir`).send({});
     expect([200, 201]).toContain(expedir.status);
     expect(expedir.body.expedicao_status).toBe('expedido');
     expect(expedir.body.codigo).toBe('PV-0001');

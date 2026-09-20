@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ClientesPage } from './ClientesPage';
 import { ComprasPage } from './ComprasPage';
 import { DashboardPage } from './DashboardPage';
@@ -12,6 +12,8 @@ import { PedidosPage } from './PedidosPage';
 import { ProdutosPage } from './ProdutosPage';
 import { RelatoriosPage } from './RelatoriosPage';
 import { ExpedicaoPage } from './ExpedicaoPage';
+import { LoginPage } from './LoginPage';
+import { obterSessao, sair, type SessaoAtual } from './api';
 
 type Pagina =
   | 'dashboard'
@@ -94,6 +96,32 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
 };
 
 export function App() {
+  const [sessao, setSessao] = useState<SessaoAtual | null | undefined>(undefined);
+
+  useEffect(() => {
+    void obterSessao()
+      .then((s) => setSessao(s))
+      .catch(() => setSessao(null));
+  }, []);
+
+  if (sessao === undefined) {
+    return (
+      <div className="login">
+        <p className="vazio">Carregando sessão…</p>
+      </div>
+    );
+  }
+  if (!sessao) return <LoginPage onEntrou={setSessao} />;
+  return <AppAutenticado sessao={sessao} onSair={() => setSessao(null)} />;
+}
+
+function AppAutenticado({
+  sessao,
+  onSair,
+}: {
+  sessao: SessaoAtual;
+  onSair: () => void;
+}) {
   const [pagina, setPagina] = useState<Pagina>('dashboard');
   const [ordemId, setOrdemId] = useState<number | null>(null);
   const [menuAberto, setMenuAberto] = useState(false);
@@ -162,6 +190,21 @@ export function App() {
           <div>
             <h1>{titulo.titulo}</h1>
             <p>{titulo.sub}</p>
+          </div>
+          <div className="shell__sessao">
+            <span>
+              {sessao.usuario.nome}
+              <small>{sessao.empresa.nome}</small>
+            </span>
+            <button
+              type="button"
+              className="btn-secundario"
+              onClick={() => {
+                void sair().finally(onSair);
+              }}
+            >
+              Sair
+            </button>
           </div>
         </header>
 

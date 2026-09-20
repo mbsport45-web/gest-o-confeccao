@@ -50,7 +50,11 @@ npm run dev:web
 
 | Método   | Rota                | Descrição                        |
 | -------- | ------------------- | -------------------------------- |
-| `GET`    | `/api/health`       | Health check.                    |
+| `GET`    | `/api/health`       | Health check (público).          |
+| `POST`   | `/api/auth/registrar` | Cria usuário na Empresa 1 e abre sessão (cookie httpOnly). |
+| `POST`   | `/api/auth/login`   | Abre sessão.                     |
+| `POST`   | `/api/auth/logout`  | Encerra a sessão.                |
+| `GET`    | `/api/auth/me` / `/api/me` | Usuário e empresa da sessão. |
 | `GET`    | `/api/ordens`       | Lista OPs (array; com `pagina` retorna busca, filtros e paginação). |
 | `POST`   | `/api/ordens`       | Cria uma ordem de produção (código, produto/variante, BOM). |
 | `GET`    | `/api/ordens/ficha-tecnica` | Lê a ficha técnica/BOM do produto ou variante. |
@@ -125,6 +129,8 @@ Compras usam `fornecedores`, `pedidos_compra` e `pedido_compra_itens`. Ao recebe
 Pedidos de venda usam `pedidos` e `pedido_itens` (cliente, produto e variante existentes). Confirmar o pedido reserva a quantidade no próprio item (não baixa estoque de produto acabado). **Gerar OP** cria registros em `ordens_producao` com `pedido_id` / `pedido_item_id`, copiando cliente, produto, variante, quantidade, prioridade e previsão. **Gerar financeiro** cria uma conta a receber em `financeiro_lancamentos` (`pedido_id`) sem duplicar.
 
 Expedição usa a tabela `expedicoes` ligada ao pedido. A fila mostra pedidos `pronto` ou `faturado`. Dali é possível marcar **pronto para envio**, **registrar a expedição** e **marcar entregue** (atualiza o status do pedido). Não há integração com transportadoras nesta etapa.
+
+A API de negócio exige sessão. O primeiro cadastro cria um usuário na **Empresa 1** e grava o cookie httpOnly `gc_sessao` (SameSite=Lax). `/api/health` continua público. Ainda não há isolamento multi-tenant nas tabelas de fábrica, planos nem cobrança.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

@@ -115,8 +115,12 @@ async function parseError(res: Response): Promise<never> {
   throw new Error(mensagem);
 }
 
+function apiFetch(input: string, init: RequestInit = {}) {
+  return fetch(input, { ...init, credentials: 'include' });
+}
+
 export async function listarOrdens(): Promise<OrdemProducao[]> {
-  const res = await fetch('/api/ordens');
+  const res = await apiFetch('/api/ordens');
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -130,19 +134,19 @@ export async function listarOrdensPaginado(
   if (filtros.prioridade) params.set('prioridade', filtros.prioridade);
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/ordens?${params.toString()}`);
+  const res = await apiFetch(`/api/ordens?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function obterOrdem(id: number): Promise<OrdemProducao> {
-  const res = await fetch(`/api/ordens/${id}`);
+  const res = await apiFetch(`/api/ordens/${id}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function criarOrdem(ordem: NovaOrdem): Promise<OrdemProducao> {
-  const res = await fetch('/api/ordens', {
+  const res = await apiFetch('/api/ordens', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(ordem),
@@ -155,7 +159,7 @@ export async function atualizarOrdem(
   id: number,
   dados: Partial<NovaOrdem>,
 ): Promise<OrdemProducao> {
-  const res = await fetch(`/api/ordens/${id}`, {
+  const res = await apiFetch(`/api/ordens/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -172,7 +176,7 @@ export async function atualizarStatus(
 }
 
 export async function removerOrdem(id: number): Promise<void> {
-  const res = await fetch(`/api/ordens/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/ordens/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
@@ -301,7 +305,7 @@ export async function listarPedidos(
   Object.entries(filtros).forEach(([k, v]) => {
     if (v !== undefined && v !== '') params.set(k, String(v));
   });
-  const res = await fetch(`/api/pedidos?${params.toString()}`);
+  const res = await apiFetch(`/api/pedidos?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -310,19 +314,19 @@ export async function obterResumoPedidos(filtros: { de?: string; ate?: string } 
   const params = new URLSearchParams();
   if (filtros.de) params.set('de', filtros.de);
   if (filtros.ate) params.set('ate', filtros.ate);
-  const res = await fetch(`/api/pedidos/resumo?${params.toString()}`);
+  const res = await apiFetch(`/api/pedidos/resumo?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function obterPedido(id: number): Promise<PedidoVenda> {
-  const res = await fetch(`/api/pedidos/${id}`);
+  const res = await apiFetch(`/api/pedidos/${id}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function criarPedido(dados: PedidoPayload): Promise<PedidoVenda> {
-  const res = await fetch('/api/pedidos', {
+  const res = await apiFetch('/api/pedidos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -335,7 +339,7 @@ export async function atualizarPedido(
   id: number,
   dados: Partial<PedidoPayload> & { status?: StatusPedido },
 ): Promise<PedidoVenda> {
-  const res = await fetch(`/api/pedidos/${id}`, {
+  const res = await apiFetch(`/api/pedidos/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -348,7 +352,7 @@ export async function gerarOpPedido(
   id: number,
   body: { item_ids?: number[]; forcar?: boolean } = {},
 ): Promise<PedidoVenda> {
-  const res = await fetch(`/api/pedidos/${id}/gerar-op`, {
+  const res = await apiFetch(`/api/pedidos/${id}/gerar-op`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -361,7 +365,7 @@ export async function gerarFinanceiroPedido(
   id: number,
   vencimento?: string,
 ): Promise<PedidoVenda> {
-  const res = await fetch(`/api/pedidos/${id}/financeiro`, {
+  const res = await apiFetch(`/api/pedidos/${id}/financeiro`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(vencimento ? { vencimento } : {}),
@@ -371,7 +375,7 @@ export async function gerarFinanceiroPedido(
 }
 
 export async function removerPedido(id: number): Promise<void> {
-  const res = await fetch(`/api/pedidos/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/pedidos/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
@@ -392,7 +396,7 @@ export async function obterFichaTecnica(
   const params = new URLSearchParams();
   params.set('produto_id', String(produtoId));
   if (varianteId) params.set('variante_id', String(varianteId));
-  const res = await fetch(`/api/ordens/ficha-tecnica?${params.toString()}`);
+  const res = await apiFetch(`/api/ordens/ficha-tecnica?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -470,19 +474,19 @@ export async function listarClientes(
   if (filtros.cidade) params.set('cidade', filtros.cidade);
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/clientes?${params.toString()}`);
+  const res = await apiFetch(`/api/clientes?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function obterCliente(id: number): Promise<Cliente> {
-  const res = await fetch(`/api/clientes/${id}`);
+  const res = await apiFetch(`/api/clientes/${id}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function criarCliente(dados: ClientePayload): Promise<Cliente> {
-  const res = await fetch('/api/clientes', {
+  const res = await apiFetch('/api/clientes', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -495,7 +499,7 @@ export async function atualizarCliente(
   id: number,
   dados: Partial<ClientePayload>,
 ): Promise<Cliente> {
-  const res = await fetch(`/api/clientes/${id}`, {
+  const res = await apiFetch(`/api/clientes/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -508,7 +512,7 @@ export async function atualizarStatusCliente(
   id: number,
   status: StatusCliente,
 ): Promise<Cliente> {
-  const res = await fetch(`/api/clientes/${id}/status`, {
+  const res = await apiFetch(`/api/clientes/${id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
@@ -518,7 +522,7 @@ export async function atualizarStatusCliente(
 }
 
 export async function removerCliente(id: number): Promise<void> {
-  const res = await fetch(`/api/clientes/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/clientes/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
@@ -638,19 +642,19 @@ export async function listarProdutos(
   if (filtros.colecao) params.set('colecao', filtros.colecao);
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/produtos?${params.toString()}`);
+  const res = await apiFetch(`/api/produtos?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function obterProduto(id: number): Promise<Produto> {
-  const res = await fetch(`/api/produtos/${id}`);
+  const res = await apiFetch(`/api/produtos/${id}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function criarProduto(dados: ProdutoPayload): Promise<Produto> {
-  const res = await fetch('/api/produtos', {
+  const res = await apiFetch('/api/produtos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -663,7 +667,7 @@ export async function atualizarProduto(
   id: number,
   dados: Partial<ProdutoPayload>,
 ): Promise<Produto> {
-  const res = await fetch(`/api/produtos/${id}`, {
+  const res = await apiFetch(`/api/produtos/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -676,7 +680,7 @@ export async function atualizarStatusProduto(
   id: number,
   status: StatusProduto,
 ): Promise<Produto> {
-  const res = await fetch(`/api/produtos/${id}/status`, {
+  const res = await apiFetch(`/api/produtos/${id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
@@ -686,7 +690,7 @@ export async function atualizarStatusProduto(
 }
 
 export async function removerProduto(id: number): Promise<void> {
-  const res = await fetch(`/api/produtos/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/produtos/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
@@ -695,7 +699,7 @@ export async function atualizarVarianteProduto(
   varianteId: number,
   dados: Partial<ProdutoVariante>,
 ): Promise<Produto> {
-  const res = await fetch(`/api/produtos/${produtoId}/variantes/${varianteId}`, {
+  const res = await apiFetch(`/api/produtos/${produtoId}/variantes/${varianteId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -708,7 +712,7 @@ export async function removerVarianteProduto(
   produtoId: number,
   varianteId: number,
 ): Promise<void> {
-  const res = await fetch(`/api/produtos/${produtoId}/variantes/${varianteId}`, {
+  const res = await apiFetch(`/api/produtos/${produtoId}/variantes/${varianteId}`, {
     method: 'DELETE',
   });
   if (!res.ok && res.status !== 204) return parseError(res);
@@ -816,13 +820,13 @@ export async function listarMateriasPrimas(
   if (filtros.unidade) params.set('unidade', filtros.unidade);
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/materias-primas?${params.toString()}`);
+  const res = await apiFetch(`/api/materias-primas?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function obterMateriaPrima(id: number): Promise<MateriaPrima> {
-  const res = await fetch(`/api/materias-primas/${id}`);
+  const res = await apiFetch(`/api/materias-primas/${id}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -830,7 +834,7 @@ export async function obterMateriaPrima(id: number): Promise<MateriaPrima> {
 export async function criarMateriaPrima(
   dados: MateriaPrimaPayload,
 ): Promise<MateriaPrima> {
-  const res = await fetch('/api/materias-primas', {
+  const res = await apiFetch('/api/materias-primas', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -843,7 +847,7 @@ export async function atualizarMateriaPrima(
   id: number,
   dados: Partial<MateriaPrimaPayload>,
 ): Promise<MateriaPrima> {
-  const res = await fetch(`/api/materias-primas/${id}`, {
+  const res = await apiFetch(`/api/materias-primas/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -856,7 +860,7 @@ export async function atualizarStatusMateriaPrima(
   id: number,
   status: StatusMateria,
 ): Promise<MateriaPrima> {
-  const res = await fetch(`/api/materias-primas/${id}/status`, {
+  const res = await apiFetch(`/api/materias-primas/${id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
@@ -866,7 +870,7 @@ export async function atualizarStatusMateriaPrima(
 }
 
 export async function removerMateriaPrima(id: number): Promise<void> {
-  const res = await fetch(`/api/materias-primas/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/materias-primas/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
@@ -957,13 +961,13 @@ export async function listarEstoque(
   if (filtros.abaixo_minimo) params.set('abaixo_minimo', 'true');
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/estoque?${params.toString()}`);
+  const res = await apiFetch(`/api/estoque?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function obterEstoque(id: number): Promise<EstoqueSaldo> {
-  const res = await fetch(`/api/estoque/${id}`);
+  const res = await apiFetch(`/api/estoque/${id}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -983,7 +987,7 @@ export async function listarMovimentosEstoque(
   if (filtros.saldo_id) params.set('saldo_id', String(filtros.saldo_id));
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/estoque/movimentos?${params.toString()}`);
+  const res = await apiFetch(`/api/estoque/movimentos?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -991,7 +995,7 @@ export async function listarMovimentosEstoque(
 export async function criarMovimentoEstoque(
   dados: NovoMovimento,
 ): Promise<{ movimento: EstoqueMovimento; saldo: EstoqueSaldo }> {
-  const res = await fetch('/api/estoque/movimentos', {
+  const res = await apiFetch('/api/estoque/movimentos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1078,13 +1082,13 @@ export async function listarEtapas(
   if (filtros.ordem_id) params.set('ordem_id', String(filtros.ordem_id));
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/etapas?${params.toString()}`);
+  const res = await apiFetch(`/api/etapas?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function obterEtapa(id: number): Promise<EtapaProducao> {
-  const res = await fetch(`/api/etapas/${id}`);
+  const res = await apiFetch(`/api/etapas/${id}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1093,7 +1097,7 @@ export async function gerarFluxoEtapas(
   ordemId: number,
   responsavel?: string,
 ): Promise<{ ordem_id: number; data: EtapaProducao[] }> {
-  const res = await fetch('/api/etapas/fluxo', {
+  const res = await apiFetch('/api/etapas/fluxo', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ordem_id: ordemId, responsavel }),
@@ -1110,7 +1114,7 @@ export async function atualizarEtapa(
     observacoes?: string;
   },
 ): Promise<EtapaProducao> {
-  const res = await fetch(`/api/etapas/${id}`, {
+  const res = await apiFetch(`/api/etapas/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1120,7 +1124,7 @@ export async function atualizarEtapa(
 }
 
 export async function removerEtapa(id: number): Promise<void> {
-  const res = await fetch(`/api/etapas/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/etapas/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
@@ -1204,7 +1208,7 @@ export async function listarFornecedores(
   if (filtros.status) params.set('status', filtros.status);
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/fornecedores?${params.toString()}`);
+  const res = await apiFetch(`/api/fornecedores?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1218,7 +1222,7 @@ export async function criarFornecedor(dados: {
   estado?: string;
   condicao_pagamento?: string;
 }): Promise<Fornecedor> {
-  const res = await fetch('/api/fornecedores', {
+  const res = await apiFetch('/api/fornecedores', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1246,13 +1250,13 @@ export async function listarCompras(
   if (filtros.ate) params.set('ate', filtros.ate);
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
-  const res = await fetch(`/api/compras?${params.toString()}`);
+  const res = await apiFetch(`/api/compras?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function obterCompra(id: number): Promise<PedidoCompra> {
-  const res = await fetch(`/api/compras/${id}`);
+  const res = await apiFetch(`/api/compras/${id}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1279,7 +1283,7 @@ export type CompraPayload = {
 };
 
 export async function criarCompra(dados: CompraPayload): Promise<PedidoCompra> {
-  const res = await fetch('/api/compras', {
+  const res = await apiFetch('/api/compras', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1292,7 +1296,7 @@ export async function atualizarCompra(
   id: number,
   dados: Partial<CompraPayload>,
 ): Promise<PedidoCompra> {
-  const res = await fetch(`/api/compras/${id}`, {
+  const res = await apiFetch(`/api/compras/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1305,7 +1309,7 @@ export async function receberCompra(
   id: number,
   itens?: Array<{ item_id: number; quantidade: number }>,
 ): Promise<PedidoCompra> {
-  const res = await fetch(`/api/compras/${id}/receber`, {
+  const res = await apiFetch(`/api/compras/${id}/receber`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(itens ? { itens } : {}),
@@ -1315,7 +1319,7 @@ export async function receberCompra(
 }
 
 export async function removerCompra(id: number): Promise<void> {
-  const res = await fetch(`/api/compras/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/compras/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
@@ -1386,7 +1390,7 @@ export async function listarCategoriasFinanceiro(): Promise<{
   data: FinanceiroCategoria[];
   total: number;
 }> {
-  const res = await fetch('/api/financeiro/categorias');
+  const res = await apiFetch('/api/financeiro/categorias');
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1395,7 +1399,7 @@ export async function obterResumoFinanceiro(filtros: { de?: string; ate?: string
   const params = new URLSearchParams();
   if (filtros.de) params.set('de', filtros.de);
   if (filtros.ate) params.set('ate', filtros.ate);
-  const res = await fetch(`/api/financeiro/resumo?${params.toString()}`);
+  const res = await apiFetch(`/api/financeiro/resumo?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1416,7 +1420,7 @@ export async function listarLancamentos(
   Object.entries(filtros).forEach(([k, v]) => {
     if (v !== undefined && v !== '') params.set(k, String(v));
   });
-  const res = await fetch(`/api/financeiro/lancamentos?${params.toString()}`);
+  const res = await apiFetch(`/api/financeiro/lancamentos?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1430,7 +1434,7 @@ export async function criarLancamento(dados: {
   fornecedor_id?: number;
   cliente_id?: number;
 }): Promise<FinanceiroLancamento> {
-  const res = await fetch('/api/financeiro/lancamentos', {
+  const res = await apiFetch('/api/financeiro/lancamentos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1443,7 +1447,7 @@ export async function atualizarLancamento(
   id: number,
   dados: Partial<{ status: StatusLancamento; valor: number; descricao: string }>,
 ): Promise<FinanceiroLancamento> {
-  const res = await fetch(`/api/financeiro/lancamentos/${id}`, {
+  const res = await apiFetch(`/api/financeiro/lancamentos/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1457,7 +1461,7 @@ export async function obterRelatorio(tipo: string, filtros: Record<string, strin
   Object.entries(filtros).forEach(([k, v]) => {
     if (v !== undefined && v !== '') params.set(k, String(v));
   });
-  const res = await fetch(`/api/relatorios/${tipo}?${params.toString()}`);
+  const res = await apiFetch(`/api/relatorios/${tipo}?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1504,7 +1508,7 @@ export interface ExpedicaoResumo {
 }
 
 export async function obterResumoExpedicao(): Promise<ExpedicaoResumo> {
-  const res = await fetch('/api/expedicao/resumo');
+  const res = await apiFetch('/api/expedicao/resumo');
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1516,13 +1520,13 @@ export async function listarExpedicao(
   Object.entries(filtros).forEach(([k, v]) => {
     if (v !== undefined && v !== '') params.set(k, String(v));
   });
-  const res = await fetch(`/api/expedicao?${params.toString()}`);
+  const res = await apiFetch(`/api/expedicao?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
 
 export async function marcarProntoEnvio(pedidoId: number): Promise<ExpedicaoItem> {
-  const res = await fetch(`/api/expedicao/${pedidoId}/pronto-envio`, {
+  const res = await apiFetch(`/api/expedicao/${pedidoId}/pronto-envio`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
@@ -1535,7 +1539,7 @@ export async function registrarExpedicao(
   pedidoId: number,
   dados: { data_expedicao?: string; observacoes?: string } = {},
 ): Promise<ExpedicaoItem> {
-  const res = await fetch(`/api/expedicao/${pedidoId}/expedir`, {
+  const res = await apiFetch(`/api/expedicao/${pedidoId}/expedir`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1548,12 +1552,54 @@ export async function marcarEntrega(
   pedidoId: number,
   dados: { data_entrega?: string } = {},
 ): Promise<ExpedicaoItem> {
-  const res = await fetch(`/api/expedicao/${pedidoId}/entregar`, {
+  const res = await apiFetch(`/api/expedicao/${pedidoId}/entregar`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
   });
   if (!res.ok) return parseError(res);
   return res.json();
+}
+
+export interface SessaoAtual {
+  usuario: { id: number; nome: string; email: string };
+  empresa: { id: number; nome: string; status: string };
+}
+
+export async function obterSessao(): Promise<SessaoAtual | null> {
+  const res = await apiFetch('/api/me');
+  if (res.status === 401) return null;
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function registrarUsuario(dados: {
+  nome: string;
+  email: string;
+  senha: string;
+  empresa?: string;
+}): Promise<SessaoAtual> {
+  const res = await apiFetch('/api/auth/registrar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function entrar(dados: { email: string; senha: string }): Promise<SessaoAtual> {
+  const res = await apiFetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function sair(): Promise<void> {
+  const res = await apiFetch('/api/auth/logout', { method: 'POST' });
+  if (!res.ok && res.status !== 204) return parseError(res);
 }
 

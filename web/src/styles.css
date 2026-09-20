@@ -123,6 +123,45 @@ body {
   font-size: 0.88rem;
 }
 
+.shell__sessao {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.shell__sessao span {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.9rem;
+}
+
+.shell__sessao small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.login__card {
+  width: min(420px, 100%);
+}
+
+.login__marca {
+  margin-bottom: 1rem;
+}
+
+.login__marca p {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+}
+
 .shell__hamburguer {
   display: none;
   background: var(--surface);

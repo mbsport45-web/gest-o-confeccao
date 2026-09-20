@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
-import type { Express } from 'express';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
+import { autenticar, type TestApi } from './httpTest.js';
 
 describe('API financeira', () => {
-  let app: Express;
   let db: AppDatabase;
+  let api: TestApi;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createDatabase(':memory:');
-    app = createApp(db);
+    api = await autenticar(createApp(db));
   });
 
   afterEach(() => {
@@ -18,13 +17,13 @@ describe('API financeira', () => {
   });
 
   async function compraAberta() {
-    const forn = await request(app).post('/api/fornecedores').send({ nome: 'Tecido Sul' });
-    const mat = await request(app).post('/api/materias-primas').send({
+    const forn = await api.post('/api/fornecedores').send({ nome: 'Tecido Sul' });
+    const mat = await api.post('/api/materias-primas').send({
       nome: 'Linha Financeiro',
       tipo: 'linha',
       custo: 4,
     });
-    const compra = await request(app).post('/api/compras').send({
+    const compra = await api.post('/api/compras').send({
       fornecedor_id: forn.body.id,
       status: 'aberta',
       vencimento: '2099-01-15',
@@ -34,7 +33,7 @@ describe('API financeira', () => {
   }
 
   it('lista categorias padrão', async () => {
-    const res = await request(app).get('/api/financeiro/categorias');
+    const res = await api.get('/api/financeiro/categorias');
     expect(res.status).toBe(200);
     expect(res.body.total).toBeGreaterThanOrEqual(5);
     expect(res.body.data.some((c: { nome: string }) => c.nome === 'Compras')).toBe(true);
@@ -42,11 +41,11 @@ describe('API financeira', () => {
 
   it('cria contas a receber e paga lançamento da compra', async () => {
     const { compra } = await compraAberta();
-    const lista = await request(app).get('/api/financeiro/lancamentos').query({ tipo: 'pagar' });
+    const lista = await api.get('/api/financeiro/lancamentos').query({ tipo: 'pagar' });
     expect(lista.body.total).toBe(1);
     const id = lista.body.data[0].id as number;
 
-    const pagar = await request(app)
+    const pagar = await api
       .patch(`/api/financeiro/lancamentos/${id}`)
       .send({ status: 'pago' });
     expect(pagar.status).toBe(200);
@@ -54,8 +53,8 @@ describe('API financeira', () => {
     expect(pagar.body.data_pagamento).toBeTruthy();
     expect(pagar.body.compra_id).toBe(compra.id);
 
-    const cliente = await request(app).post('/api/clientes').send({ nome: 'Loja Receber' });
-    const receber = await request(app).post('/api/financeiro/lancamentos').send({
+    const cliente = await api.post('/api/clientes').send({ nome: 'Loja Receber' });
+    const receber = await api.post('/api/financeiro/lancamentos').send({
       tipo: 'receber',
       descricao: 'Pedido loja',
       valor: 250,
@@ -65,12 +64,12 @@ describe('API financeira', () => {
     expect(receber.status).toBe(201);
     expect(receber.body.status).toBe('pendente');
 
-    const baixar = await request(app)
+    const baixar = await api
       .patch(`/api/financeiro/lancamentos/${receber.body.id}`)
       .send({ status: 'recebido' });
     expect(baixar.body.status).toBe('recebido');
 
-    const resumo = await request(app).get('/api/financeiro/resumo');
+    const resumo = await api.get('/api/financeiro/resumo');
     expect(resumo.status).toBe(200);
     expect(resumo.body.realizado_pagar).toBe(40);
     expect(resumo.body.realizado_receber).toBe(250);
@@ -82,26 +81,26 @@ describe('API financeira', () => {
     db.prepare(
       `UPDATE financeiro_lancamentos SET vencimento = '2020-01-01' WHERE tipo = 'pagar'`,
     ).run();
-    const lista = await request(app).get('/api/financeiro/lancamentos').query({ status: 'vencido' });
+    const lista = await api.get('/api/financeiro/lancamentos').query({ status: 'vencido' });
     expect(lista.body.total).toBe(1);
     expect(lista.body.data[0].status).toBe('vencido');
 
     const id = lista.body.data[0].id;
-    const del = await request(app).delete(`/api/financeiro/lancamentos/${id}`);
+    const del = await api.delete(`/api/financeiro/lancamentos/${id}`);
     expect(del.status).toBe(409);
   });
 
   it('filtra por categoria, tipo e período', async () => {
-    const cats = await request(app).get('/api/financeiro/categorias');
+    const cats = await api.get('/api/financeiro/categorias');
     const vendas = cats.body.data.find((c: { nome: string }) => c.nome === 'Vendas');
-    await request(app).post('/api/financeiro/lancamentos').send({
+    await api.post('/api/financeiro/lancamentos').send({
       tipo: 'receber',
       categoria_id: vendas.id,
       descricao: 'Venda avulsa',
       valor: 80,
       vencimento: '2026-03-10',
     });
-    const filtro = await request(app).get('/api/financeiro/lancamentos').query({
+    const filtro = await api.get('/api/financeiro/lancamentos').query({
       categoria_id: vendas.id,
       de: '2026-03-01',
       ate: '2026-03-31',
@@ -110,7 +109,7 @@ describe('API financeira', () => {
   });
 
   it('rejeita status incompatível com o tipo', async () => {
-    const res = await request(app).post('/api/financeiro/lancamentos').send({
+    const res = await api.post('/api/financeiro/lancamentos').send({
       tipo: 'pagar',
       descricao: 'Errado',
       valor: 10,
