@@ -78,7 +78,7 @@ const CRUD: AcoesModulo = { visualizar: true, criar: true, editar: true, excluir
 const LER: AcoesModulo = { visualizar: true, criar: false, editar: false, excluir: false };
 const NADA: AcoesModulo = { visualizar: false, criar: false, editar: false, excluir: false };
 
-const PREFIXOS_MODULO: Array<{ prefixo: string; modulo: Modulo }> = [
+export const PREFIXOS_MODULO: Array<{ prefixo: string; modulo: Modulo }> = [
   { prefixo: '/api/membros', modulo: 'equipe' },
   { prefixo: '/api/convites', modulo: 'equipe' },
   { prefixo: '/api/clientes', modulo: 'clientes' },
@@ -209,7 +209,9 @@ export function exigirPermissaoModulo(): RequestHandler {
   return (req, res, next) => {
     const caminho = caminhoDaRequisicao(req);
     const modulo = moduloDaRota(caminho);
-    if (!modulo) return next();
+    if (!modulo) {
+      return res.status(403).json({ erro: 'Sem permissão para este recurso' });
+    }
     const acao = acaoDoPedido(req.method, caminho);
     if (temPermissao(req.usuario?.papel, modulo, acao)) return next();
     return res.status(403).json({
