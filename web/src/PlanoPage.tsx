@@ -107,7 +107,7 @@ export function PlanoPage({
         <div className="card__head">
           <h2>Plano da empresa</h2>
         </div>
-        <p className="sandbox-selo">{MSG_SANDBOX}</p>
+        {!planoCheckout && <p className="sandbox-selo">{MSG_SANDBOX}</p>}
         <p className="dica">
           Planos comerciais mensais: Básico, Profissional e Enterprise. A assinatura usa o Asaas
           Sandbox (Pix ou boleto). O preço oficial sai do servidor — o navegador só envia o plano
