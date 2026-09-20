@@ -11,13 +11,16 @@ import {
   listarOrdens,
   obterResumoPedidos,
   listarProdutos,
+  temPermissao,
   type EstoqueSaldo,
   type EtapaProducao,
   type OrdemProducao,
   type PedidoResumo,
+  type PermissoesSessao,
 } from './api';
 
 type Props = {
+  permissoes: PermissoesSessao;
   onAbrirOp: (id: number) => void;
   onIr: (pagina: string) => void;
 };
@@ -30,7 +33,7 @@ function formatarData(valor: string | null): string {
   return `${day}/${m}/${y}`;
 }
 
-export function DashboardPage({ onAbrirOp, onIr }: Props) {
+export function DashboardPage({ permissoes, onAbrirOp, onIr }: Props) {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [ordens, setOrdens] = useState<OrdemProducao[]>([]);
@@ -50,17 +53,34 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
     (async () => {
       try {
         setCarregando(true);
+        const vazioLista = { data: [] as never[], total: 0 };
         const [ops, produtos, materias, clientes, baixo, estoque, andamento, concluidas, pedidos] =
           await Promise.all([
-            listarOrdens(),
-            listarProdutos({ por_pagina: 1 }),
-            listarMateriasPrimas({ por_pagina: 1 }),
-            listarClientes({ por_pagina: 1 }),
-            listarEstoque({ abaixo_minimo: true, por_pagina: 8 }),
-            listarEstoque({ por_pagina: 1 }),
-            listarEtapas({ status: 'em_andamento', por_pagina: 8, pagina: 1 }),
-            listarEtapas({ status: 'concluida', por_pagina: 1, pagina: 1 }),
-            obterResumoPedidos(),
+            temPermissao(permissoes, 'ordens') ? listarOrdens() : Promise.resolve([]),
+            temPermissao(permissoes, 'produtos')
+              ? listarProdutos({ por_pagina: 1 })
+              : Promise.resolve({ total: 0 }),
+            temPermissao(permissoes, 'materiais')
+              ? listarMateriasPrimas({ por_pagina: 1 })
+              : Promise.resolve({ total: 0 }),
+            temPermissao(permissoes, 'clientes')
+              ? listarClientes({ por_pagina: 1 })
+              : Promise.resolve({ total: 0 }),
+            temPermissao(permissoes, 'estoque')
+              ? listarEstoque({ abaixo_minimo: true, por_pagina: 8 })
+              : Promise.resolve({ ...vazioLista, data: [] as EstoqueSaldo[] }),
+            temPermissao(permissoes, 'estoque')
+              ? listarEstoque({ por_pagina: 1 })
+              : Promise.resolve({ total: 0 }),
+            temPermissao(permissoes, 'etapas')
+              ? listarEtapas({ status: 'em_andamento', por_pagina: 8, pagina: 1 })
+              : Promise.resolve({ ...vazioLista, data: [] as EtapaProducao[] }),
+            temPermissao(permissoes, 'etapas')
+              ? listarEtapas({ status: 'concluida', por_pagina: 1, pagina: 1 })
+              : Promise.resolve({ total: 0 }),
+            temPermissao(permissoes, 'pedidos')
+              ? obterResumoPedidos()
+              : Promise.resolve(null),
           ]);
         if (!vivo) return;
         setOrdens(ops);
@@ -84,7 +104,7 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [permissoes]);
 
   const opPorStatus = useMemo(() => {
     const mapa: Record<string, number> = {};
@@ -96,6 +116,23 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
 
   const urgentes = ordens.filter((o) => o.prioridade === 'urgente' || o.prioridade === 'alta').length;
   const recentes = ordens.slice(0, 6);
+  const verPedidos = temPermissao(permissoes, 'pedidos');
+  const verOrdens = temPermissao(permissoes, 'ordens');
+  const verEstoque = temPermissao(permissoes, 'estoque');
+  const verProdutos = temPermissao(permissoes, 'produtos');
+  const verMateriais = temPermissao(permissoes, 'materiais');
+  const verEtapas = temPermissao(permissoes, 'etapas');
+  const verClientes = temPermissao(permissoes, 'clientes');
+  const metaDash = [
+    verClientes
+      ? `${clientesTotal} cliente${clientesTotal === 1 ? '' : 's'}`
+      : null,
+    verEstoque
+      ? `${estoqueTotal} saldo${estoqueTotal === 1 ? '' : 's'} em estoque`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   const statusChao = [
     'planejada',
@@ -117,10 +154,7 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
           <h2>Painel da fábrica</h2>
           <p>Números reais dos cadastros, estoque e ordens de produção.</p>
         </div>
-        <p className="dash__meta">
-          {clientesTotal} cliente{clientesTotal === 1 ? '' : 's'} · {estoqueTotal} saldo
-          {estoqueTotal === 1 ? '' : 's'} em estoque
-        </p>
+        <p className="dash__meta">{metaDash || 'Indicadores do seu papel nesta empresa.'}</p>
       </div>
 
       {erro && <p className="erro">{erro}</p>}
@@ -129,6 +163,7 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
       ) : (
         <>
           <section className="kpi-grid" aria-label="Indicadores">
+            {verPedidos && (
             <button type="button" className="kpi" onClick={() => onIr('pedidos')}>
               <span className="kpi__label">Pedidos</span>
               <strong className="kpi__valor">{pedidosResumo?.total ?? 0}</strong>
@@ -146,26 +181,36 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
                 </span>
               )}
             </button>
+            )}
+            {verOrdens && (
             <button type="button" className="kpi" onClick={() => onIr('ordens')}>
               <span className="kpi__label">Ordens de produção</span>
               <strong className="kpi__valor">{ordens.length}</strong>
               <span className="kpi__dica">{urgentes} com prioridade alta/urgente</span>
             </button>
+            )}
+            {verEstoque && (
             <button type="button" className="kpi kpi--alerta" onClick={() => onIr('estoque')}>
               <span className="kpi__label">Estoque baixo</span>
               <strong className="kpi__valor">{estoqueBaixoTotal}</strong>
               <span className="kpi__dica">Itens abaixo do mínimo</span>
             </button>
+            )}
+            {verProdutos && (
             <button type="button" className="kpi" onClick={() => onIr('produtos')}>
               <span className="kpi__label">Produtos</span>
               <strong className="kpi__valor">{produtosTotal}</strong>
               <span className="kpi__dica">Cadastro com variantes</span>
             </button>
+            )}
+            {verMateriais && (
             <button type="button" className="kpi" onClick={() => onIr('materiais')}>
               <span className="kpi__label">Materiais</span>
               <strong className="kpi__valor">{materiasTotal}</strong>
               <span className="kpi__dica">Matérias-primas cadastradas</span>
             </button>
+            )}
+            {verEtapas && (
             <button type="button" className="kpi" onClick={() => onIr('etapas')}>
               <span className="kpi__label">Produção / etapas</span>
               <strong className="kpi__valor">{etapasAndamentoTotal}</strong>
@@ -173,9 +218,11 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
                 {etapasAndamentoTotal} em andamento · {etapasConcluidas} concluídas
               </span>
             </button>
+            )}
           </section>
 
           <div className="dash__colunas">
+            {verOrdens && (
             <section className="card">
               <div className="card__head">
                 <h2>Status das OPs</h2>
@@ -204,7 +251,9 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
                 </ul>
               )}
             </section>
+            )}
 
+            {verEstoque && (
             <section className="card">
               <div className="card__head">
                 <h2>Estoque abaixo do mínimo</h2>
@@ -240,8 +289,10 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
                 </table>
               )}
             </section>
+            )}
           </div>
 
+          {verOrdens && (
           <section className="card">
             <div className="card__head">
               <h2>Ordens recentes</h2>
@@ -289,8 +340,9 @@ export function DashboardPage({ onAbrirOp, onIr }: Props) {
               </table>
             )}
           </section>
+          )}
 
-          {etapasAndamento.length > 0 && (
+          {verEtapas && etapasAndamento.length > 0 && (
             <section className="card">
               <div className="card__head">
                 <h2>Etapas em andamento</h2>

@@ -1561,23 +1561,80 @@ export async function marcarEntrega(
   return res.json();
 }
 
+export const PAPEIS_USUARIO = [
+  'proprietario',
+  'administrador',
+  'financeiro',
+  'vendas',
+  'estoque',
+  'producao',
+] as const;
+export type PapelUsuario = (typeof PAPEIS_USUARIO)[number];
+export const PAPEIS_CONVITE = [
+  'administrador',
+  'financeiro',
+  'vendas',
+  'estoque',
+  'producao',
+] as const;
+export type PapelConvite = (typeof PAPEIS_CONVITE)[number];
+
+export const MODULOS = [
+  'equipe',
+  'clientes',
+  'produtos',
+  'materiais',
+  'estoque',
+  'pedidos',
+  'expedicao',
+  'ordens',
+  'etapas',
+  'fornecedores',
+  'compras',
+  'financeiro',
+  'relatorios',
+] as const;
+export type Modulo = (typeof MODULOS)[number];
+export type AcaoModulo = 'visualizar' | 'criar' | 'editar' | 'excluir';
+export type AcoesModulo = Record<AcaoModulo, boolean>;
+
+export interface PermissoesSessao {
+  escrever: boolean;
+  equipe: boolean;
+  modulos: Record<Modulo, AcoesModulo>;
+}
+
 export interface SessaoAtual {
   usuario: { id: number; nome: string; email: string; papel: PapelUsuario };
   empresa: { id: number; nome: string; status: string };
-  permissoes: { escrever: boolean; equipe: boolean };
+  permissoes: PermissoesSessao;
 }
 
-export const PAPEIS_USUARIO = ['dono', 'admin', 'operador', 'consulta'] as const;
-export type PapelUsuario = (typeof PAPEIS_USUARIO)[number];
-export const PAPEIS_CONVITE = ['admin', 'operador', 'consulta'] as const;
-export type PapelConvite = (typeof PAPEIS_CONVITE)[number];
-
 export const PAPEL_LABEL: Record<PapelUsuario, string> = {
-  dono: 'Dono',
-  admin: 'Administrador',
-  operador: 'Operador',
-  consulta: 'Consulta',
+  proprietario: 'Proprietário',
+  administrador: 'Administrador',
+  financeiro: 'Financeiro',
+  vendas: 'Vendas',
+  estoque: 'Estoque',
+  producao: 'Produção',
 };
+
+export function temPermissao(
+  permissoes: PermissoesSessao | undefined,
+  modulo: Modulo | Modulo[],
+  acao: AcaoModulo = 'visualizar',
+): boolean {
+  if (!permissoes?.modulos) return false;
+  const lista = Array.isArray(modulo) ? modulo : [modulo];
+  return lista.some((item) => permissoes.modulos[item]?.[acao]);
+}
+
+export function moduloSomenteLeitura(
+  permissoes: PermissoesSessao | undefined,
+  modulo: Modulo | Modulo[],
+): boolean {
+  return temPermissao(permissoes, modulo, 'visualizar') && !temPermissao(permissoes, modulo, 'criar');
+}
 
 export interface MembroEmpresa {
   id: number;

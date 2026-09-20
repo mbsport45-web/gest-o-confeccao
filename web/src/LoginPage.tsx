@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   entrar,
   obterConvitePublico,
+  PAPEL_LABEL,
   registrarUsuario,
   type ConvitePublico,
   type SessaoAtual,
@@ -95,12 +96,7 @@ export function LoginPage({ onEntrou }: { onEntrou: (sessao: SessaoAtual) => voi
           {modo === 'criar' && convite && (
             <p className="login__dica">
               Convite para <strong>{convite.empresa.nome}</strong> como{' '}
-              {convite.papel === 'admin'
-                ? 'administrador'
-                : convite.papel === 'consulta'
-                  ? 'consulta'
-                  : 'operador'}
-              . Você entra nesta empresa, sem criar outra.
+              {PAPEL_LABEL[convite.papel]}. Você entra nesta empresa, sem criar outra.
             </p>
           )}
           {modo === 'criar' && (

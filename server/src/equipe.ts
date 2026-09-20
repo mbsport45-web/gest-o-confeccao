@@ -43,7 +43,14 @@ export function createMembrosRouter(db: AppDatabase): Router {
         `SELECT id, nome, email, papel, status, criado_em, atualizado_em
            FROM usuarios
           WHERE empresa_id = ?
-          ORDER BY CASE papel WHEN 'dono' THEN 0 WHEN 'admin' THEN 1 WHEN 'operador' THEN 2 ELSE 3 END, nome COLLATE NOCASE`,
+          ORDER BY CASE papel
+            WHEN 'proprietario' THEN 0
+            WHEN 'administrador' THEN 1
+            WHEN 'financeiro' THEN 2
+            WHEN 'vendas' THEN 3
+            WHEN 'estoque' THEN 4
+            ELSE 5
+          END, nome COLLATE NOCASE`,
       )
       .all(empresaId);
     res.json({ data, total: data.length });
@@ -70,11 +77,15 @@ export function createMembrosRouter(db: AppDatabase): Router {
       | undefined;
     if (!atual) return res.status(404).json({ erro: 'Membro não encontrado' });
 
-    if (atual.papel === 'dono' && req.usuario?.papel !== 'dono') {
-      return res.status(403).json({ erro: 'Somente o dono pode alterar o dono da empresa' });
+    if (atual.papel === 'proprietario' && req.usuario?.papel !== 'proprietario') {
+      return res.status(403).json({
+        erro: 'Somente o proprietário pode alterar o proprietário da empresa',
+      });
     }
-    if (atual.papel === 'dono' && (parsed.data.papel || parsed.data.status === 'inativo')) {
-      return res.status(409).json({ erro: 'O dono da empresa não pode ser alterado ou inativado' });
+    if (atual.papel === 'proprietario' && (parsed.data.papel || parsed.data.status === 'inativo')) {
+      return res.status(409).json({
+        erro: 'O proprietário da empresa não pode ser alterado ou inativado',
+      });
     }
 
     const papel = parsed.data.papel ?? atual.papel;

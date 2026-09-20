@@ -1,5 +1,6 @@
 import request from 'supertest';
 import type { Express } from 'express';
+import type { PapelConvite } from './papeis.js';
 
 export type TestApi = ReturnType<typeof request.agent>;
 
@@ -39,7 +40,7 @@ export async function autenticarNovaEmpresa(
 export async function autenticarPapel(
   app: Express,
   admin: TestApi,
-  papel: 'admin' | 'operador' | 'consulta',
+  papel: PapelConvite,
   opts?: { nome?: string; email?: string; senha?: string },
 ): Promise<TestApi> {
   const email = opts?.email ?? `${papel}-${crypto.randomUUID()}@gestao.local`;

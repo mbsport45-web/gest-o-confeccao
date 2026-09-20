@@ -70,7 +70,7 @@ function mapUsuario(row: {
   empresa_status: string;
   papel: string;
 }) {
-  const papel: Papel = isPapel(row.papel) ? row.papel : 'operador';
+  const papel: Papel = isPapel(row.papel) ? row.papel : 'producao';
   return {
     usuario: { id: row.id, nome: row.nome, email: row.email, papel },
     empresa: { id: row.empresa_id, nome: row.empresa_nome, status: row.empresa_status },
@@ -139,7 +139,7 @@ export function requireAuth(db: AppDatabase): RequestHandler {
       nome: sessao.nome,
       email: sessao.email,
       empresaId: sessao.empresa_id,
-      papel: isPapel(sessao.papel) ? sessao.papel : 'operador',
+      papel: isPapel(sessao.papel) ? sessao.papel : 'producao',
     };
     next();
   };
@@ -239,10 +239,10 @@ export function createAuthRouter(db: AppDatabase): Router {
     try {
       info = db.transaction(() => {
         let empresaId = 1;
-        let papel: Papel = 'dono';
+        let papel: Papel = 'proprietario';
         if (conviteInfo?.ok) {
           empresaId = conviteInfo.convite.empresa_id;
-          papel = isPapel(conviteInfo.convite.papel) ? conviteInfo.convite.papel : 'operador';
+          papel = isPapel(conviteInfo.convite.papel) ? conviteInfo.convite.papel : 'producao';
         } else if (totalUsuarios === 0) {
           if (data.empresa) {
             db.prepare(`UPDATE empresas SET nome = ? WHERE id = 1`).run(data.empresa);

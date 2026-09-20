@@ -17,7 +17,7 @@ export function EquipePage({ sessao }: { sessao: SessaoAtual }) {
   const [membros, setMembros] = useState<MembroEmpresa[]>([]);
   const [convites, setConvites] = useState<ConviteEmpresa[]>([]);
   const [email, setEmail] = useState('');
-  const [papel, setPapel] = useState<PapelConvite>('operador');
+  const [papel, setPapel] = useState<PapelConvite>('vendas');
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
@@ -181,7 +181,7 @@ export function EquipePage({ sessao }: { sessao: SessaoAtual }) {
               <tbody>
                 {membros.map((m) => {
                   const proprio = m.id === sessao.usuario.id;
-                  const ehDono = m.papel === 'dono';
+                  const ehProprietario = m.papel === 'proprietario';
                   return (
                     <tr key={m.id}>
                       <td>
@@ -190,8 +190,8 @@ export function EquipePage({ sessao }: { sessao: SessaoAtual }) {
                       </td>
                       <td>{m.email}</td>
                       <td>
-                        {ehDono ? (
-                          <span className="pill pill--ativo">{PAPEL_LABEL.dono}</span>
+                        {ehProprietario ? (
+                          <span className="pill pill--ativo">{PAPEL_LABEL.proprietario}</span>
                         ) : (
                           <select
                             aria-label={`Papel de ${m.nome}`}
@@ -212,7 +212,7 @@ export function EquipePage({ sessao }: { sessao: SessaoAtual }) {
                         </span>
                       </td>
                       <td className="acoes">
-                        {!ehDono && (
+                        {!ehProprietario && (
                           <button type="button" className="btn-secundario" onClick={() => void alternarStatus(m)}>
                             {m.status === 'ativo' ? 'Inativar' : 'Reativar'}
                           </button>
