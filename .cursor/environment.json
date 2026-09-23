@@ -1,0 +1,19 @@
+{
+  "name": "gestão de confecção",
+  "install": "npm ci",
+  "start": "bash /workspace/.cursor/start.sh",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "npm run dev:server"
+    },
+    {
+      "name": "web",
+      "command": "npm run dev:web"
+    }
+  ],
+  "ports": [
+    { "name": "api", "port": 3002 },
+    { "name": "web", "port": 5173 }
+  ]
+}
