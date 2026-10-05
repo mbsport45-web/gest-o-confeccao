@@ -603,6 +603,41 @@ button {
   font-size: 0.82rem;
 }
 
+.cores-op {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0;
+  padding: 0.65rem 0.8rem 0.8rem;
+}
+
+.cores-op legend {
+  padding: 0 0.3rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.cores-op label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.4rem 0.9rem 0 0;
+  font-weight: 500;
+}
+
+.grade-corte {
+  overflow-x: auto;
+  margin: 0.4rem 0 0.8rem;
+}
+
+.grade-corte__tabela input[type='number'] {
+  width: 4.5rem;
+  text-align: right;
+}
+
+.grade-corte .grade-total {
+  font-weight: 700;
+}
+
 .tabela--compacta input {
   width: 100%;
   background: var(--surface-2);
