@@ -489,6 +489,20 @@ export function createDatabase(location: string) {
     );
     CREATE INDEX IF NOT EXISTS sessoes_usuario ON sessoes (usuario_id);
     CREATE INDEX IF NOT EXISTS usuarios_empresa ON usuarios (empresa_id);
+
+    CREATE TABLE IF NOT EXISTS produto_dados_producao (
+      produto_id INTEGER PRIMARY KEY REFERENCES produtos(id) ON DELETE CASCADE,
+      empresa_id INTEGER NOT NULL,
+      valor_costura REAL,
+      consumo_tecido REAL,
+      unidade_consumo TEXT,
+      observacoes_corte TEXT,
+      processos TEXT,
+      outros_custos TEXT,
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS produto_dados_producao_empresa
+      ON produto_dados_producao (empresa_id);
   `);
 
   db.prepare(
@@ -496,6 +510,7 @@ export function createDatabase(location: string) {
   ).run();
 
   aplicarColunaEmpresaId(db);
+  aplicarDadosProducao(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -506,6 +521,7 @@ export function createDatabase(location: string) {
 const TABELAS_TENANT = [
   'clientes',
   'produtos',
+  'produto_dados_producao',
   'produto_variantes',
   'materias_primas',
   'estoque_saldos',
@@ -529,6 +545,21 @@ function tabelaExiste(db: AppDatabase, nome: string): boolean {
     .prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`)
     .get(nome) as { ok: number } | undefined;
   return Boolean(row);
+}
+
+function aplicarDadosProducao(db: AppDatabase) {
+  if (!tabelaExiste(db, 'ordens_producao')) return;
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(ordens_producao)`).all() as { name: string }[]).map(
+      (col) => col.name,
+    ),
+  );
+  if (!cols.has('referencia')) {
+    db.exec(`ALTER TABLE ordens_producao ADD COLUMN referencia TEXT`);
+  }
+  if (!cols.has('valor_costura')) {
+    db.exec(`ALTER TABLE ordens_producao ADD COLUMN valor_costura REAL`);
+  }
 }
 
 function aplicarColunaEmpresaId(db: AppDatabase) {

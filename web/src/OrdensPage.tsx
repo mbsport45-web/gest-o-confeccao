@@ -7,6 +7,7 @@ import {
   atualizarOrdem,
   atualizarStatus,
   criarOrdem,
+  criarProduto,
   listarClientes,
   listarMateriasPrimas,
   listarOrdensPaginado,
@@ -31,6 +32,9 @@ type ReqLinha = { materia_prima_id: string; quantidade: number };
 const FORM_VAZIO = {
   clienteId: '',
   produtoId: '',
+  referencia: '',
+  nomeNovo: '',
+  valorCostura: '' as number | '',
   varianteId: '',
   quantidade: 1,
   prioridade: 'normal' as PrioridadeOp,
@@ -176,6 +180,9 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     setForm({
       clienteId: ordem.cliente_id ? String(ordem.cliente_id) : '',
       produtoId: ordem.produto_id ? String(ordem.produto_id) : '',
+      referencia: ordem.referencia ?? '',
+      nomeNovo: ordem.produto,
+      valorCostura: ordem.valor_costura ?? '',
       varianteId: ordem.variante_id ? String(ordem.variante_id) : '',
       quantidade: ordem.quantidade,
       prioridade: ordem.prioridade || 'normal',
@@ -215,14 +222,72 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       responsavel: form.responsavel,
       observacoes: form.observacoes,
       requisitos,
+      valor_costura: form.valorCostura === '' ? null : Number(form.valorCostura),
     };
+  }
+
+  function aplicarProduto(produtoId: string) {
+    const produto = produtos.find((item) => String(item.id) === produtoId);
+    setForm({
+      ...form,
+      produtoId,
+      varianteId: '',
+      requisitos: [],
+      referencia: produto?.referencia ?? produto?.sku ?? form.referencia,
+      nomeNovo: produto?.nome ?? '',
+      valorCostura: produto?.valor_costura ?? '',
+    });
+  }
+
+  function aplicarReferencia(valor: string) {
+    const achado = produtos.find((item) => {
+      const codigo = (item.referencia ?? item.sku ?? '').trim().toLowerCase();
+      return codigo !== '' && codigo === valor.trim().toLowerCase();
+    });
+    if (!achado) {
+      setForm({
+        ...form,
+        referencia: valor,
+        produtoId: '',
+        varianteId: '',
+        requisitos: [],
+      });
+      return;
+    }
+    setForm({
+      ...form,
+      referencia: achado.referencia ?? achado.sku ?? valor,
+      produtoId: String(achado.id),
+      varianteId: '',
+      requisitos: [],
+      nomeNovo: achado.nome,
+      valorCostura: achado.valor_costura ?? '',
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
       setSalvando(true);
-      const dados = payloadDoForm();
+      let dados = payloadDoForm();
+      if (!dados.produto_id) {
+        const referencia = form.referencia.trim();
+        const nome = form.nomeNovo.trim();
+        if (!referencia || !nome) {
+          throw new Error('Informe a referência e o nome do produto');
+        }
+        const criado = await criarProduto({
+          nome,
+          referencia,
+          valor_costura: form.valorCostura === '' ? null : Number(form.valorCostura),
+        });
+        dados = {
+          ...dados,
+          produto: criado.nome,
+          produto_id: criado.id,
+          tamanho: 'U',
+        };
+      }
       if (editandoId) {
         await atualizarOrdem(editandoId, dados);
       } else {
@@ -439,13 +504,65 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               </select>
             </label>
             <label>
+              Referência
+              <input
+                list="referencias-produto"
+                value={form.referencia}
+                onChange={(e) => aplicarReferencia(e.target.value)}
+                placeholder="Ex.: 10234"
+              />
+              <datalist id="referencias-produto">
+                {produtos
+                  .filter((produto) => produto.referencia ?? produto.sku)
+                  .map((produto) => (
+                    <option key={produto.id} value={produto.referencia ?? produto.sku ?? ''}>
+                      {produto.nome}
+                    </option>
+                  ))}
+              </datalist>
+            </label>
+            {!form.produtoId && (
+              <label>
+                Nome do produto
+                <input
+                  value={form.nomeNovo}
+                  onChange={(e) => setForm({ ...form, nomeNovo: e.target.value })}
+                  placeholder="Primeira vez desta referência"
+                />
+              </label>
+            )}
+            <label>
+              Valor da costura (R$/peça)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={form.valorCostura}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    valorCostura: e.target.value === '' ? '' : Number(e.target.value),
+                  })
+                }
+                placeholder="Opcional"
+              />
+            </label>
+            {produtoSel && produtoSel.valor_costura != null && form.valorCostura !== produtoSel.valor_costura && (
+              <p className="dica">
+                O padrão desta referência continua {produtoSel.valor_costura.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por peça. O valor desta OP fica só nela.
+              </p>
+            )}
+            {produtoSel && (produtoSel.cores.length > 0 || produtoSel.tamanhos.length > 0) && (
+              <p className="dica">
+                {produtoSel.cores.length > 0 ? `Cores cadastradas: ${produtoSel.cores.join(', ')}. ` : ''}
+                {produtoSel.tamanhos.length > 0 ? `Tamanhos cadastrados: ${produtoSel.tamanhos.join(', ')}.` : ''}
+              </p>
+            )}
+            <label>
               Produto
               <select
-                required
                 value={form.produtoId}
-                onChange={(e) =>
-                  setForm({ ...form, produtoId: e.target.value, varianteId: '', requisitos: [] })
-                }
+                onChange={(e) => aplicarProduto(e.target.value)}
               >
                 <option value="">Selecione</option>
                 {produtos.map((p) => (
@@ -605,7 +722,19 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
             <div>
               <dt>Produto</dt>
               <dd>
+                {detalhe.referencia ? `${detalhe.referencia} — ` : ''}
                 {detalhe.produto} · {detalhe.tamanho}
+              </dd>
+            </div>
+            <div>
+              <dt>Costura desta OP</dt>
+              <dd>
+                {detalhe.valor_costura == null
+                  ? '—'
+                  : detalhe.valor_costura.toLocaleString('pt-BR', {
+                      style: 'currency',
+                      currency: 'BRL',
+                    }) + ' / peça'}
               </dd>
             </div>
             <div>
