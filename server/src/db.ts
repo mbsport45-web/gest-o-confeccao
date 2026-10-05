@@ -489,13 +489,92 @@ export function createDatabase(location: string) {
     );
     CREATE INDEX IF NOT EXISTS sessoes_usuario ON sessoes (usuario_id);
     CREATE INDEX IF NOT EXISTS usuarios_empresa ON usuarios (empresa_id);
+
+    CREATE TABLE IF NOT EXISTS produto_dados_producao (
+      produto_id INTEGER PRIMARY KEY REFERENCES produtos(id) ON DELETE CASCADE,
+      empresa_id INTEGER NOT NULL,
+      valor_costura REAL,
+      consumo_tecido REAL,
+      unidade_consumo TEXT,
+      observacoes_corte TEXT,
+      processos TEXT,
+      outros_custos TEXT,
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS produto_dados_producao_empresa
+      ON produto_dados_producao (empresa_id);
+
+    CREATE TABLE IF NOT EXISTS tecido_categorias (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL DEFAULT 1,
+      nome TEXT NOT NULL,
+      nome_norm TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (empresa_id, nome_norm)
+    );
+    CREATE INDEX IF NOT EXISTS tecido_categorias_empresa ON tecido_categorias (empresa_id);
   `);
 
   db.prepare(
     `INSERT OR IGNORE INTO empresas (id, nome, status) VALUES (1, 'Empresa 1', 'ativa')`,
   ).run();
 
+  db.exec(`
+    -- Distribuição de corte da OP: quantidade por variante (cor × tamanho) já cadastrada.
+    CREATE TABLE IF NOT EXISTS ordem_distribuicao (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL DEFAULT 1,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id) ON DELETE CASCADE,
+      variante_id INTEGER NOT NULL REFERENCES produto_variantes(id),
+      cor TEXT NOT NULL,
+      tamanho TEXT NOT NULL,
+      quantidade INTEGER NOT NULL CHECK (quantidade >= 0),
+      UNIQUE (ordem_id, variante_id)
+    );
+    CREATE INDEX IF NOT EXISTS ordem_distribuicao_empresa ON ordem_distribuicao (empresa_id);
+    CREATE INDEX IF NOT EXISTS ordem_distribuicao_ordem ON ordem_distribuicao (ordem_id);
+    CREATE INDEX IF NOT EXISTS ordem_distribuicao_variante
+      ON ordem_distribuicao (empresa_id, variante_id);
+
+    CREATE TABLE IF NOT EXISTS enfestos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id),
+      produto_id INTEGER,
+      referencia TEXT,
+      produto_nome TEXT,
+      cor TEXT NOT NULL,
+      quantidade_pecas INTEGER NOT NULL,
+      tecido_id INTEGER REFERENCES materias_primas(id),
+      folhas INTEGER,
+      comprimento REAL,
+      metragem REAL,
+      peso REAL,
+      observacoes TEXT,
+      status TEXT NOT NULL DEFAULT 'em_enfesto',
+      unidade TEXT,
+      quantidade_consumida REAL,
+      custo_unitario REAL,
+      custo_total REAL,
+      saldo_anterior REAL,
+      saldo_posterior REAL,
+      movimento_id INTEGER REFERENCES estoque_movimentos(id),
+      usuario_id INTEGER,
+      finalizado_em TEXT,
+      cancelado_em TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS enfestos_empresa ON enfestos (empresa_id);
+    CREATE INDEX IF NOT EXISTS enfestos_ordem ON enfestos (empresa_id, ordem_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS enfestos_cor_ativa
+      ON enfestos (empresa_id, ordem_id, cor)
+      WHERE status != 'cancelado';
+  `);
+
   aplicarColunaEmpresaId(db);
+  aplicarDadosProducao(db);
+  aplicarColunasEstoqueMovimento(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -506,13 +585,17 @@ export function createDatabase(location: string) {
 const TABELAS_TENANT = [
   'clientes',
   'produtos',
+  'produto_dados_producao',
   'produto_variantes',
   'materias_primas',
+  'tecido_categorias',
   'estoque_saldos',
   'estoque_movimentos',
   'produto_bom_itens',
   'ordens_producao',
   'ordem_requisitos',
+  'ordem_distribuicao',
+  'enfestos',
   'etapas_producao',
   'fornecedores',
   'pedidos_compra',
@@ -529,6 +612,40 @@ function tabelaExiste(db: AppDatabase, nome: string): boolean {
     .prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`)
     .get(nome) as { ok: number } | undefined;
   return Boolean(row);
+}
+
+function aplicarDadosProducao(db: AppDatabase) {
+  if (!tabelaExiste(db, 'ordens_producao')) return;
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(ordens_producao)`).all() as { name: string }[]).map(
+      (col) => col.name,
+    ),
+  );
+  if (!cols.has('referencia')) {
+    db.exec(`ALTER TABLE ordens_producao ADD COLUMN referencia TEXT`);
+  }
+  if (!cols.has('valor_costura')) {
+    db.exec(`ALTER TABLE ordens_producao ADD COLUMN valor_costura REAL`);
+  }
+}
+
+function aplicarColunasEstoqueMovimento(db: AppDatabase) {
+  if (!tabelaExiste(db, 'estoque_movimentos')) return;
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(estoque_movimentos)`).all() as { name: string }[]).map(
+      (col) => col.name,
+    ),
+  );
+  const extras: Array<[string, string]> = [
+    ['unidade', 'ALTER TABLE estoque_movimentos ADD COLUMN unidade TEXT'],
+    ['custo', 'ALTER TABLE estoque_movimentos ADD COLUMN custo REAL'],
+    ['usuario_id', 'ALTER TABLE estoque_movimentos ADD COLUMN usuario_id INTEGER'],
+    ['referencia_tipo', 'ALTER TABLE estoque_movimentos ADD COLUMN referencia_tipo TEXT'],
+    ['referencia_id', 'ALTER TABLE estoque_movimentos ADD COLUMN referencia_id INTEGER'],
+  ];
+  for (const [nome, ddl] of extras) {
+    if (!cols.has(nome)) db.exec(ddl);
+  }
 }
 
 function aplicarColunaEmpresaId(db: AppDatabase) {

@@ -11,7 +11,7 @@ import {
 } from './papeis.js';
 
 describe('papéis e permissões por módulo', () => {
-  it('define os seis papéis da empresa e os papéis convidáveis', () => {
+  it('define os papéis da empresa e os papéis convidáveis', () => {
     expect([...PAPEIS]).toEqual([
       'proprietario',
       'administrador',
@@ -19,6 +19,7 @@ describe('papéis e permissões por módulo', () => {
       'vendas',
       'estoque',
       'producao',
+      'cortador',
     ]);
     expect([...PAPEIS_CONVITE]).toEqual([
       'administrador',
@@ -26,6 +27,7 @@ describe('papéis e permissões por módulo', () => {
       'vendas',
       'estoque',
       'producao',
+      'cortador',
     ]);
     expect(PAPEL_LABEL.proprietario).toBe('Proprietário');
     expect(PAPEIS_CONVITE.includes('proprietario' as never)).toBe(false);
@@ -70,6 +72,15 @@ describe('papéis e permissões por módulo', () => {
     expect(temPermissao('producao', 'produtos', 'visualizar')).toBe(true);
     expect(temPermissao('producao', 'pedidos', 'visualizar')).toBe(false);
     expect(temPermissao('producao', 'equipe', 'visualizar')).toBe(false);
+    expect(temPermissao('producao', 'enfesto', 'editar')).toBe(true);
+    expect(temPermissao('producao', 'enfesto', 'excluir')).toBe(false);
+
+    expect(temPermissao('cortador', 'enfesto', 'criar')).toBe(true);
+    expect(temPermissao('cortador', 'enfesto', 'editar')).toBe(true);
+    expect(temPermissao('cortador', 'enfesto', 'excluir')).toBe(false);
+    expect(temPermissao('cortador', 'ordens', 'visualizar')).toBe(true);
+    expect(temPermissao('cortador', 'financeiro', 'visualizar')).toBe(false);
+    expect(temPermissao('cortador', 'equipe', 'visualizar')).toBe(false);
   });
 
   it('mapeia rota e método HTTP para módulo e ação CRUD', () => {
@@ -89,6 +100,8 @@ describe('papéis e permissões por módulo', () => {
     expect(acaoDoPedido('PATCH', '/api/clientes/9')).toBe('editar');
     expect(acaoDoPedido('DELETE', '/api/clientes/9')).toBe('excluir');
     expect(acaoDoPedido('POST', '/api/pedidos/4/gerar-op')).toBe('editar');
+    expect(acaoDoPedido('POST', '/api/enfesto/4/cancelar')).toBe('excluir');
+    expect(acaoDoPedido('POST', '/api/enfesto/4/finalizar')).toBe('editar');
     expect(acaoDoPedido('POST', '/api/estoque/movimentos')).toBe('criar');
     expect(acaoDoPedido('POST', '/api/etapas/fluxo')).toBe('criar');
     expect(acaoDoPedido('PUT', '/api/ordens/ficha-tecnica')).toBe('editar');

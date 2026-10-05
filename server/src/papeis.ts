@@ -7,6 +7,7 @@ export const PAPEIS = [
   'vendas',
   'estoque',
   'producao',
+  'cortador',
 ] as const;
 export type Papel = (typeof PAPEIS)[number];
 
@@ -16,6 +17,7 @@ export const PAPEIS_CONVITE = [
   'vendas',
   'estoque',
   'producao',
+  'cortador',
 ] as const;
 export type PapelConvite = (typeof PAPEIS_CONVITE)[number];
 
@@ -29,6 +31,7 @@ export const MODULOS = [
   'expedicao',
   'ordens',
   'etapas',
+  'enfesto',
   'fornecedores',
   'compras',
   'financeiro',
@@ -50,6 +53,7 @@ export const PAPEL_LABEL: Record<Papel, string> = {
   vendas: 'Vendas',
   estoque: 'Estoque',
   producao: 'Produção',
+  cortador: 'Cortador',
 };
 
 export const MODULO_LABEL: Record<Modulo, string> = {
@@ -62,6 +66,7 @@ export const MODULO_LABEL: Record<Modulo, string> = {
   expedicao: 'expedição',
   ordens: 'ordens de produção',
   etapas: 'etapas de produção',
+  enfesto: 'o enfesto',
   fornecedores: 'fornecedores',
   compras: 'compras',
   financeiro: 'o financeiro',
@@ -77,6 +82,7 @@ export const ACAO_LABEL: Record<Acao, string> = {
 };
 
 const CRUD: AcoesModulo = { visualizar: true, criar: true, editar: true, excluir: true };
+const OPERAR: AcoesModulo = { visualizar: true, criar: true, editar: true, excluir: false };
 const LER: AcoesModulo = { visualizar: true, criar: false, editar: false, excluir: false };
 const NADA: AcoesModulo = { visualizar: false, criar: false, editar: false, excluir: false };
 
@@ -86,10 +92,12 @@ export const PREFIXOS_MODULO: Array<{ prefixo: string; modulo: Modulo }> = [
   { prefixo: '/api/clientes', modulo: 'clientes' },
   { prefixo: '/api/produtos', modulo: 'produtos' },
   { prefixo: '/api/materias-primas', modulo: 'materiais' },
+  { prefixo: '/api/tecidos', modulo: 'materiais' },
   { prefixo: '/api/estoque', modulo: 'estoque' },
   { prefixo: '/api/pedidos', modulo: 'pedidos' },
   { prefixo: '/api/expedicao', modulo: 'expedicao' },
   { prefixo: '/api/ordens', modulo: 'ordens' },
+  { prefixo: '/api/enfesto', modulo: 'enfesto' },
   { prefixo: '/api/etapas', modulo: 'etapas' },
   { prefixo: '/api/fornecedores', modulo: 'fornecedores' },
   { prefixo: '/api/compras', modulo: 'compras' },
@@ -127,15 +135,22 @@ export const PERMISSOES: Record<Papel, MatrizModulos> = {
     'relatorios',
     'assinatura',
   ], LER),
-  estoque: marcar(marcar(vazio(), ['materiais', 'estoque', 'compras', 'fornecedores'], CRUD), [
+  estoque: marcar(marcar(marcar(vazio(), ['materiais', 'estoque', 'compras', 'fornecedores'], CRUD), [
     'produtos',
     'assinatura',
-  ], LER),
-  producao: marcar(marcar(vazio(), ['ordens', 'etapas'], CRUD), [
+  ], LER), ['enfesto'], LER),
+  producao: marcar(marcar(marcar(vazio(), ['ordens', 'etapas'], CRUD), ['enfesto'], OPERAR), [
     'produtos',
     'materiais',
     'estoque',
     'clientes',
+    'assinatura',
+  ], LER),
+  cortador: marcar(marcar(vazio(), ['enfesto'], OPERAR), [
+    'ordens',
+    'etapas',
+    'materiais',
+    'estoque',
     'assinatura',
   ], LER),
 };
@@ -201,6 +216,7 @@ export function acaoDoPedido(method: string, caminho: string): Acao {
   if (verbo === 'GET' || verbo === 'HEAD' || verbo === 'OPTIONS') return 'visualizar';
   if (verbo === 'DELETE') return 'excluir';
   if (verbo === 'PATCH' || verbo === 'PUT') return 'editar';
+  if (verbo === 'POST' && caminho.endsWith('/cancelar')) return 'excluir';
   if (verbo === 'POST') {
     const prefixo = PREFIXOS_MODULO.find(
       (item) => caminho === item.prefixo || caminho.startsWith(`${item.prefixo}/`),

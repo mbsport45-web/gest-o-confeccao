@@ -3,9 +3,11 @@ import { ClientesPage } from './ClientesPage';
 import { ComprasPage } from './ComprasPage';
 import { DashboardPage } from './DashboardPage';
 import { EtapasPage } from './EtapasPage';
+import { EnfestoPage } from './EnfestoPage';
 import { EstoquePage } from './EstoquePage';
 import { FinanceiroPage } from './FinanceiroPage';
 import { MateriasPrimasPage } from './MateriasPrimasPage';
+import { TecidosPage } from './TecidosPage';
 import { OrdemDetalhePage } from './OrdemDetalhePage';
 import { OrdensPage } from './OrdensPage';
 import { PedidosPage } from './PedidosPage';
@@ -33,10 +35,12 @@ type Pagina =
   | 'clientes'
   | 'produtos'
   | 'materiais'
+  | 'tecidos'
   | 'estoque'
   | 'pedidos'
   | 'expedicao'
   | 'ordens'
+  | 'enfesto'
   | 'etapas'
   | 'compras'
   | 'financeiro'
@@ -49,10 +53,12 @@ const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'clientes', label: 'Clientes', modulo: 'clientes' },
   { id: 'produtos', label: 'Produtos', modulo: 'produtos' },
   { id: 'materiais', label: 'Materiais', modulo: 'materiais' },
+  { id: 'tecidos', label: 'Tecidos', modulo: 'materiais' },
   { id: 'estoque', label: 'Estoque', modulo: 'estoque' },
   { id: 'pedidos', label: 'Pedidos', modulo: 'pedidos' },
   { id: 'expedicao', label: 'Expedição', modulo: 'expedicao' },
   { id: 'ordens', label: 'Ordens de Produção', modulo: 'ordens' },
+  { id: 'enfesto', label: 'Enfesto', modulo: 'enfesto' },
   { id: 'etapas', label: 'Produção/Etapas', modulo: 'etapas' },
   { id: 'compras', label: 'Compras', modulo: ['compras', 'fornecedores'] },
   { id: 'financeiro', label: 'Financeiro', modulo: 'financeiro' },
@@ -78,6 +84,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
     titulo: 'Materiais',
     sub: 'Cadastro de matérias-primas',
   },
+  tecidos: {
+    titulo: 'Tecidos',
+    sub: 'Cadastro e estoque por quilo ou metro',
+  },
   estoque: {
     titulo: 'Estoque',
     sub: 'Saldos e movimentos de estoque',
@@ -93,6 +103,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
   ordens: {
     titulo: 'Ordens de Produção',
     sub: 'Ordens, prioridade e previsão',
+  },
+  enfesto: {
+    titulo: 'Enfesto',
+    sub: 'Consumo real de tecido por cor',
   },
   etapas: {
     titulo: 'Produção/Etapas',
@@ -296,10 +310,12 @@ function AppAutenticado({
               {paginaAtual === 'clientes' && <ClientesPage sessao={sessao} />}
               {paginaAtual === 'produtos' && <ProdutosPage sessao={sessao} />}
               {paginaAtual === 'materiais' && <MateriasPrimasPage sessao={sessao} />}
+              {paginaAtual === 'tecidos' && <TecidosPage sessao={sessao} />}
               {paginaAtual === 'estoque' && <EstoquePage />}
               {paginaAtual === 'pedidos' && <PedidosPage sessao={sessao} onAbrirOp={abrirOp} />}
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
               {paginaAtual === 'ordens' && <OrdensPage sessao={sessao} />}
+              {paginaAtual === 'enfesto' && <EnfestoPage permissoes={sessao.permissoes} />}
               {paginaAtual === 'etapas' && <EtapasPage />}
               {paginaAtual === 'compras' && <ComprasPage />}
               {paginaAtual === 'financeiro' && <FinanceiroPage />}

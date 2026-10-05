@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { lerDadosProducao, salvarValorCostura, type DadosProducao } from './dadosProducao.js';
 import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
@@ -32,6 +33,9 @@ export interface ProdutoVariante {
 export interface Produto {
   id: number;
   sku: string | null;
+  referencia: string | null;
+  valor_costura: number | null;
+  dados_producao: DadosProducao;
   nome: string;
   descricao: string | null;
   categoria: string | null;
@@ -55,7 +59,10 @@ export interface Produto {
   variantes: ProdutoVariante[];
 }
 
-type ProdutoRow = Omit<Produto, 'cores' | 'tamanhos' | 'variantes'> & {
+type ProdutoRow = Omit<
+  Produto,
+  'cores' | 'tamanhos' | 'variantes' | 'referencia' | 'valor_costura' | 'dados_producao'
+> & {
   cores: string;
   tamanhos: string;
 };
@@ -115,6 +122,8 @@ const varianteInputSchema = z.object({
 
 const produtoBaseSchema = z.object({
   sku: textoOpcional,
+  referencia: textoOpcional,
+  valor_costura: z.number().min(0, 'valor da costura não pode ser negativo').nullable().optional(),
   nome: z.string().trim().min(1, 'nome é obrigatório').max(200),
   descricao: z
     .string()
@@ -208,7 +217,7 @@ function parseJsonList(raw: string | null | undefined): string[] {
   }
 }
 
-function mapProduto(row: ProdutoRow, variantes: ProdutoVariante[]): Produto {
+function mapProduto(row: ProdutoRow, variantes: ProdutoVariante[]) {
   return {
     ...row,
     cores: parseJsonList(row.cores),
@@ -341,10 +350,34 @@ export function createProdutosRouter(db: AppDatabase): Router {
       + (SELECT COUNT(*) FROM pedido_itens WHERE variante_id = ?) AS n`,
   );
 
+  function comDadosProducao(
+    produto: Omit<Produto, 'referencia' | 'valor_costura' | 'dados_producao'>,
+    empresaId: number,
+  ): Produto {
+    const dados = lerDadosProducao(db, produto.id, empresaId);
+    return {
+      ...produto,
+      referencia: produto.sku,
+      valor_costura: dados.valor_costura,
+      dados_producao: dados,
+    };
+  }
+
   function carregarProduto(id: number, empresaId: number): Produto | undefined {
     const row = getStmt.get(id, empresaId) as ProdutoRow | undefined;
     if (!row) return undefined;
-    return mapProduto(row, listVariantesStmt.all(id) as ProdutoVariante[]);
+    return comDadosProducao(
+      mapProduto(row, listVariantesStmt.all(id) as ProdutoVariante[]),
+      empresaId,
+    );
+  }
+
+  function skuDaRequisicao(data: { sku?: string; referencia?: string }) {
+    if (data.referencia && data.sku && data.referencia !== data.sku) {
+      return { ok: false as const, erro: 'referência e sku devem ser iguais' };
+    }
+    const sku = data.referencia ?? data.sku;
+    return { ok: true as const, sku, usouReferencia: data.referencia !== undefined };
   }
 
   function camposProduto(
@@ -561,7 +594,10 @@ export function createProdutosRouter(db: AppDatabase): Router {
       .all({ ...params, limit: porPagina, offset: (pagina - 1) * porPagina }) as ProdutoRow[];
 
     const data = rows.map((row) =>
-      mapProduto(row, listVariantesStmt.all(row.id) as ProdutoVariante[]),
+      comDadosProducao(
+        mapProduto(row, listVariantesStmt.all(row.id) as ProdutoVariante[]),
+        empresaDaSessao(req),
+      ),
     );
 
     res.json({
@@ -571,6 +607,23 @@ export function createProdutosRouter(db: AppDatabase): Router {
       total,
       total_paginas: Math.max(1, Math.ceil(total / porPagina)),
     });
+  });
+
+  router.get('/por-referencia', (req, res) => {
+    const referencia = String(req.query.referencia ?? '').trim();
+    if (!referencia) {
+      return res.status(400).json({ erro: 'referência é obrigatória' });
+    }
+    const empresaId = empresaDaSessao(req);
+    const row = db
+      .prepare(
+        `SELECT id FROM produtos
+          WHERE empresa_id = ? AND lower(trim(sku)) = lower(trim(?))
+          LIMIT 1`,
+      )
+      .get(empresaId, referencia) as { id: number } | undefined;
+    if (!row) return res.status(404).json({ erro: 'Referência não cadastrada' });
+    res.json(carregarProduto(row.id, empresaId));
   });
 
   router.get('/:id', (req, res) => {
@@ -590,10 +643,17 @@ export function createProdutosRouter(db: AppDatabase): Router {
       });
     }
 
-    const data = parsed.data;
+    const data = { ...parsed.data };
     const empresaId = empresaDaSessao(req);
+    const codigo = skuDaRequisicao(data);
+    if (!codigo.ok) return res.status(400).json({ erro: codigo.erro });
+    data.sku = codigo.sku;
     if (data.sku && skuUsado(db, empresaId, data.sku)) {
-      return res.status(409).json({ erro: 'SKU já cadastrado' });
+      return res.status(409).json({
+        erro: codigo.usouReferencia
+          ? 'Referência já cadastrada nesta empresa'
+          : 'SKU já cadastrado',
+      });
     }
     if (data.codigo_barras && barcodeUsado(db, empresaId, data.codigo_barras)) {
       return res.status(409).json({ erro: 'Código de barras já cadastrado' });
@@ -626,6 +686,9 @@ export function createProdutosRouter(db: AppDatabase): Router {
         data.codigo_barras,
         data.variantes ?? [],
       );
+      if (data.valor_costura !== undefined) {
+        salvarValorCostura(db, id, empresaId, data.valor_costura);
+      }
       return id;
     });
 
@@ -859,9 +922,16 @@ export function createProdutosRouter(db: AppDatabase): Router {
       return res.status(404).json({ erro: 'Produto não encontrado' });
     }
 
-    const data = parsed.data;
+    const data = { ...parsed.data };
+    const codigo = skuDaRequisicao(data);
+    if (!codigo.ok) return res.status(400).json({ erro: codigo.erro });
+    if (codigo.sku !== undefined) data.sku = codigo.sku;
     if (data.sku && skuUsado(db, empresaId, data.sku, { produtoId: id })) {
-      return res.status(409).json({ erro: 'SKU já cadastrado' });
+      return res.status(409).json({
+        erro: codigo.usouReferencia
+          ? 'Referência já cadastrada nesta empresa'
+          : 'SKU já cadastrado',
+      });
     }
     if (data.codigo_barras && barcodeUsado(db, empresaId, data.codigo_barras, { produtoId: id })) {
       return res.status(409).json({ erro: 'Código de barras já cadastrado' });
@@ -890,6 +960,9 @@ export function createProdutosRouter(db: AppDatabase): Router {
           atualizado.codigo_barras || undefined,
           data.variantes,
         );
+        if (data.valor_costura !== undefined) {
+          salvarValorCostura(db, id, empresaId, data.valor_costura);
+        }
       });
       aplicar();
       res.json(carregarProduto(id, empresaId));

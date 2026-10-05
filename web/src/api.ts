@@ -51,6 +51,13 @@ export interface OrdemRequisito {
   suficiente?: boolean;
 }
 
+export interface DistribuicaoOp {
+  variante_id: number;
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
 export interface OrdemProducao {
   id: number;
   codigo: string | null;
@@ -66,9 +73,12 @@ export interface OrdemProducao {
   cliente_id: number | null;
   produto_id: number | null;
   variante_id: number | null;
+  referencia: string | null;
+  valor_costura: number | null;
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  distribuicao?: DistribuicaoOp[];
 }
 
 export interface NovaOrdem {
@@ -86,6 +96,8 @@ export interface NovaOrdem {
   observacoes?: string;
   responsavel?: string;
   requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
+  valor_costura?: number | null;
+  distribuicao?: Array<{ variante_id: number; quantidade: number }>;
 }
 
 export interface ListaOrdens {
@@ -555,9 +567,21 @@ export interface ProdutoVariante {
   atualizado_em: string;
 }
 
+export interface DadosProducao {
+  valor_costura: number | null;
+  consumo_tecido: number | null;
+  unidade_consumo: string | null;
+  observacoes_corte: string | null;
+  processos: string | null;
+  outros_custos: string | null;
+}
+
 export interface Produto {
   id: number;
   sku: string | null;
+  referencia: string | null;
+  valor_costura: number | null;
+  dados_producao?: DadosProducao;
   nome: string;
   descricao: string | null;
   categoria: string | null;
@@ -583,6 +607,8 @@ export interface Produto {
 
 export type ProdutoPayload = {
   sku?: string;
+  referencia?: string;
+  valor_costura?: number | null;
   nome: string;
   descricao?: string;
   categoria?: string;
@@ -872,6 +898,245 @@ export async function atualizarStatusMateriaPrima(
 export async function removerMateriaPrima(id: number): Promise<void> {
   const res = await apiFetch(`/api/materias-primas/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export const UNIDADES_TECIDO = ['KG', 'METRO'] as const;
+export type UnidadeTecido = (typeof UNIDADES_TECIDO)[number];
+
+export interface TecidoCategoria {
+  id: number;
+  nome: string;
+  criado_em?: string;
+}
+
+export interface Tecido {
+  id: number;
+  nome: string;
+  categoria: string | null;
+  unidade: UnidadeTecido;
+  unidade_custo: string;
+  largura_cm: number | null;
+  gramatura: number | null;
+  custo: number;
+  fornecedor: string | null;
+  cor: string | null;
+  estoque_minimo: number;
+  estoque: number;
+  status: StatusMateria;
+  empresa_id: number;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface TecidoPayload {
+  nome: string;
+  categoria: string;
+  unidade: UnidadeTecido;
+  largura_cm?: number | null;
+  gramatura?: number | null;
+  custo: number;
+  fornecedor?: string;
+  cor?: string;
+  estoque_inicial?: number;
+  estoque_minimo?: number;
+  status?: StatusMateria;
+}
+
+export interface TecidoMovimento {
+  id: number;
+  tipo: 'entrada' | 'saida' | 'ajuste';
+  quantidade: number;
+  unidade: string | null;
+  custo: number | null;
+  saldo_anterior: number;
+  saldo_posterior: number;
+  motivo: string | null;
+  usuario_id: number | null;
+  usuario_nome: string | null;
+  referencia_tipo: string | null;
+  referencia_id: number | null;
+  criado_em: string;
+}
+
+export async function listarCategoriasTecido(): Promise<TecidoCategoria[]> {
+  const res = await apiFetch('/api/tecidos/categorias');
+  if (!res.ok) return parseError(res);
+  const body = (await res.json()) as { data: TecidoCategoria[] };
+  return body.data;
+}
+
+export async function criarCategoriaTecido(nome: string): Promise<TecidoCategoria> {
+  const res = await apiFetch('/api/tecidos/categorias', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarTecidos(params: {
+  q?: string;
+  pagina?: number;
+  por_pagina?: number;
+  categoria?: string;
+  unidade?: string;
+  status?: string;
+} = {}): Promise<{ data: Tecido[]; total: number; pagina: number; total_paginas: number }> {
+  const query = new URLSearchParams();
+  if (params.q) query.set('q', params.q);
+  if (params.pagina) query.set('pagina', String(params.pagina));
+  if (params.por_pagina) query.set('por_pagina', String(params.por_pagina));
+  if (params.categoria) query.set('categoria', params.categoria);
+  if (params.unidade) query.set('unidade', params.unidade);
+  if (params.status) query.set('status', params.status);
+  const res = await apiFetch(`/api/tecidos?${query.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarTecido(dados: TecidoPayload): Promise<Tecido> {
+  const res = await apiFetch('/api/tecidos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarTecido(
+  id: number,
+  dados: Partial<Omit<TecidoPayload, 'estoque_inicial'>>,
+): Promise<Tecido> {
+  const res = await apiFetch(`/api/tecidos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarStatusTecido(id: number, status: StatusMateria): Promise<Tecido> {
+  const res = await apiFetch(`/api/tecidos/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarMovimentosTecido(id: number): Promise<TecidoMovimento[]> {
+  const res = await apiFetch(`/api/tecidos/${id}/movimentos`);
+  if (!res.ok) return parseError(res);
+  const body = (await res.json()) as { data: TecidoMovimento[] };
+  return body.data;
+}
+
+export async function movimentarTecido(
+  id: number,
+  dados: {
+    tipo: 'entrada' | 'saida' | 'ajuste';
+    quantidade: number;
+    unidade: UnidadeTecido;
+    custo?: number;
+    motivo?: string;
+  },
+): Promise<{ tecido: Tecido; movimento: TecidoMovimento }> {
+  const res = await apiFetch(`/api/tecidos/${id}/movimentos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export type StatusEnfesto = 'pendente' | 'em_enfesto' | 'finalizado' | 'cancelado';
+
+export interface Enfesto {
+  id: number;
+  ordem_id: number;
+  produto_id: number | null;
+  referencia: string | null;
+  produto_nome: string | null;
+  cor: string;
+  quantidade_pecas: number;
+  tecido_id: number | null;
+  tecido_nome: string | null;
+  folhas: number | null;
+  comprimento: number | null;
+  metragem: number | null;
+  peso: number | null;
+  observacoes: string | null;
+  status: StatusEnfesto;
+  unidade: string | null;
+  quantidade_consumida: number | null;
+  custo_unitario: number | null;
+  custo_total: number | null;
+  saldo_anterior: number | null;
+  saldo_posterior: number | null;
+  movimento_id: number | null;
+  usuario_id: number | null;
+  usuario_nome: string | null;
+  finalizado_em: string | null;
+  criado_em: string;
+}
+
+export interface CorEnfesto {
+  cor: string;
+  quantidade_pecas: number;
+  tamanhos: Array<{ tamanho: string; quantidade: number }>;
+  status: StatusEnfesto;
+  enfesto: Enfesto | null;
+}
+
+export async function listarEnfestoOrdem(ordemId: number): Promise<{
+  ordem: { id: number; codigo: string | null; produto: string; referencia: string | null; quantidade: number };
+  cores: CorEnfesto[];
+}> {
+  const res = await apiFetch(`/api/enfesto?ordem_id=${ordemId}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function abrirEnfesto(ordemId: number, cor: string): Promise<Enfesto> {
+  const res = await apiFetch('/api/enfesto', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ordem_id: ordemId, cor }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function finalizarEnfesto(
+  id: number,
+  dados: {
+    tecido_id: number;
+    folhas: number;
+    comprimento: number;
+    metragem?: number | null;
+    peso?: number | null;
+    observacoes?: string;
+    unidade: UnidadeTecido;
+  },
+): Promise<Enfesto> {
+  const res = await apiFetch(`/api/enfesto/${id}/finalizar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function cancelarEnfesto(id: number): Promise<Enfesto> {
+  const res = await apiFetch(`/api/enfesto/${id}/cancelar`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+  return res.json();
 }
 
 export const TIPOS_MOVIMENTO = ['entrada', 'saida', 'ajuste'] as const;
@@ -1568,6 +1833,7 @@ export const PAPEIS_USUARIO = [
   'vendas',
   'estoque',
   'producao',
+  'cortador',
 ] as const;
 export type PapelUsuario = (typeof PAPEIS_USUARIO)[number];
 export const PAPEIS_CONVITE = [
@@ -1576,6 +1842,7 @@ export const PAPEIS_CONVITE = [
   'vendas',
   'estoque',
   'producao',
+  'cortador',
 ] as const;
 export type PapelConvite = (typeof PAPEIS_CONVITE)[number];
 
@@ -1589,6 +1856,7 @@ export const MODULOS = [
   'expedicao',
   'ordens',
   'etapas',
+  'enfesto',
   'fornecedores',
   'compras',
   'financeiro',
@@ -1824,6 +2092,7 @@ export const PAPEL_LABEL: Record<PapelUsuario, string> = {
   vendas: 'Vendas',
   estoque: 'Estoque',
   producao: 'Produção',
+  cortador: 'Cortador',
 };
 
 export function temPermissao(

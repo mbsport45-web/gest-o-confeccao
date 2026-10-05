@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
-import { autenticar, type TestApi } from './httpTest.js';
+import { autenticar, autenticarNovaEmpresa, type TestApi } from './httpTest.js';
 
 describe('API de ordens de produção', () => {
   let db: AppDatabase;
@@ -399,5 +399,154 @@ describe('API de ordens de produção', () => {
     expect(mov.status).toBe(201);
     const listaEstoque = await api.get('/api/estoque');
     expect(listaEstoque.status).toBe(200);
+  });
+
+  it('grava a distribuição de corte por cor e tamanho e preserva OPs antigas', async () => {
+    const cliente = await api.post('/api/clientes').send({ nome: 'Loja Corte' });
+    const produto = await api.post('/api/produtos').send({
+      sku: 'BER-DRY',
+      nome: 'Bermuda Dryfit',
+      cores: ['Preto', 'Branco', 'Azul'],
+      tamanhos: ['P', 'M', 'G', 'GG'],
+    });
+    expect(produto.status).toBe(201);
+    const quantidades: Record<string, number> = {
+      'Preto|P': 30,
+      'Preto|M': 45,
+      'Preto|G': 45,
+      'Preto|GG': 30,
+      'Branco|P': 15,
+      'Branco|M': 23,
+      'Branco|G': 22,
+      'Branco|GG': 15,
+      'Azul|P': 15,
+      'Azul|M': 22,
+      'Azul|G': 23,
+      'Azul|GG': 15,
+    };
+    const variantes = produto.body.variantes as Array<{ id: number; cor: string; tamanho: string }>;
+    const distribuicao = variantes.map((variante) => ({
+      variante_id: variante.id,
+      quantidade: quantidades[`${variante.cor}|${variante.tamanho}`] ?? 0,
+    }));
+
+    const criada = await api.post('/api/ordens').send({
+      cliente_id: cliente.body.id,
+      produto_id: produto.body.id,
+      quantidade: 300,
+      status: 'planejada',
+      distribuicao,
+    });
+    expect(criada.status).toBe(201);
+    expect(criada.body.quantidade).toBe(300);
+    expect(criada.body.variante_id).toBeNull();
+    expect(criada.body.distribuicao).toHaveLength(12);
+    expect(
+      criada.body.distribuicao.reduce(
+        (total: number, item: { quantidade: number }) => total + item.quantidade,
+        0,
+      ),
+    ).toBe(300);
+    const preto = criada.body.distribuicao
+      .filter((item: { cor: string }) => item.cor === 'Preto')
+      .reduce((total: number, item: { quantidade: number }) => total + item.quantidade, 0);
+    expect(preto).toBe(150);
+
+    const noBanco = db
+      .prepare(
+        `SELECT empresa_id, COUNT(*) AS n, SUM(quantidade) AS soma
+           FROM ordem_distribuicao WHERE ordem_id = ?`,
+      )
+      .get(criada.body.id) as { empresa_id: number; n: number; soma: number };
+    expect(noBanco).toEqual({ empresa_id: 1, n: 12, soma: 300 });
+
+    const lida = await api.get(`/api/ordens/${criada.body.id}`);
+    expect(lida.status).toBe(200);
+    expect(lida.body.distribuicao).toHaveLength(12);
+
+    const antiga = await api.post('/api/ordens').send({
+      cliente: 'Loja Antiga',
+      produto: 'Camiseta Polo',
+      tamanho: 'M',
+      quantidade: 10,
+    });
+    expect(antiga.status).toBe(201);
+    const antigaLida = await api.get(`/api/ordens/${antiga.body.id}`);
+    expect(antigaLida.body.distribuicao).toEqual([]);
+    expect(antigaLida.body.tamanho).toBe('M');
+  });
+
+  it('recusa distribuição divergente, negativa ou de outra empresa', async () => {
+    const cliente = await api.post('/api/clientes').send({ nome: 'Loja Corte 2' });
+    const produto = await api.post('/api/produtos').send({
+      sku: 'BER-DRY-2',
+      nome: 'Bermuda Dryfit 2',
+      cores: ['Preto'],
+      tamanhos: ['P', 'M'],
+    });
+    const variantes = produto.body.variantes as Array<{ id: number; tamanho: string }>;
+    const p = variantes.find((item) => item.tamanho === 'P')!;
+    const m = variantes.find((item) => item.tamanho === 'M')!;
+
+    const divergente = await api.post('/api/ordens').send({
+      cliente_id: cliente.body.id,
+      produto_id: produto.body.id,
+      quantidade: 10,
+      distribuicao: [
+        { variante_id: p.id, quantidade: 4 },
+        { variante_id: m.id, quantidade: 5 },
+      ],
+    });
+    expect(divergente.status).toBe(400);
+    expect(divergente.body.erro).toBe(
+      'A soma da distribuição (9) deve ser igual à quantidade da OP (10)',
+    );
+
+    const comZero = await api.post('/api/ordens').send({
+      cliente_id: cliente.body.id,
+      produto_id: produto.body.id,
+      quantidade: 8,
+      distribuicao: [
+        { variante_id: p.id, quantidade: 0 },
+        { variante_id: m.id, quantidade: 8 },
+      ],
+    });
+    expect(comZero.status).toBe(201);
+    expect(comZero.body.variante_id).toBe(m.id);
+    expect(comZero.body.tamanho).toBe('M');
+    expect(comZero.body.distribuicao).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ variante_id: p.id, quantidade: 0 }),
+        expect.objectContaining({ variante_id: m.id, quantidade: 8 }),
+      ]),
+    );
+
+    const negativa = await api.post('/api/ordens').send({
+      cliente_id: cliente.body.id,
+      produto_id: produto.body.id,
+      quantidade: 8,
+      distribuicao: [
+        { variante_id: p.id, quantidade: -1 },
+        { variante_id: m.id, quantidade: 9 },
+      ],
+    });
+    expect(negativa.status).toBe(400);
+
+    const { api: outra } = await autenticarNovaEmpresa(createApp(db));
+    const clienteOutra = await outra.post('/api/clientes').send({ nome: 'Outra Loja' });
+    const produtoOutra = await outra.post('/api/produtos').send({
+      nome: 'Peça Isolada',
+      sku: 'ISO-OP',
+      cores: ['Preto'],
+      tamanhos: ['P'],
+    });
+    const invasao = await outra.post('/api/ordens').send({
+      cliente_id: clienteOutra.body.id,
+      produto_id: produtoOutra.body.id,
+      quantidade: 8,
+      distribuicao: [{ variante_id: m.id, quantidade: 8 }],
+    });
+    expect(invasao.status).toBe(400);
+    expect(invasao.body.erro).toBe('Variante não pertence ao produto');
   });
 });

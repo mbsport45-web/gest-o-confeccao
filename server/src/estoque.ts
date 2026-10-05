@@ -119,6 +119,11 @@ export type MovimentoEstoqueInput = {
   materia_prima_id?: number;
   motivo?: string | null;
   observacoes?: string | null;
+  unidade?: string | null;
+  custo?: number | null;
+  usuario_id?: number | null;
+  referencia_tipo?: string | null;
+  referencia_id?: number | null;
 };
 
 export type ResultadoMovimentoEstoque =
@@ -247,10 +252,12 @@ export function registrarMovimentoEstoque(
     .prepare(
       `INSERT INTO estoque_movimentos (
          empresa_id, saldo_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, observacoes,
-         produto_id, variante_id, materia_prima_id
+         produto_id, variante_id, materia_prima_id, unidade, custo, usuario_id,
+         referencia_tipo, referencia_id
        ) VALUES (
          @empresa_id, @saldo_id, @tipo, @quantidade, @saldo_anterior, @saldo_posterior, @motivo, @observacoes,
-         @produto_id, @variante_id, @materia_prima_id
+         @produto_id, @variante_id, @materia_prima_id, @unidade, @custo, @usuario_id,
+         @referencia_tipo, @referencia_id
        )`,
     )
     .run({
@@ -265,6 +272,11 @@ export function registrarMovimentoEstoque(
       produto_id: saldoRow.produto_id,
       variante_id: saldoRow.variante_id,
       materia_prima_id: saldoRow.materia_prima_id,
+      unidade: data.unidade ?? null,
+      custo: data.custo ?? null,
+      usuario_id: data.usuario_id ?? null,
+      referencia_tipo: data.referencia_tipo ?? null,
+      referencia_id: data.referencia_id ?? null,
     });
   return { ok: true, movimentoId: Number(info.lastInsertRowid), saldoId: saldoRow.id };
 }
