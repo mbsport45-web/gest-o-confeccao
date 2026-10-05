@@ -603,6 +603,59 @@ button {
   font-size: 0.82rem;
 }
 
+.seletores-op {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+}
+
+@media (max-width: 720px) {
+  .seletores-op {
+    grid-template-columns: 1fr;
+  }
+}
+
+.seletor-op label {
+  display: block;
+}
+
+.seletor-op__lista {
+  max-height: 9rem;
+  overflow: auto;
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.seletor-op__lista label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0;
+  font-weight: 500;
+}
+
+.seletor-op__escolhidos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.seletor-op__escolhidos button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 0.15rem 0.55rem;
+  font-size: 0.78rem;
+}
+
 .cores-op {
   border: 1px solid var(--border);
   border-radius: 8px;

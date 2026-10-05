@@ -23,7 +23,13 @@ import {
   type AssinaturaEmpresa,
 } from './api';
 import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
-import { GradeDistribuicao, TabelaDistribuicao, eixosDasVariantes, somaGrade } from './DistribuicaoCorte';
+import {
+  GradeDistribuicao,
+  SeletorBusca,
+  TabelaDistribuicao,
+  eixosDasVariantes,
+  somaGrade,
+} from './DistribuicaoCorte';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 
@@ -42,14 +48,23 @@ const FORM_VAZIO = {
   grade: {} as Record<string, number>,
   gradeEditada: false,
   coresSelecionadas: [] as string[],
+  tamanhosSelecionados: [] as string[],
 };
 
 function normCor(valor: string): string {
   return valor.trim().toLowerCase();
 }
 
+function eixosDoProduto(produto: Produto) {
+  return eixosDasVariantes(produto.variantes, produto.cores, produto.tamanhos);
+}
+
 function coresDoProduto(produto: Produto): string[] {
-  return eixosDasVariantes(produto.variantes, produto.cores, produto.tamanhos).cores;
+  return eixosDoProduto(produto).cores;
+}
+
+function tamanhosDoProduto(produto: Produto): string[] {
+  return eixosDoProduto(produto).tamanhos;
 }
 
 function corSelecionada(cores: string[], cor: string): boolean {
@@ -203,24 +218,39 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       (ordem.distribuicao ?? []).map((item) => [String(item.variante_id), item.quantidade]),
     ) as Record<string, number>;
     let coresSelecionadas: string[] = [];
-    const coresComQuantidade = (ordem.distribuicao ?? [])
-      .filter((item) => item.quantidade > 0)
-      .map((item) => item.cor);
-    if (coresComQuantidade.length) {
-      coresSelecionadas = eixosDasVariantes(
+    let tamanhosSelecionados: string[] = [];
+    const itensComQuantidade = (ordem.distribuicao ?? []).filter((item) => item.quantidade > 0);
+    if (itensComQuantidade.length) {
+      const eixos = eixosDasVariantes(
         produto?.variantes ?? [],
         produto?.cores ?? [],
         produto?.tamanhos ?? [],
-      ).cores.filter((cor) => corSelecionada(coresComQuantidade, cor));
-      if (!coresSelecionadas.length) coresSelecionadas = [...new Set(coresComQuantidade)];
+      );
+      coresSelecionadas = eixos.cores.filter((cor) =>
+        corSelecionada(
+          itensComQuantidade.map((item) => item.cor),
+          cor,
+        ),
+      );
+      tamanhosSelecionados = eixos.tamanhos.filter((tamanho) =>
+        corSelecionada(
+          itensComQuantidade.map((item) => item.tamanho),
+          tamanho,
+        ),
+      );
+      if (!coresSelecionadas.length) {
+        coresSelecionadas = [...new Set(itensComQuantidade.map((item) => item.cor))];
+      }
+      if (!tamanhosSelecionados.length) {
+        tamanhosSelecionados = [...new Set(itensComQuantidade.map((item) => item.tamanho))];
+      }
     } else if (produto && ordem.variante_id) {
       const variante = produto.variantes.find((item) => item.id === ordem.variante_id);
       if (variante) {
         coresSelecionadas = [variante.cor];
+        tamanhosSelecionados = [variante.tamanho];
         grade[String(variante.id)] = ordem.quantidade;
       }
-    } else if (produto) {
-      coresSelecionadas = coresDoProduto(produto);
     }
     setForm({
       clienteId: ordem.cliente_id ? String(ordem.cliente_id) : '',
@@ -238,6 +268,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       grade,
       gradeEditada: (ordem.distribuicao ?? []).length > 0,
       coresSelecionadas,
+      tamanhosSelecionados,
     });
     setEditandoId(id);
     setDetalhe(null);
@@ -255,7 +286,11 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       }));
     const usaGrade = Boolean(produto && produto.variantes.length > 0);
     const variantesDaCor = usaGrade
-      ? produto!.variantes.filter((item) => corSelecionada(form.coresSelecionadas, item.cor))
+      ? produto!.variantes.filter(
+          (item) =>
+            corSelecionada(form.coresSelecionadas, item.cor) &&
+            corSelecionada(form.tamanhosSelecionados, item.tamanho),
+        )
       : [];
     const distribuicao = usaGrade
       ? variantesDaCor.map((item) => ({
@@ -288,6 +323,9 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       if (produtoSel && produtoSel.variantes.length > 0) {
         if (!form.coresSelecionadas.length) {
           throw new Error('Selecione ao menos uma cor');
+        }
+        if (!form.tamanhosSelecionados.length) {
+          throw new Error('Selecione ao menos um tamanho');
         }
         const soma = somaGrade(form.grade);
         if (soma !== Number(form.quantidade)) {
@@ -344,6 +382,54 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     if (atual && !base.includes(atual)) base.unshift(atual);
     return base;
   };
+
+  function alternarEixo(eixo: 'cor' | 'tamanho', valor: string) {
+    if (!produtoSel) return;
+    const campo = eixo === 'cor' ? 'coresSelecionadas' : 'tamanhosSelecionados';
+    const atual = form[campo];
+    const marcada = corSelecionada(atual, valor);
+    const proximos = marcada
+      ? atual.filter((item) => normCor(item) !== normCor(valor))
+      : [...atual, valor];
+    const grade = { ...form.grade };
+    if (marcada) {
+      for (const variante of produtoSel.variantes) {
+        const texto = eixo === 'cor' ? variante.cor : variante.tamanho;
+        if (normCor(texto) === normCor(valor)) grade[String(variante.id)] = 0;
+      }
+    }
+    const soma = somaGrade(grade);
+    setForm({
+      ...form,
+      [campo]: proximos,
+      grade,
+      varianteId: '',
+      quantidade: form.gradeEditada && soma > 0 ? soma : form.quantidade,
+    });
+  }
+
+  const variantesGrade = produtoSel
+    ? produtoSel.variantes.filter(
+        (item) =>
+          corSelecionada(form.coresSelecionadas, item.cor) &&
+          corSelecionada(form.tamanhosSelecionados, item.tamanho),
+      )
+    : [];
+  const coresEscolhidas = produtoSel
+    ? coresDoProduto(produtoSel).filter((cor) => corSelecionada(form.coresSelecionadas, cor))
+    : [];
+  const tamanhosEscolhidos = produtoSel
+    ? tamanhosDoProduto(produtoSel).filter((tamanho) =>
+        corSelecionada(form.tamanhosSelecionados, tamanho),
+      )
+    : [];
+  const gradeIncompleta = Boolean(
+    produtoSel &&
+      produtoSel.variantes.length > 0 &&
+      (coresEscolhidas.length === 0 ||
+        tamanhosEscolhidos.length === 0 ||
+        somaGrade(form.grade) !== Number(form.quantidade)),
+  );
 
   return (
     <main className="app__main app__main--ordens">
@@ -519,7 +605,6 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                 value={form.produtoId}
                 onChange={(e) => {
                   const produtoId = e.target.value;
-                  const produto = produtos.find((item) => String(item.id) === produtoId);
                   setForm({
                     ...form,
                     produtoId,
@@ -527,7 +612,8 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                     requisitos: [],
                     grade: {},
                     gradeEditada: false,
-                    coresSelecionadas: produto ? coresDoProduto(produto) : [],
+                    coresSelecionadas: [],
+                    tamanhosSelecionados: [],
                   });
                 }}
               >
@@ -541,38 +627,22 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               </select>
             </label>
             {produtoSel && produtoSel.variantes.length > 0 && (
-              <fieldset className="cores-op">
-                <legend>Cores</legend>
-                {coresDoProduto(produtoSel).map((cor) => (
-                  <label key={cor}>
-                    <input
-                      type="checkbox"
-                      checked={corSelecionada(form.coresSelecionadas, cor)}
-                      onChange={() => {
-                        const marcada = corSelecionada(form.coresSelecionadas, cor);
-                        const coresSelecionadas = marcada
-                          ? form.coresSelecionadas.filter((item) => normCor(item) !== normCor(cor))
-                          : [...form.coresSelecionadas, cor];
-                        const grade = { ...form.grade };
-                        if (marcada) {
-                          for (const variante of produtoSel.variantes) {
-                            if (normCor(variante.cor) === normCor(cor)) grade[String(variante.id)] = 0;
-                          }
-                        }
-                        const soma = somaGrade(grade);
-                        setForm({
-                          ...form,
-                          coresSelecionadas,
-                          grade,
-                          varianteId: '',
-                          quantidade: form.gradeEditada && soma > 0 ? soma : form.quantidade,
-                        });
-                      }}
-                    />
-                    {cor}
-                  </label>
-                ))}
-              </fieldset>
+              <div className="seletores-op">
+                <SeletorBusca
+                  rotulo="Cores"
+                  opcoes={coresDoProduto(produtoSel)}
+                  selecionados={form.coresSelecionadas}
+                  onToggle={(cor) => alternarEixo('cor', cor)}
+                  placeholder="Pesquisar cor cadastrada"
+                />
+                <SeletorBusca
+                  rotulo="Tamanhos"
+                  opcoes={tamanhosDoProduto(produtoSel)}
+                  selecionados={form.tamanhosSelecionados}
+                  onToggle={(tamanho) => alternarEixo('tamanho', tamanho)}
+                  placeholder="Pesquisar tamanho cadastrado"
+                />
+              </div>
             )}
             <div className="form__row">
               <label>
@@ -606,18 +676,16 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               <div>
                 <h3 className="subtitulo">Distribuição de corte</h3>
                 <p className="dica">
-                  A cor é escolhida acima. Os tamanhos ficam só nesta grade. Zero significa que o tamanho não será produzido.
-                  O total da grade precisa ser igual à quantidade da OP.
+                  Pesquise e escolha as cores e os tamanhos cadastrados neste produto. A grade usa só essa seleção.
+                  Zero significa que a combinação não será produzida. O total precisa ser igual à quantidade da OP.
                 </p>
-                {form.coresSelecionadas.length === 0 ? (
-                  <p className="erro">Selecione ao menos uma cor.</p>
+                {coresEscolhidas.length === 0 || tamanhosEscolhidos.length === 0 ? (
+                  <p className="erro">Selecione ao menos uma cor e um tamanho.</p>
                 ) : (
                 <GradeDistribuicao
-                  variantes={produtoSel.variantes.filter((item) =>
-                    corSelecionada(form.coresSelecionadas, item.cor),
-                  )}
-                  cores={form.coresSelecionadas}
-                  tamanhos={produtoSel.tamanhos}
+                  variantes={variantesGrade}
+                  cores={coresEscolhidas}
+                  tamanhos={tamanhosEscolhidos}
                   valores={form.grade}
                   onChange={(varianteId, quantidade) => {
                     const grade = { ...form.grade, [String(varianteId)]: quantidade };
@@ -722,15 +790,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
 
             <button
               type="submit"
-              disabled={
-                salvando ||
-                Boolean(
-                  produtoSel &&
-                    produtoSel.variantes.length > 0 &&
-                    (form.coresSelecionadas.length === 0 ||
-                      somaGrade(form.grade) !== Number(form.quantidade)),
-                )
-              }
+              disabled={salvando || gradeIncompleta}
             >
               {salvando ? 'Salvando…' : modo === 'editar' ? 'Salvar alterações' : 'Criar OP'}
             </button>
@@ -790,7 +850,15 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
           {detalhe.distribuicao && detalhe.distribuicao.length > 0 && (
             <>
               <h3 className="subtitulo">Distribuição de corte</h3>
-              <TabelaDistribuicao itens={detalhe.distribuicao} />
+              <TabelaDistribuicao
+                itens={detalhe.distribuicao}
+                coresPreferidas={
+                  produtos.find((item) => item.id === detalhe.produto_id)?.cores ?? []
+                }
+                tamanhosPreferidos={
+                  produtos.find((item) => item.id === detalhe.produto_id)?.tamanhos ?? []
+                }
+              />
             </>
           )}
           <label>

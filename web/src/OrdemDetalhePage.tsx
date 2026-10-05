@@ -60,6 +60,10 @@ export function OrdemDetalhePage({ ordemId, onVoltar }: Props) {
   const [gerando, setGerando] = useState(false);
   const [atualizandoId, setAtualizandoId] = useState<number | null>(null);
   const [operadores, setOperadores] = useState<Record<number, string>>({});
+  const [eixosProduto, setEixosProduto] = useState<{ cores: string[]; tamanhos: string[] }>({
+    cores: [],
+    tamanhos: [],
+  });
 
   const recarregar = useCallback(async () => {
     setCarregando(true);
@@ -74,6 +78,22 @@ export function OrdemDetalhePage({ ordemId, onVoltar }: Props) {
       for (const e of fluxo.data) mapa[e.id] = e.responsavel ?? '';
       setOperadores(mapa);
 
+      if (op.produto_id) {
+        try {
+          const produto = await obterProduto(op.produto_id);
+          setEixosProduto({ cores: produto.cores, tamanhos: produto.tamanhos });
+          if (!op.distribuicao?.length && op.variante_id) {
+            const v = produto.variantes.find((item) => item.id === op.variante_id);
+            setVariante(v ? `${v.cor} / ${v.tamanho}` : op.tamanho);
+          }
+        } catch {
+          setEixosProduto({ cores: [], tamanhos: [] });
+          if (!op.distribuicao?.length) setVariante(op.tamanho);
+        }
+      } else {
+        setEixosProduto({ cores: [], tamanhos: [] });
+      }
+
       if (op.distribuicao?.length) {
         const cores: string[] = [];
         for (const item of op.distribuicao) {
@@ -83,15 +103,7 @@ export function OrdemDetalhePage({ ordemId, onVoltar }: Props) {
           }
         }
         setVariante(cores.join(', ') || '—');
-      } else if (op.produto_id && op.variante_id) {
-        try {
-          const produto = await obterProduto(op.produto_id);
-          const v = produto.variantes.find((item) => item.id === op.variante_id);
-          setVariante(v ? `${v.cor} / ${v.tamanho}` : op.tamanho);
-        } catch {
-          setVariante(op.tamanho);
-        }
-      } else {
+      } else if (!op.produto_id || !op.variante_id) {
         setVariante(op.tamanho || '—');
       }
       setErro(null);
@@ -241,7 +253,11 @@ export function OrdemDetalhePage({ ordemId, onVoltar }: Props) {
         {ordem.distribuicao && ordem.distribuicao.length > 0 && (
           <>
             <h3 className="subtitulo">Distribuição de corte</h3>
-            <TabelaDistribuicao itens={ordem.distribuicao} />
+            <TabelaDistribuicao
+              itens={ordem.distribuicao}
+              coresPreferidas={eixosProduto.cores}
+              tamanhosPreferidos={eixosProduto.tamanhos}
+            />
           </>
         )}
       </section>

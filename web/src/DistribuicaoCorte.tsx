@@ -1,23 +1,11 @@
+import { useState } from 'react';
 import type { DistribuicaoOp, ProdutoVariante } from './api';
 
-const ORDEM_TAMANHO = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'EG', 'XXG', 'EXG'];
-
-function compararTamanho(a: string, b: string): number {
-  const ia = ORDEM_TAMANHO.indexOf(a.toUpperCase());
-  const ib = ORDEM_TAMANHO.indexOf(b.toUpperCase());
-  if (ia !== -1 || ib !== -1) {
-    if (ia === -1) return 1;
-    if (ib === -1) return -1;
-    return ia - ib;
-  }
-  const na = Number(a);
-  const nb = Number(b);
-  if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-  return a.localeCompare(b, 'pt-BR');
+function norm(valor: string): string {
+  return valor.trim().toLowerCase();
 }
 
-function ordenarEixo(preferidos: string[], presentes: string[], comparar: (a: string, b: string) => number): string[] {
-  const norm = (valor: string) => valor.trim().toLowerCase();
+function ordenarEixo(preferidos: string[], presentes: string[]): string[] {
   const usados = new Set<string>();
   const saida: string[] = [];
   for (const item of preferidos) {
@@ -27,8 +15,19 @@ function ordenarEixo(preferidos: string[], presentes: string[], comparar: (a: st
       saida.push(encontrado);
     }
   }
-  const resto = presentes.filter((item) => !usados.has(norm(item))).sort(comparar);
-  return [...saida, ...resto];
+  for (const item of presentes) {
+    if (!usados.has(norm(item))) {
+      usados.add(norm(item));
+      saida.push(item);
+    }
+  }
+  return saida;
+}
+
+export function filtrarOpcoes(opcoes: string[], busca: string): string[] {
+  const consulta = norm(busca);
+  if (!consulta) return opcoes;
+  return opcoes.filter((opcao) => norm(opcao).includes(consulta));
 }
 
 export function varianteDaCelula(
@@ -48,8 +47,8 @@ export function eixosDasVariantes(
   tamanhosPreferidos: string[] = [],
 ) {
   return {
-    cores: ordenarEixo(coresPreferidas, variantes.map((v) => v.cor), (a, b) => a.localeCompare(b, 'pt-BR')),
-    tamanhos: ordenarEixo(tamanhosPreferidos, variantes.map((v) => v.tamanho), compararTamanho),
+    cores: ordenarEixo(coresPreferidas, variantes.map((v) => v.cor)),
+    tamanhos: ordenarEixo(tamanhosPreferidos, variantes.map((v) => v.tamanho)),
   };
 }
 
@@ -66,12 +65,8 @@ export function TabelaDistribuicao({
   coresPreferidas?: string[];
   tamanhosPreferidos?: string[];
 }) {
-  const cores = ordenarEixo(coresPreferidas, itens.map((item) => item.cor), (a, b) => a.localeCompare(b, 'pt-BR'));
-  const tamanhos = ordenarEixo(
-    tamanhosPreferidos,
-    itens.map((item) => item.tamanho),
-    compararTamanho,
-  );
+  const cores = ordenarEixo(coresPreferidas, itens.map((item) => item.cor));
+  const tamanhos = ordenarEixo(tamanhosPreferidos, itens.map((item) => item.tamanho));
   const celula = (cor: string, tamanho: string) =>
     itens.find(
       (item) =>
@@ -208,6 +203,64 @@ export function GradeDistribuicao({
           </tr>
         </tfoot>
       </table>
+    </div>
+  );
+}
+
+export function SeletorBusca({
+  rotulo,
+  opcoes,
+  selecionados,
+  onToggle,
+  placeholder,
+}: {
+  rotulo: string;
+  opcoes: string[];
+  selecionados: string[];
+  onToggle: (valor: string) => void;
+  placeholder: string;
+}) {
+  const [busca, setBusca] = useState('');
+  const escolhidos = opcoes.filter((opcao) => selecionados.some((item) => norm(item) === norm(opcao)));
+  const filtradas = filtrarOpcoes(opcoes, busca);
+
+  return (
+    <div className="seletor-op">
+      <label>
+        {rotulo}
+        <input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder={placeholder}
+          aria-label={`Pesquisar ${rotulo.toLowerCase()}`}
+        />
+      </label>
+      <div className="seletor-op__lista" role="group" aria-label={rotulo}>
+        {opcoes.length === 0 ? (
+          <p className="dica">Nenhuma opção cadastrada neste produto.</p>
+        ) : filtradas.length === 0 ? (
+          <p className="dica">Nenhuma opção encontrada para essa pesquisa.</p>
+        ) : (
+          filtradas.map((opcao) => (
+            <label key={opcao}>
+              <input
+                type="checkbox"
+                checked={escolhidos.some((item) => norm(item) === norm(opcao))}
+                onChange={() => onToggle(opcao)}
+              />
+              {opcao}
+            </label>
+          ))
+        )}
+      </div>
+      <div className="seletor-op__escolhidos">
+        <span>{escolhidos.length ? 'Selecionados:' : 'Nenhum selecionado.'}</span>
+        {escolhidos.map((item) => (
+          <button key={item} type="button" onClick={() => onToggle(item)}>
+            {item} ×
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
