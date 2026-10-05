@@ -874,6 +874,160 @@ export async function removerMateriaPrima(id: number): Promise<void> {
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
+export const UNIDADES_TECIDO = ['KG', 'METRO'] as const;
+export type UnidadeTecido = (typeof UNIDADES_TECIDO)[number];
+
+export interface TecidoCategoria {
+  id: number;
+  nome: string;
+  criado_em?: string;
+}
+
+export interface Tecido {
+  id: number;
+  nome: string;
+  categoria: string | null;
+  unidade: UnidadeTecido;
+  unidade_custo: string;
+  largura_cm: number | null;
+  gramatura: number | null;
+  custo: number;
+  fornecedor: string | null;
+  cor: string | null;
+  estoque_minimo: number;
+  estoque: number;
+  status: StatusMateria;
+  empresa_id: number;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface TecidoPayload {
+  nome: string;
+  categoria: string;
+  unidade: UnidadeTecido;
+  largura_cm?: number | null;
+  gramatura?: number | null;
+  custo: number;
+  fornecedor?: string;
+  cor?: string;
+  estoque_inicial?: number;
+  estoque_minimo?: number;
+  status?: StatusMateria;
+}
+
+export interface TecidoMovimento {
+  id: number;
+  tipo: 'entrada' | 'saida' | 'ajuste';
+  quantidade: number;
+  unidade: string | null;
+  custo: number | null;
+  saldo_anterior: number;
+  saldo_posterior: number;
+  motivo: string | null;
+  usuario_id: number | null;
+  usuario_nome: string | null;
+  referencia_tipo: string | null;
+  referencia_id: number | null;
+  criado_em: string;
+}
+
+export async function listarCategoriasTecido(): Promise<TecidoCategoria[]> {
+  const res = await apiFetch('/api/tecidos/categorias');
+  if (!res.ok) return parseError(res);
+  const body = (await res.json()) as { data: TecidoCategoria[] };
+  return body.data;
+}
+
+export async function criarCategoriaTecido(nome: string): Promise<TecidoCategoria> {
+  const res = await apiFetch('/api/tecidos/categorias', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarTecidos(params: {
+  q?: string;
+  pagina?: number;
+  por_pagina?: number;
+  categoria?: string;
+  unidade?: string;
+  status?: string;
+} = {}): Promise<{ data: Tecido[]; total: number; pagina: number; total_paginas: number }> {
+  const query = new URLSearchParams();
+  if (params.q) query.set('q', params.q);
+  if (params.pagina) query.set('pagina', String(params.pagina));
+  if (params.por_pagina) query.set('por_pagina', String(params.por_pagina));
+  if (params.categoria) query.set('categoria', params.categoria);
+  if (params.unidade) query.set('unidade', params.unidade);
+  if (params.status) query.set('status', params.status);
+  const res = await apiFetch(`/api/tecidos?${query.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarTecido(dados: TecidoPayload): Promise<Tecido> {
+  const res = await apiFetch('/api/tecidos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarTecido(
+  id: number,
+  dados: Partial<Omit<TecidoPayload, 'estoque_inicial'>>,
+): Promise<Tecido> {
+  const res = await apiFetch(`/api/tecidos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarStatusTecido(id: number, status: StatusMateria): Promise<Tecido> {
+  const res = await apiFetch(`/api/tecidos/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarMovimentosTecido(id: number): Promise<TecidoMovimento[]> {
+  const res = await apiFetch(`/api/tecidos/${id}/movimentos`);
+  if (!res.ok) return parseError(res);
+  const body = (await res.json()) as { data: TecidoMovimento[] };
+  return body.data;
+}
+
+export async function movimentarTecido(
+  id: number,
+  dados: {
+    tipo: 'entrada' | 'saida' | 'ajuste';
+    quantidade: number;
+    unidade: UnidadeTecido;
+    custo?: number;
+    motivo?: string;
+  },
+): Promise<{ tecido: Tecido; movimento: TecidoMovimento }> {
+  const res = await apiFetch(`/api/tecidos/${id}/movimentos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export const TIPOS_MOVIMENTO = ['entrada', 'saida', 'ajuste'] as const;
 export type TipoMovimento = (typeof TIPOS_MOVIMENTO)[number];
 
