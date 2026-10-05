@@ -66,6 +66,8 @@ export interface OrdemProducao {
   cliente_id: number | null;
   produto_id: number | null;
   variante_id: number | null;
+  referencia: string | null;
+  valor_costura: number | null;
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
@@ -86,6 +88,7 @@ export interface NovaOrdem {
   observacoes?: string;
   responsavel?: string;
   requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
+  valor_costura?: number | null;
 }
 
 export interface ListaOrdens {
@@ -555,9 +558,21 @@ export interface ProdutoVariante {
   atualizado_em: string;
 }
 
+export interface DadosProducao {
+  valor_costura: number | null;
+  consumo_tecido: number | null;
+  unidade_consumo: string | null;
+  observacoes_corte: string | null;
+  processos: string | null;
+  outros_custos: string | null;
+}
+
 export interface Produto {
   id: number;
   sku: string | null;
+  referencia: string | null;
+  valor_costura: number | null;
+  dados_producao?: DadosProducao;
   nome: string;
   descricao: string | null;
   categoria: string | null;
@@ -583,6 +598,8 @@ export interface Produto {
 
 export type ProdutoPayload = {
   sku?: string;
+  referencia?: string;
+  valor_costura?: number | null;
   nome: string;
   descricao?: string;
   categoria?: string;

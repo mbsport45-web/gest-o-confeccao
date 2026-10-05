@@ -21,6 +21,7 @@ type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 
 const FORM_VAZIO: ProdutoPayload & { coresTexto: string; tamanhosTexto: string } = {
   sku: '',
+  valor_costura: null as number | null,
   nome: '',
   descricao: '',
   categoria: '',
@@ -67,7 +68,8 @@ function parseLista(texto: string): string[] {
 
 function produtoParaForm(p: Produto): FormProduto {
   return {
-    sku: p.sku ?? '',
+    sku: p.referencia ?? p.sku ?? '',
+    valor_costura: p.valor_costura,
     nome: p.nome,
     descricao: p.descricao ?? '',
     categoria: p.categoria ?? '',
@@ -92,6 +94,8 @@ function produtoParaForm(p: Produto): FormProduto {
 function payloadDeForm(form: FormProduto): ProdutoPayload {
   return {
     sku: form.sku,
+    referencia: form.sku,
+    valor_costura: form.valor_costura,
     nome: form.nome,
     descricao: form.descricao,
     categoria: form.categoria,
@@ -354,7 +358,7 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
           <table className="tabela">
             <thead>
               <tr>
-                <th>SKU</th>
+                <th>Referência</th>
                 <th>Produto</th>
                 <th>Categoria</th>
                 <th>Marca</th>
@@ -454,7 +458,15 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
                 <img src={detalhe.imagem} alt={detalhe.nome} className="produto-foto" />
               ) : null}
               <dl className="detalhe">
-                <div><dt>SKU</dt><dd>{detalhe.sku ?? '—'}</dd></div>
+                <div><dt>Referência</dt><dd>{detalhe.referencia ?? detalhe.sku ?? '—'}</dd></div>
+                <div>
+                  <dt>Costura padrão</dt>
+                  <dd>
+                    {detalhe.valor_costura == null
+                      ? '—'
+                      : `${moeda.format(detalhe.valor_costura)} / peça`}
+                  </dd>
+                </div>
                 <div><dt>Nome</dt><dd>{detalhe.nome}</dd></div>
                 <div><dt>Descrição</dt><dd>{detalhe.descricao ?? '—'}</dd></div>
                 <div><dt>Categoria</dt><dd>{detalhe.categoria ?? '—'}</dd></div>
@@ -550,11 +562,27 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
               </label>
               <div className="form__row">
                 <label>
-                  SKU
+                  Referência
                   <input
                     value={form.sku}
                     onChange={(e) => setForm({ ...form, sku: e.target.value })}
-                    placeholder="Ex.: CAM-POLO"
+                    placeholder="Ex.: 10234"
+                  />
+                </label>
+                <label>
+                  Valor da costura (R$/peça)
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={form.valor_costura ?? ''}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        valor_costura: e.target.value === '' ? null : Number(e.target.value),
+                      })
+                    }
+                    placeholder="Opcional"
                   />
                 </label>
                 <label>

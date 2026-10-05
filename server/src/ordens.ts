@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { sincronizarStatusPedidoFromOps } from './pedidos.js';
+import { lerDadosProducao } from './dadosProducao.js';
 import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
@@ -76,6 +77,7 @@ const criarOrdemSchema = z
       .transform((v) => (v ? v : undefined)),
     responsavel: textoOpcional,
     requisitos: z.array(requisitoSchema).optional(),
+    valor_costura: z.number().min(0, 'valor da costura não pode ser negativo').nullable().optional(),
   })
   .refine((d) => Boolean(d.cliente || d.cliente_id), {
     message: 'cliente é obrigatório',
@@ -126,6 +128,7 @@ const atualizarOrdemSchema = z.object({
     .transform((v) => (v === '' ? null : v))
     .optional(),
   requisitos: z.array(requisitoSchema).optional(),
+  valor_costura: z.number().min(0, 'valor da costura não pode ser negativo').nullable().optional(),
 });
 
 const fichaSchema = z.object({
@@ -164,6 +167,8 @@ export interface OrdemProducao {
   cliente_id: number | null;
   produto_id: number | null;
   variante_id: number | null;
+  referencia: string | null;
+  valor_costura: number | null;
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
@@ -189,11 +194,13 @@ export function createOrdensRouter(db: AppDatabase): Router {
     `INSERT INTO ordens_producao (
        empresa_id, cliente, produto, tamanho, quantidade, status,
        cliente_id, produto_id, variante_id,
-       codigo, prioridade, data_prevista, observacoes, responsavel, atualizado_em
+       codigo, prioridade, data_prevista, observacoes, responsavel,
+       referencia, valor_costura, atualizado_em
      ) VALUES (
        @empresa_id, @cliente, @produto, @tamanho, @quantidade, @status,
        @cliente_id, @produto_id, @variante_id,
-       @codigo, @prioridade, @data_prevista, @observacoes, @responsavel, datetime('now')
+       @codigo, @prioridade, @data_prevista, @observacoes, @responsavel,
+       @referencia, @valor_costura, datetime('now')
      )`,
   );
   const setCodigoStmt = db.prepare(
@@ -583,6 +590,17 @@ export function createOrdensRouter(db: AppDatabase): Router {
     };
   }
 
+  function retratoProducao(produtoId: number | null, empresaId: number) {
+    if (!produtoId) return { referencia: null as string | null, valor_costura: null as number | null };
+    const produto = db
+      .prepare('SELECT sku FROM produtos WHERE id = ? AND empresa_id = ?')
+      .get(produtoId, empresaId) as { sku: string | null } | undefined;
+    return {
+      referencia: produto?.sku ?? null,
+      valor_costura: lerDadosProducao(db, produtoId, empresaId).valor_costura,
+    };
+  }
+
   function garantirVarianteDoProduto(
     produtoId: number,
     varianteId: number | null,
@@ -678,7 +696,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
       where.push(
         `(ifnull(codigo,'') LIKE @q OR cliente LIKE @q OR produto LIKE @q
           OR tamanho LIKE @q OR ifnull(responsavel,'') LIKE @q
-          OR ifnull(observacoes,'') LIKE @q)`,
+          OR ifnull(observacoes,'') LIKE @q OR ifnull(referencia,'') LIKE @q)`,
       );
       params.q = `%${q}%`;
     }
@@ -751,6 +769,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         return res.status(409).json({ erro: 'Já existe uma OP com este código' });
       }
 
+      const retrato = retratoProducao(vinculos.produtoId, empresaId);
       const info = insertStmt.run({
         empresa_id: empresaId,
         cliente: vinculos.clienteNome,
@@ -766,6 +785,9 @@ export function createOrdensRouter(db: AppDatabase): Router {
         data_prevista: data.data_prevista ?? null,
         observacoes: data.observacoes ?? null,
         responsavel: data.responsavel ?? null,
+        referencia: retrato.referencia,
+        valor_costura:
+          data.valor_costura === undefined ? retrato.valor_costura : data.valor_costura,
       });
       const id = Number(info.lastInsertRowid);
       if (!data.codigo) {
@@ -842,6 +864,15 @@ export function createOrdensRouter(db: AppDatabase): Router {
 
         const quantidade = data.quantidade ?? atual.quantidade;
         const novoStatus = data.status ?? atual.status;
+        const produtoMudou = vinculos.produtoId !== atual.produto_id;
+        const retrato = retratoProducao(vinculos.produtoId, empresaId);
+        const valorCostura =
+          data.valor_costura !== undefined
+            ? data.valor_costura
+            : produtoMudou
+              ? retrato.valor_costura
+              : atual.valor_costura;
+        const referencia = produtoMudou ? retrato.referencia : atual.referencia;
 
         db.prepare(
           `UPDATE ordens_producao SET
@@ -858,6 +889,8 @@ export function createOrdensRouter(db: AppDatabase): Router {
              data_prevista = @data_prevista,
              observacoes = @observacoes,
              responsavel = @responsavel,
+             referencia = @referencia,
+             valor_costura = @valor_costura,
              atualizado_em = datetime('now')
            WHERE id = @id AND empresa_id = @empresa_id`,
         ).run({
@@ -877,6 +910,8 @@ export function createOrdensRouter(db: AppDatabase): Router {
             data.data_prevista === undefined ? atual.data_prevista : data.data_prevista,
           observacoes: data.observacoes === undefined ? atual.observacoes : data.observacoes,
           responsavel: data.responsavel === undefined ? atual.responsavel : data.responsavel,
+          referencia,
+          valor_costura: valorCostura,
         });
 
         if (data.requisitos) {

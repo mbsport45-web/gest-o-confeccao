@@ -41,6 +41,7 @@ const ROTAS_PROTEGIDAS: Array<{ metodo: string; caminho: string }> = [
   { metodo: 'DELETE', caminho: '/api/clientes/1' },
 
   { metodo: 'GET', caminho: '/api/produtos' },
+  { metodo: 'GET', caminho: '/api/produtos/por-referencia' },
   { metodo: 'GET', caminho: '/api/produtos/1' },
   { metodo: 'POST', caminho: '/api/produtos' },
   { metodo: 'PATCH', caminho: '/api/produtos/1/status' },
