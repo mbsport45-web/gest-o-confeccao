@@ -503,6 +503,16 @@ export function createDatabase(location: string) {
     );
     CREATE INDEX IF NOT EXISTS produto_dados_producao_empresa
       ON produto_dados_producao (empresa_id);
+
+    CREATE TABLE IF NOT EXISTS tecido_categorias (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL DEFAULT 1,
+      nome TEXT NOT NULL,
+      nome_norm TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (empresa_id, nome_norm)
+    );
+    CREATE INDEX IF NOT EXISTS tecido_categorias_empresa ON tecido_categorias (empresa_id);
   `);
 
   db.prepare(
@@ -511,6 +521,7 @@ export function createDatabase(location: string) {
 
   aplicarColunaEmpresaId(db);
   aplicarDadosProducao(db);
+  aplicarColunasEstoqueMovimento(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -524,6 +535,7 @@ const TABELAS_TENANT = [
   'produto_dados_producao',
   'produto_variantes',
   'materias_primas',
+  'tecido_categorias',
   'estoque_saldos',
   'estoque_movimentos',
   'produto_bom_itens',
@@ -559,6 +571,25 @@ function aplicarDadosProducao(db: AppDatabase) {
   }
   if (!cols.has('valor_costura')) {
     db.exec(`ALTER TABLE ordens_producao ADD COLUMN valor_costura REAL`);
+  }
+}
+
+function aplicarColunasEstoqueMovimento(db: AppDatabase) {
+  if (!tabelaExiste(db, 'estoque_movimentos')) return;
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(estoque_movimentos)`).all() as { name: string }[]).map(
+      (col) => col.name,
+    ),
+  );
+  const extras: Array<[string, string]> = [
+    ['unidade', 'ALTER TABLE estoque_movimentos ADD COLUMN unidade TEXT'],
+    ['custo', 'ALTER TABLE estoque_movimentos ADD COLUMN custo REAL'],
+    ['usuario_id', 'ALTER TABLE estoque_movimentos ADD COLUMN usuario_id INTEGER'],
+    ['referencia_tipo', 'ALTER TABLE estoque_movimentos ADD COLUMN referencia_tipo TEXT'],
+    ['referencia_id', 'ALTER TABLE estoque_movimentos ADD COLUMN referencia_id INTEGER'],
+  ];
+  for (const [nome, ddl] of extras) {
+    if (!cols.has(nome)) db.exec(ddl);
   }
 }
 
