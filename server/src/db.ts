@@ -535,6 +535,41 @@ export function createDatabase(location: string) {
     CREATE INDEX IF NOT EXISTS ordem_distribuicao_ordem ON ordem_distribuicao (ordem_id);
     CREATE INDEX IF NOT EXISTS ordem_distribuicao_variante
       ON ordem_distribuicao (empresa_id, variante_id);
+
+    CREATE TABLE IF NOT EXISTS enfestos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id),
+      produto_id INTEGER,
+      referencia TEXT,
+      produto_nome TEXT,
+      cor TEXT NOT NULL,
+      quantidade_pecas INTEGER NOT NULL,
+      tecido_id INTEGER REFERENCES materias_primas(id),
+      folhas INTEGER,
+      comprimento REAL,
+      metragem REAL,
+      peso REAL,
+      observacoes TEXT,
+      status TEXT NOT NULL DEFAULT 'em_enfesto',
+      unidade TEXT,
+      quantidade_consumida REAL,
+      custo_unitario REAL,
+      custo_total REAL,
+      saldo_anterior REAL,
+      saldo_posterior REAL,
+      movimento_id INTEGER REFERENCES estoque_movimentos(id),
+      usuario_id INTEGER,
+      finalizado_em TEXT,
+      cancelado_em TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS enfestos_empresa ON enfestos (empresa_id);
+    CREATE INDEX IF NOT EXISTS enfestos_ordem ON enfestos (empresa_id, ordem_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS enfestos_cor_ativa
+      ON enfestos (empresa_id, ordem_id, cor)
+      WHERE status != 'cancelado';
   `);
 
   aplicarColunaEmpresaId(db);
@@ -560,6 +595,7 @@ const TABELAS_TENANT = [
   'ordens_producao',
   'ordem_requisitos',
   'ordem_distribuicao',
+  'enfestos',
   'etapas_producao',
   'fornecedores',
   'pedidos_compra',

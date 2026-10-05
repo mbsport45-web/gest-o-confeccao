@@ -3,6 +3,7 @@ import { ClientesPage } from './ClientesPage';
 import { ComprasPage } from './ComprasPage';
 import { DashboardPage } from './DashboardPage';
 import { EtapasPage } from './EtapasPage';
+import { EnfestoPage } from './EnfestoPage';
 import { EstoquePage } from './EstoquePage';
 import { FinanceiroPage } from './FinanceiroPage';
 import { MateriasPrimasPage } from './MateriasPrimasPage';
@@ -39,6 +40,7 @@ type Pagina =
   | 'pedidos'
   | 'expedicao'
   | 'ordens'
+  | 'enfesto'
   | 'etapas'
   | 'compras'
   | 'financeiro'
@@ -56,6 +58,7 @@ const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'pedidos', label: 'Pedidos', modulo: 'pedidos' },
   { id: 'expedicao', label: 'Expedição', modulo: 'expedicao' },
   { id: 'ordens', label: 'Ordens de Produção', modulo: 'ordens' },
+  { id: 'enfesto', label: 'Enfesto', modulo: 'enfesto' },
   { id: 'etapas', label: 'Produção/Etapas', modulo: 'etapas' },
   { id: 'compras', label: 'Compras', modulo: ['compras', 'fornecedores'] },
   { id: 'financeiro', label: 'Financeiro', modulo: 'financeiro' },
@@ -100,6 +103,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
   ordens: {
     titulo: 'Ordens de Produção',
     sub: 'Ordens, prioridade e previsão',
+  },
+  enfesto: {
+    titulo: 'Enfesto',
+    sub: 'Consumo real de tecido por cor',
   },
   etapas: {
     titulo: 'Produção/Etapas',
@@ -308,6 +315,7 @@ function AppAutenticado({
               {paginaAtual === 'pedidos' && <PedidosPage sessao={sessao} onAbrirOp={abrirOp} />}
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
               {paginaAtual === 'ordens' && <OrdensPage sessao={sessao} />}
+              {paginaAtual === 'enfesto' && <EnfestoPage permissoes={sessao.permissoes} />}
               {paginaAtual === 'etapas' && <EtapasPage />}
               {paginaAtual === 'compras' && <ComprasPage />}
               {paginaAtual === 'financeiro' && <FinanceiroPage />}

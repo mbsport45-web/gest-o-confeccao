@@ -93,6 +93,7 @@ export type BaixaEnfestoInput = {
   tecido_id: number;
   quantidade: number;
   referencia_id?: number | null;
+  motivo?: string | null;
 };
 
 function normCategoria(nome: string): string {
@@ -172,7 +173,7 @@ export function baixarTecidoEnfesto(
   return movimentarTecido(db, empresaId, usuarioId, input.tecido_id, {
     tipo: 'saida',
     quantidade: input.quantidade,
-    motivo: 'Enfesto',
+    motivo: input.motivo?.trim() || 'Enfesto',
     referencia_tipo: 'enfesto',
     referencia_id: input.referencia_id ?? null,
   });

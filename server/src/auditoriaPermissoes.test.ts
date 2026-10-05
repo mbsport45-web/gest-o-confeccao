@@ -95,6 +95,13 @@ const ROTAS_PROTEGIDAS: Array<{ metodo: string; caminho: string }> = [
 
   { metodo: 'GET', caminho: '/api/ordens/ficha-tecnica' },
   { metodo: 'PUT', caminho: '/api/ordens/ficha-tecnica' },
+  { metodo: 'GET', caminho: '/api/enfesto' },
+  { metodo: 'POST', caminho: '/api/enfesto' },
+  { metodo: 'GET', caminho: '/api/enfesto/1' },
+  { metodo: 'PATCH', caminho: '/api/enfesto/1' },
+  { metodo: 'POST', caminho: '/api/enfesto/1/finalizar' },
+  { metodo: 'POST', caminho: '/api/enfesto/1/cancelar' },
+
   { metodo: 'GET', caminho: '/api/ordens' },
   { metodo: 'GET', caminho: '/api/ordens/1' },
   { metodo: 'POST', caminho: '/api/ordens' },
@@ -163,6 +170,7 @@ const ARQUIVOS_ROTAS = [
   'pedidos.ts',
   'expedicao.ts',
   'ordens.ts',
+  'enfesto.ts',
   'etapas.ts',
   'fornecedores.ts',
   'compras.ts',

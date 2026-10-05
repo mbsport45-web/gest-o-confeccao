@@ -8,6 +8,7 @@ import { createMateriasPrimasRouter } from './materiasPrimas.js';
 import { createTecidosRouter } from './tecidos.js';
 import { createEstoqueRouter } from './estoque.js';
 import { createEtapasRouter } from './etapas.js';
+import { createEnfestoRouter } from './enfesto.js';
 import { createFornecedoresRouter } from './fornecedores.js';
 import { createComprasRouter } from './compras.js';
 import { createFinanceiroRouter } from './financeiro.js';
@@ -100,6 +101,7 @@ export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
   app.use('/api/pedidos', createPedidosRouter(db));
   app.use('/api/expedicao', createExpedicaoRouter(db));
   app.use('/api/ordens', createOrdensRouter(db));
+  app.use('/api/enfesto', createEnfestoRouter(db));
   app.use('/api/etapas', createEtapasRouter(db));
   app.use('/api/fornecedores', createFornecedoresRouter(db));
   app.use('/api/compras', createComprasRouter(db));

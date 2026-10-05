@@ -1054,6 +1054,91 @@ export async function movimentarTecido(
   return res.json();
 }
 
+export type StatusEnfesto = 'pendente' | 'em_enfesto' | 'finalizado' | 'cancelado';
+
+export interface Enfesto {
+  id: number;
+  ordem_id: number;
+  produto_id: number | null;
+  referencia: string | null;
+  produto_nome: string | null;
+  cor: string;
+  quantidade_pecas: number;
+  tecido_id: number | null;
+  tecido_nome: string | null;
+  folhas: number | null;
+  comprimento: number | null;
+  metragem: number | null;
+  peso: number | null;
+  observacoes: string | null;
+  status: StatusEnfesto;
+  unidade: string | null;
+  quantidade_consumida: number | null;
+  custo_unitario: number | null;
+  custo_total: number | null;
+  saldo_anterior: number | null;
+  saldo_posterior: number | null;
+  movimento_id: number | null;
+  usuario_id: number | null;
+  usuario_nome: string | null;
+  finalizado_em: string | null;
+  criado_em: string;
+}
+
+export interface CorEnfesto {
+  cor: string;
+  quantidade_pecas: number;
+  tamanhos: Array<{ tamanho: string; quantidade: number }>;
+  status: StatusEnfesto;
+  enfesto: Enfesto | null;
+}
+
+export async function listarEnfestoOrdem(ordemId: number): Promise<{
+  ordem: { id: number; codigo: string | null; produto: string; referencia: string | null; quantidade: number };
+  cores: CorEnfesto[];
+}> {
+  const res = await apiFetch(`/api/enfesto?ordem_id=${ordemId}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function abrirEnfesto(ordemId: number, cor: string): Promise<Enfesto> {
+  const res = await apiFetch('/api/enfesto', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ordem_id: ordemId, cor }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function finalizarEnfesto(
+  id: number,
+  dados: {
+    tecido_id: number;
+    folhas: number;
+    comprimento: number;
+    metragem?: number | null;
+    peso?: number | null;
+    observacoes?: string;
+    unidade: UnidadeTecido;
+  },
+): Promise<Enfesto> {
+  const res = await apiFetch(`/api/enfesto/${id}/finalizar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function cancelarEnfesto(id: number): Promise<Enfesto> {
+  const res = await apiFetch(`/api/enfesto/${id}/cancelar`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export const TIPOS_MOVIMENTO = ['entrada', 'saida', 'ajuste'] as const;
 export type TipoMovimento = (typeof TIPOS_MOVIMENTO)[number];
 
@@ -1748,6 +1833,7 @@ export const PAPEIS_USUARIO = [
   'vendas',
   'estoque',
   'producao',
+  'cortador',
 ] as const;
 export type PapelUsuario = (typeof PAPEIS_USUARIO)[number];
 export const PAPEIS_CONVITE = [
@@ -1756,6 +1842,7 @@ export const PAPEIS_CONVITE = [
   'vendas',
   'estoque',
   'producao',
+  'cortador',
 ] as const;
 export type PapelConvite = (typeof PAPEIS_CONVITE)[number];
 
@@ -1769,6 +1856,7 @@ export const MODULOS = [
   'expedicao',
   'ordens',
   'etapas',
+  'enfesto',
   'fornecedores',
   'compras',
   'financeiro',
@@ -2004,6 +2092,7 @@ export const PAPEL_LABEL: Record<PapelUsuario, string> = {
   vendas: 'Vendas',
   estoque: 'Estoque',
   producao: 'Produção',
+  cortador: 'Cortador',
 };
 
 export function temPermissao(
