@@ -6,6 +6,7 @@ import { EtapasPage } from './EtapasPage';
 import { EstoquePage } from './EstoquePage';
 import { FinanceiroPage } from './FinanceiroPage';
 import { MateriasPrimasPage } from './MateriasPrimasPage';
+import { TecidosPage } from './TecidosPage';
 import { OrdemDetalhePage } from './OrdemDetalhePage';
 import { OrdensPage } from './OrdensPage';
 import { PedidosPage } from './PedidosPage';
@@ -33,6 +34,7 @@ type Pagina =
   | 'clientes'
   | 'produtos'
   | 'materiais'
+  | 'tecidos'
   | 'estoque'
   | 'pedidos'
   | 'expedicao'
@@ -49,6 +51,7 @@ const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'clientes', label: 'Clientes', modulo: 'clientes' },
   { id: 'produtos', label: 'Produtos', modulo: 'produtos' },
   { id: 'materiais', label: 'Materiais', modulo: 'materiais' },
+  { id: 'tecidos', label: 'Tecidos', modulo: 'materiais' },
   { id: 'estoque', label: 'Estoque', modulo: 'estoque' },
   { id: 'pedidos', label: 'Pedidos', modulo: 'pedidos' },
   { id: 'expedicao', label: 'Expedição', modulo: 'expedicao' },
@@ -77,6 +80,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
   materiais: {
     titulo: 'Materiais',
     sub: 'Cadastro de matérias-primas',
+  },
+  tecidos: {
+    titulo: 'Tecidos',
+    sub: 'Cadastro e estoque por quilo ou metro',
   },
   estoque: {
     titulo: 'Estoque',
@@ -296,6 +303,7 @@ function AppAutenticado({
               {paginaAtual === 'clientes' && <ClientesPage sessao={sessao} />}
               {paginaAtual === 'produtos' && <ProdutosPage sessao={sessao} />}
               {paginaAtual === 'materiais' && <MateriasPrimasPage sessao={sessao} />}
+              {paginaAtual === 'tecidos' && <TecidosPage sessao={sessao} />}
               {paginaAtual === 'estoque' && <EstoquePage />}
               {paginaAtual === 'pedidos' && <PedidosPage sessao={sessao} onAbrirOp={abrirOp} />}
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
