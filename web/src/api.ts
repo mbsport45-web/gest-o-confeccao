@@ -51,6 +51,13 @@ export interface OrdemRequisito {
   suficiente?: boolean;
 }
 
+export interface DistribuicaoOp {
+  variante_id: number;
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
 export interface OrdemProducao {
   id: number;
   codigo: string | null;
@@ -71,6 +78,7 @@ export interface OrdemProducao {
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  distribuicao?: DistribuicaoOp[];
 }
 
 export interface NovaOrdem {
@@ -89,6 +97,7 @@ export interface NovaOrdem {
   responsavel?: string;
   requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
   valor_costura?: number | null;
+  distribuicao?: Array<{ variante_id: number; quantidade: number }>;
 }
 
 export interface ListaOrdens {

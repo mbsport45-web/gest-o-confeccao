@@ -49,6 +49,11 @@ const requisitoSchema = z.object({
   quantidade: z.number().positive('quantidade deve ser maior que zero'),
 });
 
+const distribuicaoSchema = z.object({
+  variante_id: z.number().int().positive(),
+  quantidade: z.number().int().min(0, 'quantidade não pode ser negativa'),
+});
+
 const criarOrdemSchema = z
   .object({
     cliente: z.string().trim().min(1, 'cliente é obrigatório').optional(),
@@ -78,6 +83,7 @@ const criarOrdemSchema = z
     responsavel: textoOpcional,
     requisitos: z.array(requisitoSchema).optional(),
     valor_costura: z.number().min(0, 'valor da costura não pode ser negativo').nullable().optional(),
+    distribuicao: z.array(distribuicaoSchema).optional(),
   })
   .refine((d) => Boolean(d.cliente || d.cliente_id), {
     message: 'cliente é obrigatório',
@@ -87,7 +93,7 @@ const criarOrdemSchema = z
     message: 'produto é obrigatório',
     path: ['produto'],
   })
-  .refine((d) => Boolean(d.tamanho || d.variante_id), {
+  .refine((d) => Boolean(d.tamanho || d.variante_id || (d.distribuicao && d.distribuicao.length > 0)), {
     message: 'tamanho é obrigatório',
     path: ['tamanho'],
   });
@@ -129,6 +135,7 @@ const atualizarOrdemSchema = z.object({
     .optional(),
   requisitos: z.array(requisitoSchema).optional(),
   valor_costura: z.number().min(0, 'valor da costura não pode ser negativo').nullable().optional(),
+  distribuicao: z.array(distribuicaoSchema).optional(),
 });
 
 const fichaSchema = z.object({
@@ -149,6 +156,13 @@ export interface OrdemRequisito {
   codigo: string | null;
   estoque_disponivel: number;
   suficiente: boolean;
+}
+
+export interface DistribuicaoOp {
+  variante_id: number;
+  cor: string;
+  tamanho: string;
+  quantidade: number;
 }
 
 export interface OrdemProducao {
@@ -172,6 +186,7 @@ export interface OrdemProducao {
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  distribuicao?: DistribuicaoOp[];
 }
 
 function podeTransicionar(
@@ -209,6 +224,22 @@ export function createOrdensRouter(db: AppDatabase): Router {
   );
   const deleteStmt = db.prepare('DELETE FROM ordens_producao WHERE id = ? AND empresa_id = ?');
   const deleteRequisitos = db.prepare('DELETE FROM ordem_requisitos WHERE ordem_id = ?');
+  const deleteDistribuicao = db.prepare(
+    'DELETE FROM ordem_distribuicao WHERE ordem_id = ? AND empresa_id = ?',
+  );
+  const insertDistribuicao = db.prepare(
+    `INSERT INTO ordem_distribuicao (
+       empresa_id, ordem_id, variante_id, cor, tamanho, quantidade
+     ) VALUES (
+       @empresa_id, @ordem_id, @variante_id, @cor, @tamanho, @quantidade
+     )`,
+  );
+  const listDistribuicaoStmt = db.prepare(
+    `SELECT variante_id, cor, tamanho, quantidade
+       FROM ordem_distribuicao
+      WHERE ordem_id = ? AND empresa_id = ?
+      ORDER BY cor, tamanho, id`,
+  );
   const insertRequisito = db.prepare(
     `INSERT INTO ordem_requisitos (
        empresa_id, ordem_id, materia_prima_id, quantidade_unitaria, quantidade_total, unidade
@@ -296,11 +327,118 @@ export function createOrdensRouter(db: AppDatabase): Router {
     }));
   }
 
+  function mapDistribuicao(ordemId: number, empresaId: number): DistribuicaoOp[] {
+    return listDistribuicaoStmt.all(ordemId, empresaId) as DistribuicaoOp[];
+  }
+
   function mapOrdem(id: number, empresaId: number, comRequisitos = false): OrdemProducao | undefined {
     const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
     if (!ordem) return undefined;
-    if (comRequisitos) ordem.requisitos = mapRequisitos(id);
+    if (comRequisitos) {
+      ordem.requisitos = mapRequisitos(id);
+      ordem.distribuicao = mapDistribuicao(id, empresaId);
+    }
     return ordem;
+  }
+
+  function montarDistribuicao(
+    itens: Array<{ variante_id: number; quantidade: number }> | undefined,
+    produtoId: number | null,
+    quantidadeOp: number,
+    empresaId: number,
+  ): {
+    linhas: DistribuicaoOp[];
+    varianteId: number | null;
+    tamanho: string;
+  } | null {
+    if (!itens || itens.length === 0) return null;
+    if (!produtoId) {
+      throw Object.assign(
+        new Error('A distribuição de corte exige um produto cadastrado'),
+        { status: 400 },
+      );
+    }
+
+    const vistos = new Set<number>();
+    const linhas: DistribuicaoOp[] = [];
+    let soma = 0;
+    for (const item of itens) {
+      if (vistos.has(item.variante_id)) {
+        throw Object.assign(new Error('Variante repetida na distribuição de corte'), { status: 400 });
+      }
+      vistos.add(item.variante_id);
+      if (!Number.isInteger(item.quantidade) || item.quantidade < 0) {
+        throw Object.assign(new Error('quantidade não pode ser negativa'), { status: 400 });
+      }
+      const variante = getVariante.get(item.variante_id, empresaId) as
+        | { id: number; produto_id: number; cor: string; tamanho: string }
+        | undefined;
+      if (!variante || variante.produto_id !== produtoId) {
+        throw Object.assign(new Error('Variante não pertence ao produto'), { status: 400 });
+      }
+      linhas.push({
+        variante_id: variante.id,
+        cor: variante.cor,
+        tamanho: variante.tamanho,
+        quantidade: item.quantidade,
+      });
+      soma += item.quantidade;
+    }
+
+    if (soma !== quantidadeOp) {
+      throw Object.assign(
+        new Error(
+          `A soma da distribuição (${soma}) deve ser igual à quantidade da OP (${quantidadeOp})`,
+        ),
+        { status: 400 },
+      );
+    }
+
+    const positivas = linhas.filter((linha) => linha.quantidade > 0);
+    if (positivas.length === 1) {
+      return {
+        linhas,
+        varianteId: positivas[0].variante_id,
+        tamanho: positivas[0].tamanho,
+      };
+    }
+    const tamanhos: string[] = [];
+    for (const linha of positivas) {
+      if (!tamanhos.includes(linha.tamanho)) tamanhos.push(linha.tamanho);
+    }
+    return {
+      linhas,
+      varianteId: null,
+      tamanho: tamanhos.join(', ') || 'grade',
+    };
+  }
+
+  function gravarDistribuicao(ordemId: number, linhas: DistribuicaoOp[], empresaId: number) {
+    deleteDistribuicao.run(ordemId, empresaId);
+    for (const linha of linhas) {
+      insertDistribuicao.run({
+        empresa_id: empresaId,
+        ordem_id: ordemId,
+        variante_id: linha.variante_id,
+        cor: linha.cor,
+        tamanho: linha.tamanho,
+        quantidade: linha.quantidade,
+      });
+    }
+  }
+
+  function exigirDistribuicaoCompativel(ordemId: number, quantidade: number, empresaId: number) {
+    const linhas = mapDistribuicao(ordemId, empresaId);
+    if (!linhas.length) return;
+    const soma = linhas.reduce((total, linha) => total + linha.quantidade, 0);
+    if (soma !== quantidade) {
+      throw Object.assign(
+        new Error(
+          `A soma da distribuição (${soma}) deve ser igual à quantidade da OP (${quantidade})`,
+        ),
+        { status: 400 },
+      );
+    }
   }
 
   function carregarBom(produtoId: number, varianteId: number | null, empresaId: number) {
@@ -764,7 +902,22 @@ export function createOrdensRouter(db: AppDatabase): Router {
     try {
       const data = parsed.data;
       const empresaId = empresaDaSessao(req);
-      const vinculos = resolverVinculos(data, empresaId);
+      const previa = resolverVinculos(
+        {
+          ...data,
+          tamanho: data.tamanho || (data.distribuicao?.length ? 'grade' : undefined),
+        },
+        empresaId,
+      );
+      const dist = montarDistribuicao(
+        data.distribuicao,
+        previa.produtoId,
+        data.quantidade,
+        empresaId,
+      );
+      const vinculos = dist
+        ? { ...previa, varianteId: dist.varianteId, tamanho: dist.tamanho }
+        : previa;
       if (data.codigo && getByCodigo.get(data.codigo, 0, empresaId)) {
         return res.status(409).json({ erro: 'Já existe uma OP com este código' });
       }
@@ -802,6 +955,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         }));
       }
       if (itens.length) gravarRequisitos(id, data.quantidade, itens, empresaId);
+      if (dist) gravarDistribuicao(id, dist.linhas, empresaId);
 
       const criada = mapOrdem(id, empresaId, true)!;
       if (CONSOME_ESTOQUE.has(criada.status)) {
@@ -853,16 +1007,39 @@ export function createOrdensRouter(db: AppDatabase): Router {
 
     try {
       const aplicar = db.transaction(() => {
+        const quantidade = data.quantidade ?? atual.quantidade;
+        const dist =
+          data.distribuicao && data.distribuicao.length > 0
+            ? montarDistribuicao(
+                data.distribuicao,
+                data.produto_id === undefined ? atual.produto_id : data.produto_id,
+                quantidade,
+                empresaId,
+              )
+            : null;
         const vinculos = resolverVinculos({
           cliente: data.cliente ?? atual.cliente,
           produto: data.produto ?? atual.produto,
-          tamanho: data.tamanho ?? atual.tamanho,
+          tamanho: dist?.tamanho ?? data.tamanho ?? atual.tamanho,
           cliente_id: data.cliente_id === undefined ? atual.cliente_id : data.cliente_id,
           produto_id: data.produto_id === undefined ? atual.produto_id : data.produto_id,
-          variante_id: data.variante_id === undefined ? atual.variante_id : data.variante_id,
+          variante_id: dist
+            ? dist.varianteId
+            : data.variante_id === undefined
+              ? atual.variante_id
+              : data.variante_id,
         }, empresaId);
-
-        const quantidade = data.quantidade ?? atual.quantidade;
+        if (dist && dist.linhas.some((linha) => linha.variante_id) && vinculos.produtoId) {
+          const alheia = dist.linhas.find((linha) => {
+            const variante = getVariante.get(linha.variante_id, empresaId) as
+              | { produto_id: number }
+              | undefined;
+            return !variante || variante.produto_id !== vinculos.produtoId;
+          });
+          if (alheia) {
+            throw Object.assign(new Error('Variante não pertence ao produto'), { status: 400 });
+          }
+        }
         const novoStatus = data.status ?? atual.status;
         const produtoMudou = vinculos.produtoId !== atual.produto_id;
         const retrato = retratoProducao(vinculos.produtoId, empresaId);
@@ -930,6 +1107,14 @@ export function createOrdensRouter(db: AppDatabase): Router {
             })),
             empresaId,
           );
+        }
+
+        if (data.distribuicao && data.distribuicao.length === 0) {
+          deleteDistribuicao.run(id, empresaId);
+        } else if (dist) {
+          gravarDistribuicao(id, dist.linhas, empresaId);
+        } else if (data.quantidade !== undefined && data.quantidade !== atual.quantidade) {
+          exigirDistribuicaoCompativel(id, quantidade, empresaId);
         }
 
         const depois = getStmt.get(id, empresaId) as OrdemProducao;

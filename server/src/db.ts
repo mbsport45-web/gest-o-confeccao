@@ -519,6 +519,24 @@ export function createDatabase(location: string) {
     `INSERT OR IGNORE INTO empresas (id, nome, status) VALUES (1, 'Empresa 1', 'ativa')`,
   ).run();
 
+  db.exec(`
+    -- Distribuição de corte da OP: quantidade por variante (cor × tamanho) já cadastrada.
+    CREATE TABLE IF NOT EXISTS ordem_distribuicao (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL DEFAULT 1,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id) ON DELETE CASCADE,
+      variante_id INTEGER NOT NULL REFERENCES produto_variantes(id),
+      cor TEXT NOT NULL,
+      tamanho TEXT NOT NULL,
+      quantidade INTEGER NOT NULL CHECK (quantidade >= 0),
+      UNIQUE (ordem_id, variante_id)
+    );
+    CREATE INDEX IF NOT EXISTS ordem_distribuicao_empresa ON ordem_distribuicao (empresa_id);
+    CREATE INDEX IF NOT EXISTS ordem_distribuicao_ordem ON ordem_distribuicao (ordem_id);
+    CREATE INDEX IF NOT EXISTS ordem_distribuicao_variante
+      ON ordem_distribuicao (empresa_id, variante_id);
+  `);
+
   aplicarColunaEmpresaId(db);
   aplicarDadosProducao(db);
   aplicarColunasEstoqueMovimento(db);
@@ -541,6 +559,7 @@ const TABELAS_TENANT = [
   'produto_bom_itens',
   'ordens_producao',
   'ordem_requisitos',
+  'ordem_distribuicao',
   'etapas_producao',
   'fornecedores',
   'pedidos_compra',
