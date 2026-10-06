@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   abrirEnfesto,
+  atualizarGradeEnfesto,
   cancelarEnfesto,
   finalizarEnfesto,
   listarEnfestoOrdem,
@@ -15,6 +16,13 @@ import {
   type Tecido,
   type UnidadeTecido,
 } from './api';
+import {
+  atualizarQuantidadeGrade,
+  colunasDaGrade,
+  gradeDaCorFecha,
+  mensagemGradeDivergente,
+  somaQuantidades,
+} from './DistribuicaoCorte';
 
 const STATUS_LABEL: Record<string, string> = {
   pendente: 'Pendente',
@@ -23,12 +31,35 @@ const STATUS_LABEL: Record<string, string> = {
   cancelado: 'Cancelado',
 };
 
+type CelulaGrade = { tamanho: string; quantidade: number };
+
+function chave(valor: string): string {
+  return valor.trim().toLowerCase();
+}
+
+function montarGrades(
+  painel: CorEnfesto[],
+  anterior: Record<string, CelulaGrade[]>,
+  preservarDivergencia: boolean,
+): Record<string, CelulaGrade[]> {
+  const proximo: Record<string, CelulaGrade[]> = {};
+  for (const cor of painel) {
+    const id = chave(cor.cor);
+    const local = anterior[id];
+    const manter = preservarDivergencia && local && !gradeDaCorFecha(local, cor.quantidade_pecas);
+    proximo[id] = manter ? local : cor.tamanhos.map((item) => ({ ...item }));
+  }
+  return proximo;
+}
+
 export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
   const [ordens, setOrdens] = useState<OrdemProducao[]>([]);
   const [tecidos, setTecidos] = useState<Tecido[]>([]);
   const [ordemId, setOrdemId] = useState<number | null>(null);
   const [tecidosDaOp, setTecidosDaOp] = useState<number[]>([]);
   const [cores, setCores] = useState<CorEnfesto[]>([]);
+  const [grades, setGrades] = useState<Record<string, CelulaGrade[]>>({});
+  const gradesRef = useRef(grades);
   const [enfesto, setEnfesto] = useState<Enfesto | null>(null);
   const [tecidoId, setTecidoId] = useState('');
   const [folhas, setFolhas] = useState('');
@@ -44,10 +75,20 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
   const podeCancelar = temPermissao(permissoes, 'enfesto', 'excluir');
   const travado = enfesto?.status === 'finalizado' || enfesto?.status === 'cancelado';
 
-  const carregarCores = useCallback(async (id: number) => {
-    const painel = await listarEnfestoOrdem(id);
-    setCores(painel.cores);
+  const aplicarGrades = useCallback((painel: CorEnfesto[], preservarDivergencia: boolean) => {
+    const proximo = montarGrades(painel, preservarDivergencia ? gradesRef.current : {}, preservarDivergencia);
+    gradesRef.current = proximo;
+    setGrades(proximo);
+    setCores(painel);
   }, []);
+
+  const carregarCores = useCallback(
+    async (id: number, preservarDivergencia = false) => {
+      const painel = await listarEnfestoOrdem(id);
+      aplicarGrades(painel.cores, preservarDivergencia);
+    },
+    [aplicarGrades],
+  );
 
   useEffect(() => {
     listarOrdensPaginado({ por_pagina: 30, pagina: 1 })
@@ -59,8 +100,17 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
   }, []);
 
   useEffect(() => {
+    if (!ordemId) {
+      gradesRef.current = {};
+      setGrades({});
+      setCores([]);
+      return;
+    }
+    carregarCores(ordemId, false).catch((err: Error) => setErro(err.message));
+  }, [ordemId, carregarCores]);
+
+  useEffect(() => {
     if (!ordemId) return;
-    carregarCores(ordemId).catch((err: Error) => setErro(err.message));
     obterOrdem(ordemId)
       .then((ordem) => {
         const ids = (ordem.requisitos ?? [])
@@ -69,7 +119,7 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
         setTecidosDaOp(ids);
       })
       .catch(() => setTecidosDaOp([]));
-  }, [ordemId, carregarCores, tecidos]);
+  }, [ordemId, tecidos]);
 
   function preencher(atual: Enfesto) {
     setEnfesto(atual);
@@ -90,7 +140,7 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
       if (!atual.tecido_id && tecidosDaOp.length === 1) {
         setTecidoId(String(tecidosDaOp[0]));
       }
-      await carregarCores(ordemId);
+      await carregarCores(ordemId, true);
     } catch (err) {
       setErro((err as Error).message);
     }
@@ -102,6 +152,13 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
     setSalvando(true);
     setErro(null);
     try {
+      const corAberta = cores.find((item) => chave(item.cor) === chave(enfesto.cor));
+      const itens = gradesRef.current[chave(enfesto.cor)] ?? corAberta?.tamanhos ?? [];
+      const planejada = corAberta?.quantidade_pecas ?? enfesto.quantidade_pecas;
+      if (!gradeDaCorFecha(itens, planejada)) {
+        setErro(mensagemGradeDivergente(enfesto.cor, somaQuantidades(itens), planejada));
+        return;
+      }
       const atual = await finalizarEnfesto(enfesto.id, {
         tecido_id: tecido.id,
         folhas: Number(folhas),
@@ -110,9 +167,10 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
         peso: peso === '' ? null : Number(peso),
         observacoes,
         unidade: tecido.unidade,
+        ...(itens.length ? { tamanhos: itens } : {}),
       });
       preencher(atual);
-      if (ordemId) await carregarCores(ordemId);
+      if (ordemId) await carregarCores(ordemId, true);
       const lista = await listarTecidos({ por_pagina: 100, status: 'ativo' });
       setTecidos(lista.data);
     } catch (err) {
@@ -121,6 +179,50 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
       setSalvando(false);
     }
   }
+
+  function alterarCelula(cor: string, tamanho: string, bruto: string) {
+    const quantidade = bruto === '' ? 0 : Math.max(0, Math.trunc(Number(bruto)));
+    const valor = Number.isFinite(quantidade) ? quantidade : 0;
+    const id = chave(cor);
+    const atual = gradesRef.current;
+    const proximo = {
+      ...atual,
+      [id]: atualizarQuantidadeGrade(atual[id] ?? [], tamanho, valor),
+    };
+    gradesRef.current = proximo;
+    setGrades(proximo);
+  }
+
+  async function persistirCor(cor: CorEnfesto) {
+    if (!ordemId || cor.status === 'finalizado' || !cor.grade_persistida) return;
+    const itens = gradesRef.current[chave(cor.cor)] ?? cor.tamanhos;
+    if (!gradeDaCorFecha(itens, cor.quantidade_pecas)) return;
+    const mudou = itens.some((item) => {
+      const original = cor.tamanhos.find((atual) => chave(atual.tamanho) === chave(item.tamanho));
+      return !original || original.quantidade !== item.quantidade;
+    });
+    if (!mudou) return;
+    setErro(null);
+    try {
+      await atualizarGradeEnfesto(ordemId, cor.cor, itens);
+      await carregarCores(ordemId, true);
+    } catch (err) {
+      setErro((err as Error).message);
+    }
+  }
+
+  const colunas = colunasDaGrade(
+    cores.map((cor) => ({ tamanhos: grades[chave(cor.cor)] ?? cor.tamanhos })),
+  );
+  const pendencias = cores.flatMap((cor) => {
+    const itens = grades[chave(cor.cor)] ?? cor.tamanhos;
+    if (gradeDaCorFecha(itens, cor.quantidade_pecas)) return [];
+    return [mensagemGradeDivergente(cor.cor, somaQuantidades(itens), cor.quantidade_pecas)];
+  });
+  const corAberta = enfesto ? cores.find((item) => chave(item.cor) === chave(enfesto.cor)) : undefined;
+  const itensAbertos = enfesto ? (grades[chave(enfesto.cor)] ?? corAberta?.tamanhos ?? []) : [];
+  const planejadaAberta = corAberta?.quantidade_pecas ?? enfesto?.quantidade_pecas ?? 0;
+  const gradeAbertaOk = !enfesto || gradeDaCorFecha(itensAbertos, planejadaAberta);
 
   return (
     <main className="app__main">
@@ -149,32 +251,67 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
         </label>
         {erro && <p className="erro">{erro}</p>}
         {ordemId && (
-          <table className="tabela">
-            <thead>
-              <tr>
-                <th>Cor</th>
-                <th>Quantidade da OP</th>
-                <th>Tamanhos</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {cores.map((cor) => (
-                <tr key={cor.cor}>
-                  <td>{cor.cor}</td>
-                  <td>{cor.quantidade_pecas}</td>
-                  <td>{cor.tamanhos.map((item) => `${item.tamanho}: ${item.quantidade}`).join(' · ') || '—'}</td>
-                  <td>{STATUS_LABEL[cor.status] ?? cor.status}</td>
-                  <td>
-                    <button type="button" onClick={() => void abrirCor(cor.cor)}>
-                      {cor.status === 'pendente' ? 'Enfestar' : 'Abrir'}
-                    </button>
-                  </td>
+          <div className="grade-corte">
+            <table className="tabela tabela--compacta grade-corte__tabela">
+              <thead>
+                <tr>
+                  <th>Cor</th>
+                  {colunas.map((tamanho) => (
+                    <th key={tamanho}>{tamanho}</th>
+                  ))}
+                  <th>Total</th>
+                  <th>Qtd da OP</th>
+                  <th>Status</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {cores.map((cor) => {
+                  const itens = grades[chave(cor.cor)] ?? cor.tamanhos;
+                  const total = itens.length ? somaQuantidades(itens) : cor.quantidade_pecas;
+                  const fecha = gradeDaCorFecha(itens, cor.quantidade_pecas);
+                  const travada = cor.status === 'finalizado';
+                  const ativa = enfesto ? chave(enfesto.cor) === chave(cor.cor) : false;
+                  return (
+                    <tr key={cor.cor} className={ativa ? 'grade-linha--ativa' : undefined}>
+                      <th scope="row">{cor.cor}</th>
+                      {colunas.map((tamanho) => {
+                        const celula = itens.find((item) => chave(item.tamanho) === chave(tamanho));
+                        if (!celula) return <td key={tamanho}>—</td>;
+                        return (
+                          <td key={tamanho}>
+                            <input
+                              aria-label={`${cor.cor} ${tamanho}`}
+                              type="number"
+                              min={0}
+                              step={1}
+                              disabled={travada}
+                              value={celula.quantidade}
+                              onChange={(e) => alterarCelula(cor.cor, tamanho, e.target.value)}
+                              onBlur={() => void persistirCor(cor)}
+                            />
+                          </td>
+                        );
+                      })}
+                      <td className={fecha ? 'grade-total' : 'grade-total grade-total--divergente'}>{total}</td>
+                      <td>{cor.quantidade_pecas}</td>
+                      <td>{STATUS_LABEL[cor.status] ?? cor.status}</td>
+                      <td>
+                        <button type="button" onClick={() => void abrirCor(cor.cor)}>
+                          {cor.status === 'pendente' ? 'Enfestar' : 'Abrir'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {pendencias.map((mensagem) => (
+              <p key={mensagem} className="erro">
+                {mensagem}
+              </p>
+            ))}
+          </div>
         )}
       </section>
 
@@ -187,15 +324,15 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
             {enfesto.referencia ? `${enfesto.referencia} — ` : ''}
             {enfesto.produto_nome}. A cor veio da OP. O consumo desta cor não se mistura com as outras.
           </p>
-          <ul className="lista-tamanhos">
-            {(cores.find((item) => item.cor.trim().toLowerCase() === enfesto.cor.trim().toLowerCase())
-              ?.tamanhos ?? []
-            ).map((item) => (
-              <li key={item.tamanho}>
-                {item.tamanho} = {item.quantidade}
-              </li>
-            ))}
-          </ul>
+          <p className="dica">
+            Total da grade: {itensAbertos.length ? somaQuantidades(itensAbertos) : planejadaAberta} / planejado{' '}
+            {planejadaAberta}.
+          </p>
+          {!gradeAbertaOk && (
+            <p className="erro">
+              {mensagemGradeDivergente(enfesto.cor, somaQuantidades(itensAbertos), planejadaAberta)}
+            </p>
+          )}
           {enfesto.status === 'finalizado' && (
             <p className="dica">
               Consumo de {enfesto.quantidade_consumida} {enfesto.unidade}. Estoque de{' '}
@@ -286,7 +423,7 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
               />
             </label>
             {!travado && (
-              <button type="submit" disabled={salvando || !tecido}>
+              <button type="submit" disabled={salvando || !tecido || !gradeAbertaOk}>
                 {salvando ? 'Finalizando…' : 'Finalizar Enfesto'}
               </button>
             )}
@@ -298,7 +435,7 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
                 void cancelarEnfesto(enfesto.id)
                   .then((atual) => {
                     preencher(atual);
-                    if (ordemId) return carregarCores(ordemId);
+                    if (ordemId) return carregarCores(ordemId, true);
                   })
                   .catch((err: Error) => setErro(err.message))
               }

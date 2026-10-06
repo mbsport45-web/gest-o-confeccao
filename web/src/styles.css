@@ -701,6 +701,15 @@ button {
   font-weight: 700;
 }
 
+.grade-total--divergente {
+  color: #fca5a5;
+}
+
+.grade-linha--ativa th,
+.grade-linha--ativa td {
+  background: rgba(99, 102, 241, 0.12);
+}
+
 .tabela--compacta input {
   width: 100%;
   background: var(--surface-2);
