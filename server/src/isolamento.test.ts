@@ -459,6 +459,7 @@ describe('isolamento por empresa da sessão', () => {
     ).toBe(404);
     expect((await empresa2.delete(`/api/compras/${ids.compra}/itens/${ids.itemCompra}`)).status).toBe(404);
     expect((await empresa2.post(`/api/compras/${ids.compra}/receber`)).status).toBe(404);
+    expect((await empresa2.post(`/api/compras/${ids.compra}/confirmar`)).status).toBe(404);
     expect((await empresa2.patch(`/api/financeiro/lancamentos/${ids.lancamento}`).send({ valor: 1 })).status).toBe(
       404,
     );

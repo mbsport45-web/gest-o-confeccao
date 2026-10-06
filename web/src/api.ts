@@ -1485,6 +1485,7 @@ export interface PedidoCompra {
   forma_pagamento: string | null;
   condicao_pagamento: string | null;
   vencimento: string | null;
+  nota_fiscal: string | null;
   fornecedor?: string;
   itens?: CompraItem[];
 }
@@ -1569,6 +1570,8 @@ export type CompraPayload = {
   forma_pagamento?: string;
   condicao_pagamento?: string;
   vencimento?: string;
+  nota_fiscal?: string;
+  confirmar?: boolean;
   itens?: Array<{
     materia_prima_id?: number;
     produto_id?: number;
@@ -1597,6 +1600,16 @@ export async function atualizarCompra(
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function confirmarCompra(id: number): Promise<PedidoCompra> {
+  const res = await apiFetch(`/api/compras/${id}/confirmar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
   });
   if (!res.ok) return parseError(res);
   return res.json();

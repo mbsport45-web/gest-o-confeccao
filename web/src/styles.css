@@ -227,6 +227,10 @@ body {
   grid-template-columns: 1fr 400px;
 }
 
+.app__main--compras {
+  grid-template-columns: minmax(0, 1fr) 520px;
+}
+
 .app__main--expedicao.app__main--expedicao-solo {
   grid-template-columns: 1fr;
 }
@@ -784,6 +788,23 @@ button {
 
 .filtros--compras {
   grid-template-columns: 1.4fr 1fr 1fr 0.9fr 0.9fr;
+}
+
+.compra-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.compra-item .form__row {
+  flex-wrap: wrap;
+}
+
+.form input[readonly] {
+  color: var(--muted);
 }
 
 .filtros--pedidos {
