@@ -270,7 +270,9 @@ describe('auditoria de permissões por papel nas APIs', () => {
         const { modulo, acao, permitido } = esperado(papel, rota.metodo, rota.caminho);
         const res = await chamar(api, rota.metodo, rota.caminho);
         if (permitido) {
-          if (res.status === 401 || (res.status === 403 && res.body.modulo)) {
+          const rotaSemModulo =
+            res.status === 403 && res.body?.erro === 'Sem permissão para este recurso';
+          if (res.status === 401 || (res.status === 403 && res.body.modulo) || rotaSemModulo) {
             falhas.push(
               `${papel} deveria passar no gate em ${rota.metodo} ${rota.caminho} (${acao} ${modulo}) mas recebeu ${res.status} ${JSON.stringify(res.body)}`,
             );
