@@ -1,17 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
-import { autenticar, type TestApi } from './httpTest.js';
+import { autenticar, autenticarNovaEmpresa, type TestApi } from './httpTest.js';
 
 const CNPJ = '11444777000161';
 
 describe('API de compras', () => {
   let db: AppDatabase;
   let api: TestApi;
+  let app: ReturnType<typeof createApp>;
 
   beforeEach(async () => {
     db = createDatabase(':memory:');
-    api = await autenticar(createApp(db));
+    app = createApp(db);
+    api = await autenticar(app);
   });
 
   afterEach(() => {
@@ -128,6 +130,9 @@ describe('API de compras', () => {
     const hist = await api.get('/api/estoque/movimentos').query({ tipo: 'entrada' });
     expect(hist.body.total).toBeGreaterThanOrEqual(1);
     expect(hist.body.data[0].motivo).toMatch(/Compra CP-/);
+    expect(hist.body.data[0].referencia_tipo).toBe('compra');
+    expect(hist.body.data[0].referencia_id).toBe(id);
+    expect(hist.body.data[0].unidade).toBe('KG');
   });
 
   it('aceita recebimento parcial e bloqueia quantidade maior que o pedido', async () => {
@@ -234,5 +239,224 @@ describe('API de compras', () => {
     expect(fluxo.status).toBe(201);
     const estoque = await api.get('/api/estoque');
     expect(estoque.status).toBe(200);
+  });
+
+  async function criarTecido(nome: string, unidade: 'KG' | 'METRO') {
+    const res = await api.post('/api/tecidos').send({
+      nome,
+      categoria: 'Malharia',
+      unidade,
+      custo: unidade === 'KG' ? 35 : 12,
+    });
+    expect(res.status).toBe(201);
+    return res.body as { id: number; estoque: number; unidade: string };
+  }
+
+  it('confirma compra de tecido e gera uma única entrada vinculada', async () => {
+    const fornecedor = await criarFornecedor();
+    const tecido = await criarTecido('Dryfit', 'KG');
+    expect(tecido.estoque).toBe(0);
+
+    const rascunho = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      itens: [{ materia_prima_id: tecido.id, quantidade: 100, custo_unitario: 35, unidade: 'KG' }],
+    });
+    expect(rascunho.status).toBe(201);
+    expect(rascunho.body.status).toBe('rascunho');
+    expect((await api.get(`/api/tecidos/${tecido.id}`)).body.estoque).toBe(0);
+
+    const compra = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      data_emissao: '2026-10-06',
+      nota_fiscal: 'NF-100',
+      forma_pagamento: 'PIX',
+      vencimento: '2026-11-06',
+      observacoes: 'Compra de dryfit',
+      confirmar: true,
+      itens: [{ materia_prima_id: tecido.id, quantidade: 100, custo_unitario: 35, unidade: 'KG' }],
+    });
+    expect(compra.status).toBe(201);
+    expect(compra.body.status).toBe('recebida');
+    expect(compra.body.nota_fiscal).toBe('NF-100');
+    expect(compra.body.forma_pagamento).toBe('PIX');
+    expect(compra.body.total).toBe(3500);
+    expect(compra.body.itens[0]).toMatchObject({
+      quantidade: 100,
+      quantidade_recebida: 100,
+      unidade: 'KG',
+      custo_unitario: 35,
+      total: 3500,
+    });
+
+    const saldo = await api.get(`/api/tecidos/${tecido.id}`);
+    expect(saldo.body.estoque).toBe(100);
+
+    const movs = await api.get(`/api/tecidos/${tecido.id}/movimentos`);
+    const entradas = (movs.body.data as Array<{
+      tipo: string;
+      quantidade: number;
+      unidade: string;
+      referencia_tipo: string;
+      referencia_id: number;
+    }>).filter((mov) => mov.referencia_tipo === 'compra' && mov.tipo === 'entrada');
+    expect(entradas).toHaveLength(1);
+    expect(entradas[0]).toMatchObject({
+      quantidade: 100,
+      unidade: 'KG',
+      referencia_id: compra.body.id,
+    });
+
+    const deNovo = await api.post(`/api/compras/${compra.body.id}/confirmar`).send({});
+    expect(deNovo.status).toBe(409);
+    expect((await api.get(`/api/tecidos/${tecido.id}`)).body.estoque).toBe(100);
+
+    const pagar = await api.get('/api/financeiro/lancamentos').query({ tipo: 'pagar' });
+    expect(pagar.body.data[0]).toMatchObject({ compra_id: compra.body.id, valor: 3500 });
+  });
+
+  it('rejeita unidade diferente da cadastrada e compra metro em METRO', async () => {
+    const fornecedor = await criarFornecedor();
+    const kg = await criarTecido('Dryfit', 'KG');
+    const errada = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      confirmar: true,
+      itens: [{ materia_prima_id: kg.id, quantidade: 10, custo_unitario: 35, unidade: 'METRO' }],
+    });
+    expect(errada.status).toBe(400);
+    expect(errada.body.erro).toMatch(/unidade cadastrada \(KG\)/);
+    expect((await api.get(`/api/tecidos/${kg.id}`)).body.estoque).toBe(0);
+    expect((await api.get('/api/compras')).body.total).toBe(0);
+
+    const metro = await criarTecido('Tactel', 'METRO');
+    const compra = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      confirmar: true,
+      itens: [{ materia_prima_id: metro.id, quantidade: 40, custo_unitario: 12 }],
+    });
+    expect(compra.status).toBe(201);
+    expect(compra.body.itens[0].unidade).toBe('METRO');
+    expect((await api.get(`/api/tecidos/${metro.id}`)).body.estoque).toBe(40);
+  });
+
+  it('confirma material já cadastrado sem criar outro tecido', async () => {
+    const fornecedor = await criarFornecedor();
+    const antes = (await api.get('/api/materias-primas')).body.total as number;
+    const linha = await api.post('/api/materias-primas').send({
+      nome: 'Linha branca',
+      tipo: 'linha',
+      unidade: 'UN',
+      custo: 4,
+    });
+    expect(linha.status).toBe(201);
+    const compra = await api.post(`/api/compras`).send({
+      fornecedor_id: fornecedor.id,
+      confirmar: true,
+      itens: [{ materia_prima_id: linha.body.id, quantidade: 20, custo_unitario: 4, unidade: 'UN' }],
+    });
+    expect(compra.status).toBe(201);
+    expect(compra.body.itens[0].unidade).toBe('UN');
+    const estoque = await api.get('/api/estoque').query({ tipo: 'materia' });
+    const saldo = (estoque.body.data as Array<{ nome: string; quantidade: number }>).find(
+      (item) => item.nome === 'Linha branca',
+    );
+    expect(saldo?.quantidade).toBe(20);
+    expect((await api.get('/api/materias-primas')).body.total).toBe(antes + 1);
+    expect((await api.get('/api/tecidos')).body.total).toBe(0);
+  });
+
+  it('cancela a compra confirmada e devolve o estoque', async () => {
+    const fornecedor = await criarFornecedor();
+    const tecido = await criarTecido('Dryfit', 'KG');
+    const compra = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      confirmar: true,
+      itens: [{ materia_prima_id: tecido.id, quantidade: 100, custo_unitario: 35 }],
+    });
+    const id = compra.body.id as number;
+
+    const cancelada = await api.patch(`/api/compras/${id}`).send({ status: 'cancelada' });
+    expect(cancelada.status).toBe(200);
+    expect(cancelada.body.status).toBe('cancelada');
+    expect(cancelada.body.itens[0].quantidade_recebida).toBe(0);
+    expect((await api.get(`/api/tecidos/${tecido.id}`)).body.estoque).toBe(0);
+
+    const movs = await api.get(`/api/tecidos/${tecido.id}/movimentos`);
+    const daCompra = (movs.body.data as Array<{ tipo: string; referencia_id: number }>).filter(
+      (mov) => mov.referencia_id === id,
+    );
+    expect(daCompra.map((mov) => mov.tipo).sort()).toEqual(['entrada', 'saida']);
+
+    const rascunho = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      itens: [{ materia_prima_id: tecido.id, quantidade: 5, custo_unitario: 35 }],
+    });
+    const cancelarRascunho = await api
+      .patch(`/api/compras/${rascunho.body.id}`)
+      .send({ status: 'cancelada' });
+    expect(cancelarRascunho.status).toBe(200);
+    expect((await api.get(`/api/tecidos/${tecido.id}`)).body.estoque).toBe(0);
+  });
+
+  it('não cancela quando o estoque da compra já foi consumido', async () => {
+    const fornecedor = await criarFornecedor();
+    const tecido = await criarTecido('Dryfit', 'KG');
+    const compra = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      confirmar: true,
+      itens: [{ materia_prima_id: tecido.id, quantidade: 100, custo_unitario: 35, unidade: 'KG' }],
+    });
+    const baixa = await api.post(`/api/tecidos/${tecido.id}/movimentos`).send({
+      tipo: 'saida',
+      quantidade: 100,
+      unidade: 'KG',
+      motivo: 'Enfesto',
+    });
+    expect(baixa.status).toBe(201);
+
+    const cancelar = await api.patch(`/api/compras/${compra.body.id}`).send({ status: 'cancelada' });
+    expect(cancelar.status).toBe(409);
+    expect((await api.get(`/api/compras/${compra.body.id}`)).body.status).toBe('recebida');
+    expect((await api.get(`/api/tecidos/${tecido.id}`)).body.estoque).toBe(0);
+  });
+
+  it('confirma o saldo restante sem duplicar o que já entrou', async () => {
+    const fornecedor = await criarFornecedor();
+    const tecido = await criarTecido('Dryfit', 'KG');
+    const compra = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      status: 'aberta',
+      itens: [{ materia_prima_id: tecido.id, quantidade: 100, custo_unitario: 35 }],
+    });
+    const parcial = await api.post(`/api/compras/${compra.body.id}/receber`).send({
+      itens: [{ item_id: compra.body.itens[0].id, quantidade: 40 }],
+    });
+    expect(parcial.body.status).toBe('parcial');
+
+    const confirmar = await api.post(`/api/compras/${compra.body.id}/confirmar`).send({});
+    expect(confirmar.status).toBe(200);
+    expect(confirmar.body.status).toBe('recebida');
+    expect(confirmar.body.itens[0].quantidade_recebida).toBe(100);
+    expect((await api.get(`/api/tecidos/${tecido.id}`)).body.estoque).toBe(100);
+
+    const movs = await api.get(`/api/tecidos/${tecido.id}/movimentos`);
+    const entradas = (movs.body.data as Array<{ tipo: string; quantidade: number }>).filter(
+      (mov) => mov.tipo === 'entrada',
+    );
+    expect(entradas).toHaveLength(2);
+    expect(entradas.reduce((soma, mov) => soma + mov.quantidade, 0)).toBe(100);
+  });
+
+  it('outra empresa não confirma a compra nem mexe no estoque', async () => {
+    const fornecedor = await criarFornecedor();
+    const tecido = await criarTecido('Dryfit', 'KG');
+    const compra = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      itens: [{ materia_prima_id: tecido.id, quantidade: 100, custo_unitario: 35, unidade: 'KG' }],
+    });
+    const { api: outra } = await autenticarNovaEmpresa(app);
+    const confirmar = await outra.post(`/api/compras/${compra.body.id}/confirmar`).send({});
+    expect(confirmar.status).toBe(404);
+    expect((await api.get(`/api/tecidos/${tecido.id}`)).body.estoque).toBe(0);
+    expect((await outra.get('/api/tecidos')).body.total).toBe(0);
   });
 });

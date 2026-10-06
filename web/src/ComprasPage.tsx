@@ -3,34 +3,53 @@ import {
   STATUS_COMPRA,
   STATUS_COMPRA_LABEL,
   atualizarCompra,
+  confirmarCompra,
   criarCompra,
   criarFornecedor,
   listarCompras,
   listarFornecedores,
   listarMateriasPrimas,
+  listarTecidos,
   obterCompra,
   receberCompra,
   removerCompra,
   type CompraItem,
   type Fornecedor,
-  type MateriaPrima,
   type PedidoCompra,
 } from './api';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const FORMAS_PAGAMENTO = ['Dinheiro', 'PIX', 'Boleto', 'Cartão', 'Transferência', 'A prazo'];
 
 type Modo = 'criar' | 'detalhe' | 'fornecedor' | null;
-type ItemForm = { materia_prima_id: string; quantidade: number; custo_unitario: number };
+type TipoItemCompra = 'tecido' | 'material';
+type OpcaoCompra = {
+  id: number;
+  nome: string;
+  tipo: TipoItemCompra;
+  unidade: string;
+  custo: number;
+};
+type ItemForm = {
+  tipo: TipoItemCompra;
+  materia_prima_id: string;
+  quantidade: number;
+  custo_unitario: number;
+};
+
+const ITEM_VAZIO: ItemForm = { tipo: 'tecido', materia_prima_id: '', quantidade: 1, custo_unitario: 0 };
 
 const FORM_VAZIO = {
   fornecedor_id: '',
   data_emissao: '',
   data_prevista: '',
   vencimento: '',
+  nota_fiscal: '',
+  forma_pagamento: '',
   desconto: 0,
   frete: 0,
   observacoes: '',
-  itens: [{ materia_prima_id: '', quantidade: 1, custo_unitario: 0 }] as ItemForm[],
+  itens: [{ ...ITEM_VAZIO }] as ItemForm[],
 };
 
 export function ComprasPage() {
@@ -52,7 +71,7 @@ export function ComprasPage() {
   const [receber, setReceber] = useState<Record<number, number>>({});
   const [salvando, setSalvando] = useState(false);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
-  const [materias, setMaterias] = useState<MateriaPrima[]>([]);
+  const [opcoes, setOpcoes] = useState<OpcaoCompra[]>([]);
   const [novoForn, setNovoForn] = useState({ nome: '', cidade: '', estado: 'SP' });
 
   useEffect(() => {
@@ -69,7 +88,31 @@ export function ComprasPage() {
 
   useEffect(() => {
     listarFornecedores({ por_pagina: 100 }).then((l) => setFornecedores(l.data)).catch(() => undefined);
-    listarMateriasPrimas({ por_pagina: 100 }).then((l) => setMaterias(l.data)).catch(() => undefined);
+    Promise.all([
+      listarTecidos({ por_pagina: 100, status: 'ativo' }),
+      listarMateriasPrimas({ por_pagina: 100, status: 'ativo' }),
+    ])
+      .then(([tecidos, materias]) => {
+        const tecidosOpcoes: OpcaoCompra[] = tecidos.data.map((tecido) => ({
+          id: tecido.id,
+          nome: tecido.nome,
+          tipo: 'tecido',
+          unidade: tecido.unidade,
+          custo: tecido.custo,
+        }));
+        const ids = new Set(tecidosOpcoes.map((tecido) => tecido.id));
+        const materiais: OpcaoCompra[] = materias.data
+          .filter((materia) => materia.tipo !== 'tecido' && !ids.has(materia.id))
+          .map((materia) => ({
+            id: materia.id,
+            nome: materia.nome,
+            tipo: 'material',
+            unidade: materia.unidade,
+            custo: materia.custo,
+          }));
+        setOpcoes([...tecidosOpcoes, ...materiais]);
+      })
+      .catch(() => undefined);
   }, []);
 
   const recarregar = useCallback(async () => {
@@ -110,8 +153,15 @@ export function ComprasPage() {
     setModo('detalhe');
   }
 
-  async function handleSalvar(e: React.FormEvent) {
+  function opcaoDoItem(item: ItemForm): OpcaoCompra | undefined {
+    return opcoes.find(
+      (opcao) => opcao.tipo === item.tipo && opcao.id === Number(item.materia_prima_id),
+    );
+  }
+
+  async function handleSalvar(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const confirmar = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('data-confirmar') === '1';
     try {
       setSalvando(true);
       const itens = form.itens
@@ -120,15 +170,23 @@ export function ComprasPage() {
           materia_prima_id: Number(i.materia_prima_id),
           quantidade: Number(i.quantidade),
           custo_unitario: Number(i.custo_unitario),
+          unidade: opcaoDoItem(i)?.unidade,
         }));
+      if (itens.length === 0) {
+        setErro('Selecione o tecido ou material já cadastrado.');
+        return;
+      }
       await criarCompra({
         fornecedor_id: Number(form.fornecedor_id),
         data_emissao: form.data_emissao || undefined,
         data_prevista: form.data_prevista || undefined,
         vencimento: form.vencimento || undefined,
+        nota_fiscal: form.nota_fiscal || undefined,
+        forma_pagamento: form.forma_pagamento || undefined,
         desconto: Number(form.desconto) || 0,
         frete: Number(form.frete) || 0,
         observacoes: form.observacoes || undefined,
+        confirmar,
         itens,
       });
       setForm(FORM_VAZIO);
@@ -149,6 +207,41 @@ export function ComprasPage() {
       await recarregar();
     } catch (err) {
       setErro((err as Error).message);
+    }
+  }
+
+  async function handleConfirmar() {
+    if (!detalhe) return;
+    try {
+      setSalvando(true);
+      const atualizada = await confirmarCompra(detalhe.id);
+      setDetalhe(atualizada);
+      setErro(null);
+      await recarregar();
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function handleCancelar() {
+    if (!detalhe) return;
+    const recebeu = (detalhe.itens ?? []).some((item) => item.quantidade_recebida > 0);
+    const aviso = recebeu
+      ? 'Cancelar esta compra estorna a entrada do estoque. Continuar?'
+      : 'Cancelar esta compra?';
+    if (!window.confirm(aviso)) return;
+    try {
+      setSalvando(true);
+      const atualizada = await atualizarCompra(detalhe.id, { status: 'cancelada' });
+      setDetalhe(atualizada);
+      setErro(null);
+      await recarregar();
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
     }
   }
 
@@ -287,8 +380,20 @@ export function ComprasPage() {
             </label>
             <button type="button" className="btn-secundario" onClick={() => setModo('fornecedor')}>Novo fornecedor</button>
             <div className="form__row">
-              <label>Emissão<input type="date" value={form.data_emissao} onChange={(e) => setForm({ ...form, data_emissao: e.target.value })} /></label>
+              <label>Data da compra<input type="date" value={form.data_emissao} onChange={(e) => setForm({ ...form, data_emissao: e.target.value })} /></label>
               <label>Previsão<input type="date" value={form.data_prevista} onChange={(e) => setForm({ ...form, data_prevista: e.target.value })} /></label>
+            </div>
+            <div className="form__row">
+              <label>Número da nota fiscal<input value={form.nota_fiscal} onChange={(e) => setForm({ ...form, nota_fiscal: e.target.value })} placeholder="Opcional" /></label>
+              <label>
+                Forma de pagamento
+                <select value={form.forma_pagamento} onChange={(e) => setForm({ ...form, forma_pagamento: e.target.value })}>
+                  <option value="">Selecione</option>
+                  {FORMAS_PAGAMENTO.map((forma) => (
+                    <option key={forma} value={forma}>{forma}</option>
+                  ))}
+                </select>
+              </label>
             </div>
             <label>Vencimento<input type="date" value={form.vencimento} onChange={(e) => setForm({ ...form, vencimento: e.target.value })} /></label>
             <div className="form__row">
@@ -296,57 +401,99 @@ export function ComprasPage() {
               <label>Frete<input type="number" min={0} step={0.01} value={form.frete} onChange={(e) => setForm({ ...form, frete: Number(e.target.value) })} /></label>
             </div>
             <p className="subtitulo">Itens</p>
-            {form.itens.map((item, idx) => (
-              <div className="form__row" key={idx}>
-                <label>
-                  Material
-                  <select
-                    required
-                    value={item.materia_prima_id}
-                    onChange={(e) => {
-                      const itens = [...form.itens];
-                      const mat = materias.find((m) => m.id === Number(e.target.value));
-                      itens[idx] = {
-                        ...item,
-                        materia_prima_id: e.target.value,
-                        custo_unitario: mat?.custo ?? item.custo_unitario,
-                      };
-                      setForm({ ...form, itens });
-                    }}
-                  >
-                    <option value="">Selecione</option>
-                    {materias.map((m) => (
-                      <option key={m.id} value={m.id}>{m.nome}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Qtd.
-                  <input type="number" min={0.01} step={0.01} value={item.quantidade} onChange={(e) => {
-                    const itens = [...form.itens];
-                    itens[idx] = { ...item, quantidade: Number(e.target.value) };
-                    setForm({ ...form, itens });
-                  }} />
-                </label>
-                <label>
-                  Custo
-                  <input type="number" min={0} step={0.01} value={item.custo_unitario} onChange={(e) => {
-                    const itens = [...form.itens];
-                    itens[idx] = { ...item, custo_unitario: Number(e.target.value) };
-                    setForm({ ...form, itens });
-                  }} />
-                </label>
-              </div>
-            ))}
+            {form.itens.map((item, idx) => {
+              const escolhida = opcaoDoItem(item);
+              const opcoesTipo = opcoes.filter((opcao) => opcao.tipo === item.tipo);
+              const totalLinha = Number(item.quantidade) * Number(item.custo_unitario);
+              return (
+                <div className="compra-item" key={idx}>
+                  <div className="form__row">
+                    <label>
+                      Tipo de item
+                      <select
+                        value={item.tipo}
+                        onChange={(e) => {
+                          const itens = [...form.itens];
+                          itens[idx] = {
+                            ...ITEM_VAZIO,
+                            tipo: e.target.value as TipoItemCompra,
+                            quantidade: item.quantidade,
+                          };
+                          setForm({ ...form, itens });
+                        }}
+                      >
+                        <option value="tecido">Tecido</option>
+                        <option value="material">Material</option>
+                      </select>
+                    </label>
+                    <label>
+                      Item
+                      <select
+                        required
+                        value={item.materia_prima_id}
+                        onChange={(e) => {
+                          const itens = [...form.itens];
+                          const escolhido = opcoesTipo.find((opcao) => opcao.id === Number(e.target.value));
+                          itens[idx] = {
+                            ...item,
+                            materia_prima_id: e.target.value,
+                            custo_unitario: escolhido?.custo ?? item.custo_unitario,
+                          };
+                          setForm({ ...form, itens });
+                        }}
+                      >
+                        <option value="">{item.tipo === 'tecido' ? 'Selecione o tecido' : 'Selecione o material'}</option>
+                        {opcoesTipo.map((opcao) => (
+                          <option key={opcao.id} value={opcao.id}>{opcao.nome}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="form__row">
+                    <label>
+                      Quantidade
+                      <input type="number" min={0.01} step={0.01} required value={item.quantidade} onChange={(e) => {
+                        const itens = [...form.itens];
+                        itens[idx] = { ...item, quantidade: Number(e.target.value) };
+                        setForm({ ...form, itens });
+                      }} />
+                    </label>
+                    <label>
+                      Unidade
+                      <input readOnly value={escolhida?.unidade ?? ''} placeholder="Do cadastro" aria-label="Unidade" />
+                    </label>
+                    <label>
+                      Valor unitário
+                      <input type="number" min={0} step={0.01} required value={item.custo_unitario} onChange={(e) => {
+                        const itens = [...form.itens];
+                        itens[idx] = { ...item, custo_unitario: Number(e.target.value) };
+                        setForm({ ...form, itens });
+                      }} />
+                    </label>
+                    <label>
+                      Valor total
+                      <input readOnly value={moeda.format(Number.isFinite(totalLinha) ? totalLinha : 0)} aria-label="Valor total do item" />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
             <button
               type="button"
               className="btn-secundario"
-              onClick={() => setForm({ ...form, itens: [...form.itens, { materia_prima_id: '', quantidade: 1, custo_unitario: 0 }] })}
+              onClick={() => setForm({ ...form, itens: [...form.itens, { ...ITEM_VAZIO }] })}
             >
               Adicionar item
             </button>
-            <label>Observações<textarea value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></label>
-            <button type="submit" disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar rascunho'}</button>
+            <label>Observação<textarea value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></label>
+            <div className="detalhe__acoes">
+              <button type="submit" className="btn-secundario" disabled={salvando}>
+                {salvando ? 'Salvando…' : 'Salvar rascunho'}
+              </button>
+              <button type="submit" data-confirmar="1" disabled={salvando}>
+                {salvando ? 'Salvando…' : 'Confirmar compra'}
+              </button>
+            </div>
           </form>
         </section>
       )}
@@ -373,19 +520,26 @@ export function ComprasPage() {
           </div>
           <dl className="detalhe">
             <div><dt>Fornecedor</dt><dd>{detalhe.fornecedor}</dd></div>
+            <div><dt>Data da compra</dt><dd>{detalhe.data_emissao?.slice(0, 10).split('-').reverse().join('/')}</dd></div>
             <div><dt>Status</dt><dd>{STATUS_COMPRA_LABEL[detalhe.status]}</dd></div>
+            <div><dt>Nota fiscal</dt><dd>{detalhe.nota_fiscal || '—'}</dd></div>
+            <div><dt>Forma de pagamento</dt><dd>{detalhe.forma_pagamento || '—'}</dd></div>
+            <div><dt>Vencimento</dt><dd>{detalhe.vencimento ? detalhe.vencimento.slice(0, 10).split('-').reverse().join('/') : '—'}</dd></div>
             <div><dt>Subtotal</dt><dd>{moeda.format(detalhe.subtotal)}</dd></div>
             <div><dt>Desconto</dt><dd>{moeda.format(detalhe.desconto)}</dd></div>
             <div><dt>Frete</dt><dd>{moeda.format(detalhe.frete)}</dd></div>
             <div><dt>Total</dt><dd>{moeda.format(detalhe.total)}</dd></div>
+            {detalhe.observacoes && <div><dt>Observação</dt><dd>{detalhe.observacoes}</dd></div>}
           </dl>
           <table className="tabela tabela--compacta">
             <thead>
               <tr>
                 <th>Item</th>
                 <th>Qtd.</th>
+                <th>Unidade</th>
                 <th>Recebido</th>
-                <th>Custo</th>
+                <th>Valor unitário</th>
+                <th>Valor total</th>
                 {(detalhe.status === 'aberta' || detalhe.status === 'parcial') && <th>Receber</th>}
               </tr>
             </thead>
@@ -394,8 +548,10 @@ export function ComprasPage() {
                 <tr key={i.id}>
                   <td>{i.nome}<div className="dica">{i.codigo}</div></td>
                   <td>{i.quantidade}</td>
+                  <td>{i.unidade || '—'}</td>
                   <td>{i.quantidade_recebida}</td>
                   <td>{moeda.format(i.custo_unitario)}</td>
+                  <td>{moeda.format(i.total)}</td>
                   {(detalhe.status === 'aberta' || detalhe.status === 'parcial') && (
                     <td>
                       <input
@@ -416,9 +572,19 @@ export function ComprasPage() {
             {detalhe.status === 'rascunho' && (
               <button type="button" className="btn-secundario" onClick={() => void handleAbrir(detalhe.id)}>Abrir compra</button>
             )}
+            {(detalhe.status === 'rascunho' || detalhe.status === 'aberta' || detalhe.status === 'parcial') && (
+              <button type="button" disabled={salvando} onClick={() => void handleConfirmar()}>
+                {salvando ? 'Confirmando…' : 'Confirmar compra'}
+              </button>
+            )}
             {(detalhe.status === 'aberta' || detalhe.status === 'parcial') && (
               <button type="button" className="btn-secundario" disabled={salvando} onClick={() => void handleReceber()}>
                 {salvando ? 'Recebendo…' : 'Receber no estoque'}
+              </button>
+            )}
+            {detalhe.status !== 'cancelada' && (
+              <button type="button" className="btn-remover-texto" disabled={salvando} onClick={() => void handleCancelar()}>
+                Cancelar compra
               </button>
             )}
           </div>

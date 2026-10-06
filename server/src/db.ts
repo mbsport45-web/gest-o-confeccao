@@ -325,6 +325,7 @@ export function createDatabase(location: string) {
       forma_pagamento TEXT,
       condicao_pagamento TEXT,
       vencimento TEXT,
+      nota_fiscal TEXT,
       criado_em TEXT NOT NULL DEFAULT (datetime('now')),
       atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -575,6 +576,7 @@ export function createDatabase(location: string) {
   aplicarColunaEmpresaId(db);
   aplicarDadosProducao(db);
   aplicarColunasEstoqueMovimento(db);
+  aplicarColunaNotaFiscalCompra(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -626,6 +628,18 @@ function aplicarDadosProducao(db: AppDatabase) {
   }
   if (!cols.has('valor_costura')) {
     db.exec(`ALTER TABLE ordens_producao ADD COLUMN valor_costura REAL`);
+  }
+}
+
+function aplicarColunaNotaFiscalCompra(db: AppDatabase) {
+  if (!tabelaExiste(db, 'pedidos_compra')) return;
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(pedidos_compra)`).all() as { name: string }[]).map(
+      (col) => col.name,
+    ),
+  );
+  if (!cols.has('nota_fiscal')) {
+    db.exec(`ALTER TABLE pedidos_compra ADD COLUMN nota_fiscal TEXT`);
   }
 }
 
