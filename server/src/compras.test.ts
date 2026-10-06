@@ -528,4 +528,81 @@ describe('API de compras', () => {
       .get(res.body.id) as { empresa_id: number };
     expect(guardado.empresa_id).toBe(1);
   });
+
+  it('separa itens novos e reconhecidos e a entrada só movimenta o que foi reconhecido', async () => {
+    const fornecedor = await criarFornecedor();
+    const tecido = await api.post('/api/tecidos').send({
+      nome: 'Dry Tela Cayman',
+      categoria: 'Sintetico',
+      unidade: 'KG',
+      custo: 35,
+      cores: [
+        { nome: 'Preto', estoque_inicial: 10 },
+        { nome: 'Branco', estoque_inicial: 20 },
+      ],
+    });
+    const preto = tecido.body.cores.find((cor: { nome: string }) => cor.nome === 'Preto');
+    const pdf = pdfComTexto([
+      'NF-e 000123',
+      'Fornecedor: Fiacao Norte',
+      'CNPJ: 11.444.777/0001-61',
+      '06/10/2026',
+      'Dry Tela Cayman Preto 1 KG 35,00 35,00',
+      'Ziper nylon 4 UN 1,50 6,00',
+      'Dry Tela Cayman 5 KG 35,00 175,00',
+      'Valor total da nota 216,00',
+    ]);
+    const res = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota-000123.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      numero: '000123',
+      data_emissao: '2026-10-06',
+      fornecedor: { id: fornecedor.id, nome: 'Fiação Norte' },
+    });
+    const reconhecidos = res.body.itens.filter((item: { materia_prima_id: number | null }) => item.materia_prima_id);
+    const novos = res.body.itens.filter((item: { materia_prima_id: number | null }) => !item.materia_prima_id);
+    expect(res.body.itens).toHaveLength(3);
+    expect(reconhecidos).toHaveLength(2);
+    expect(novos).toHaveLength(1);
+    expect(novos[0].descricao).toBe('Ziper nylon');
+    expect(reconhecidos[0]).toMatchObject({
+      materia_prima_id: tecido.body.id,
+      tecido_cor_id: preto.id,
+    });
+    expect(reconhecidos[1]).toMatchObject({
+      descricao: 'Dry Tela Cayman',
+      materia_prima_id: tecido.body.id,
+      tecido_cor_id: null,
+      aviso: 'Selecione a cor do tecido',
+    });
+
+    const entrada = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      data_emissao: res.body.data_emissao,
+      nota_fiscal: res.body.numero,
+      confirmar: true,
+      itens: [
+        {
+          materia_prima_id: reconhecidos[0].materia_prima_id,
+          tecido_cor_id: reconhecidos[0].tecido_cor_id,
+          quantidade: reconhecidos[0].quantidade,
+          custo_unitario: reconhecidos[0].valor_unitario,
+          unidade: 'KG',
+        },
+      ],
+    });
+    expect(entrada.status).toBe(201);
+    expect(entrada.body.status).toBe('recebida');
+    expect(entrada.body.itens[0].quantidade_recebida).toBe(1);
+    const cores = (await api.get(`/api/tecidos/${tecido.body.id}`)).body.cores as Array<{
+      nome: string;
+      estoque: number;
+    }>;
+    expect(cores.find((cor) => cor.nome === 'Preto')?.estoque).toBe(11);
+    expect(cores.find((cor) => cor.nome === 'Branco')?.estoque).toBe(20);
+  });
 });
