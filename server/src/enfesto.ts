@@ -8,6 +8,7 @@ export const STATUS_ENFESTO = ['pendente', 'em_enfesto', 'finalizado', 'cancelad
 
 const dadosSchema = z.object({
   tecido_id: z.number().int().positive().optional(),
+  tecido_cor_id: z.number().int().positive().nullable().optional(),
   folhas: z.number().int().positive('informe a quantidade de folhas').optional(),
   comprimento: z.number().positive('informe o comprimento do enfesto').optional(),
   metragem: z.number().min(0).nullable().optional(),
@@ -50,6 +51,8 @@ type EnfestoRow = {
   cor: string;
   quantidade_pecas: number;
   tecido_id: number | null;
+  tecido_cor_id: number | null;
+  tecido_cor_nome: string | null;
   folhas: number | null;
   comprimento: number | null;
   metragem: number | null;
@@ -231,10 +234,11 @@ export function createEnfestoRouter(db: AppDatabase): Router {
   const router = Router();
 
   const getEnfesto = db.prepare(
-    `SELECT e.*, u.nome AS usuario_nome, m.nome AS tecido_nome
+    `SELECT e.*, u.nome AS usuario_nome, m.nome AS tecido_nome, tc.nome AS tecido_cor_nome
        FROM enfestos e
        LEFT JOIN usuarios u ON u.id = e.usuario_id
        LEFT JOIN materias_primas m ON m.id = e.tecido_id AND m.empresa_id = e.empresa_id
+       LEFT JOIN tecido_cores tc ON tc.id = e.tecido_cor_id AND tc.empresa_id = e.empresa_id
       WHERE e.id = ? AND e.empresa_id = ?`,
   );
   const ativoPorCor = db.prepare(
@@ -364,6 +368,7 @@ export function createEnfestoRouter(db: AppDatabase): Router {
     db.prepare(
       `UPDATE enfestos SET
          tecido_id = @tecido_id,
+         tecido_cor_id = @tecido_cor_id,
          folhas = @folhas,
          comprimento = @comprimento,
          metragem = @metragem,
@@ -376,6 +381,8 @@ export function createEnfestoRouter(db: AppDatabase): Router {
       id: atual.id,
       empresa_id: empresaId,
       tecido_id: data.tecido_id ?? atual.tecido_id,
+      tecido_cor_id:
+        data.tecido_cor_id === undefined ? atual.tecido_cor_id : data.tecido_cor_id,
       folhas: data.folhas ?? atual.folhas,
       comprimento: data.comprimento ?? atual.comprimento,
       metragem: data.metragem === undefined ? atual.metragem : data.metragem,
@@ -464,8 +471,10 @@ export function createEnfestoRouter(db: AppDatabase): Router {
         }
 
         const ordem = retratoOrdem(atual.ordem_id, empresaId);
+        const tecidoCorId = data.tecido_cor_id === undefined ? atual.tecido_cor_id : data.tecido_cor_id;
         const baixa = baixarTecidoEnfesto(db, empresaId, usuarioId, {
           tecido_id: tecido.id,
+          tecido_cor_id: tecidoCorId,
           quantidade: consumo.quantidade,
           referencia_id: atual.id,
           motivo: `Enfesto ${ordem?.codigo ?? atual.ordem_id} ${atual.cor}`,
@@ -490,6 +499,7 @@ export function createEnfestoRouter(db: AppDatabase): Router {
         db.prepare(
           `UPDATE enfestos SET
              tecido_id = @tecido_id,
+             tecido_cor_id = @tecido_cor_id,
              folhas = @folhas,
              comprimento = @comprimento,
              metragem = @metragem,
@@ -510,6 +520,7 @@ export function createEnfestoRouter(db: AppDatabase): Router {
           id,
           empresa_id: empresaId,
           tecido_id: tecido.id,
+          tecido_cor_id: tecidoCorId ?? null,
           folhas,
           comprimento,
           metragem,

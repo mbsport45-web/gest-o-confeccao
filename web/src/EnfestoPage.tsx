@@ -30,6 +30,16 @@ function chave(valor: string): string {
   return valor.trim().toLowerCase();
 }
 
+function corDoTecido(tecido: Tecido | undefined, preferida?: string | null): string {
+  const cores = (tecido?.cores ?? []).filter((cor) => cor.status === 'ativo');
+  if (cores.length === 1) return String(cores[0].id);
+  if (preferida) {
+    const igual = cores.find((cor) => chave(cor.nome) === chave(preferida));
+    if (igual) return String(igual.id);
+  }
+  return '';
+}
+
 export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
   const [ordens, setOrdens] = useState<OrdemProducao[]>([]);
   const [tecidos, setTecidos] = useState<Tecido[]>([]);
@@ -38,6 +48,7 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
   const [cores, setCores] = useState<CorEnfesto[]>([]);
   const [enfesto, setEnfesto] = useState<Enfesto | null>(null);
   const [tecidoId, setTecidoId] = useState('');
+  const [tecidoCorId, setTecidoCorId] = useState('');
   const [folhas, setFolhas] = useState('');
   const [comprimento, setComprimento] = useState('');
   const [metragem, setMetragem] = useState('');
@@ -89,6 +100,12 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
   function preencher(atual: Enfesto) {
     setEnfesto(atual);
     setTecidoId(atual.tecido_id ? String(atual.tecido_id) : '');
+    const tecidoAtual = tecidos.find((item) => item.id === atual.tecido_id);
+    setTecidoCorId(
+      atual.tecido_cor_id
+        ? String(atual.tecido_cor_id)
+        : corDoTecido(tecidoAtual, atual.cor),
+    );
     setFolhas(atual.folhas == null ? '' : String(atual.folhas));
     setComprimento(atual.comprimento == null ? '' : String(atual.comprimento));
     setMetragem(atual.metragem == null ? '' : String(atual.metragem));
@@ -103,7 +120,9 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
       const atual = await abrirEnfesto(ordemId, cor);
       preencher(atual);
       if (!atual.tecido_id && tecidosDaOp.length === 1) {
+        const unico = tecidos.find((item) => item.id === tecidosDaOp[0]);
         setTecidoId(String(tecidosDaOp[0]));
+        setTecidoCorId(corDoTecido(unico, atual.cor));
       }
       await carregarCores(ordemId);
     } catch (err) {
@@ -117,8 +136,15 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
     setSalvando(true);
     setErro(null);
     try {
+      const coresTecido = tecido.cores ?? [];
+      if (coresTecido.length > 0 && !tecidoCorId) {
+        setErro('Selecione a cor do tecido');
+        setSalvando(false);
+        return;
+      }
       const atual = await finalizarEnfesto(enfesto.id, {
         tecido_id: tecido.id,
+        tecido_cor_id: tecidoCorId ? Number(tecidoCorId) : null,
         folhas: Number(folhas),
         comprimento: Number(comprimento),
         metragem: metragem === '' ? null : Number(metragem),
@@ -227,7 +253,8 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
           )}
           {enfesto.status === 'finalizado' && (
             <p className="dica">
-              Consumo de {enfesto.quantidade_consumida} {enfesto.unidade}. Estoque de{' '}
+              Consumo de {enfesto.quantidade_consumida} {enfesto.unidade}
+              {enfesto.tecido_cor_nome ? ` de ${enfesto.tecido_nome} — ${enfesto.tecido_cor_nome}` : ''}. Estoque de{' '}
               {enfesto.saldo_anterior} para {enfesto.saldo_posterior}.
               {enfesto.custo_total != null ? ` Custo do tecido: R$ ${enfesto.custo_total.toFixed(2)}.` : ''}
             </p>
@@ -239,7 +266,12 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
                 required
                 disabled={travado}
                 value={tecidoId}
-                onChange={(e) => setTecidoId(e.target.value)}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setTecidoId(id);
+                  const escolhido = tecidos.find((item) => String(item.id) === id);
+                  setTecidoCorId(corDoTecido(escolhido, enfesto?.cor));
+                }}
               >
                 <option value="">Selecione</option>
                 {[...tecidos]
@@ -252,6 +284,25 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
                   ))}
               </select>
             </label>
+            {(tecido?.cores.length ?? 0) > 0 && (
+              <label>
+                Cor do tecido
+                <select
+                  required
+                  disabled={travado}
+                  value={tecidoCorId}
+                  onChange={(e) => setTecidoCorId(e.target.value)}
+                >
+                  <option value="">Selecione a cor</option>
+                  {tecido?.cores.map((cor) => (
+                    <option key={cor.id} value={cor.id} disabled={cor.status !== 'ativo'}>
+                      {cor.nome}
+                      {cor.status !== 'ativo' ? ' (inativa)' : ''} · estoque {cor.estoque} {tecido.unidade}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="form__row">
               <label>
                 Folhas

@@ -25,6 +25,8 @@ export interface CompraItem {
   custo_unitario: number;
   total: number;
   unidade: string | null;
+  tecido_cor_id: number | null;
+  cor_tecido?: string | null;
   criado_em: string;
   nome?: string | null;
   codigo?: string | null;
@@ -69,6 +71,7 @@ const itemSchema = z
     quantidade: z.number().positive('quantidade deve ser maior que zero'),
     custo_unitario: z.number().min(0, 'custo não pode ser negativo'),
     unidade: textoOpcional,
+    tecido_cor_id: z.number().int().positive().optional(),
   })
   .refine(
     (item) => {
@@ -132,6 +135,7 @@ const ITEM_SELECT = `
   SELECT
     i.*,
     CASE
+      WHEN i.materia_prima_id IS NOT NULL AND tc.nome IS NOT NULL THEN m.nome || ' — ' || tc.nome
       WHEN i.materia_prima_id IS NOT NULL THEN m.nome
       ELSE p.nome
     END AS nome,
@@ -139,9 +143,11 @@ const ITEM_SELECT = `
       WHEN i.materia_prima_id IS NOT NULL THEN m.codigo
       WHEN i.variante_id IS NOT NULL THEN v.sku
       ELSE p.sku
-    END AS codigo
+    END AS codigo,
+    tc.nome AS cor_tecido
   FROM pedido_compra_itens i
   LEFT JOIN materias_primas m ON m.id = i.materia_prima_id
+  LEFT JOIN tecido_cores tc ON tc.id = i.tecido_cor_id AND tc.empresa_id = i.empresa_id
   LEFT JOIN produtos p ON p.id = i.produto_id
   LEFT JOIN produto_variantes v ON v.id = i.variante_id
 `;
@@ -283,9 +289,10 @@ export function createComprasRouter(db: AppDatabase): Router {
     const mov = registrarMovimentoEstoque(db, compra.empresa_id, {
       tipo,
       quantidade,
-      materia_prima_id: item.materia_prima_id ?? undefined,
-      produto_id: item.variante_id ? undefined : item.produto_id ?? undefined,
-      variante_id: item.variante_id ?? undefined,
+    materia_prima_id: item.materia_prima_id ?? undefined,
+    tecido_cor_id: item.tecido_cor_id ?? undefined,
+    produto_id: item.variante_id ? undefined : item.produto_id ?? undefined,
+    variante_id: item.variante_id ?? undefined,
       motivo,
       observacoes:
         tipo === 'entrada'
@@ -363,10 +370,50 @@ export function createComprasRouter(db: AppDatabase): Router {
     }
   }
 
+  function validarCorDoItem(
+    item: { materia_prima_id?: number; tecido_cor_id?: number },
+    empresaId: number,
+  ): number | null {
+    if (!item.materia_prima_id) {
+      if (item.tecido_cor_id) {
+        throw Object.assign(new Error('A cor pertence a um tecido'), { status: 400 });
+      }
+      return null;
+    }
+    const materia = db
+      .prepare('SELECT tipo FROM materias_primas WHERE id = ? AND empresa_id = ?')
+      .get(item.materia_prima_id, empresaId) as { tipo: string } | undefined;
+    if (!materia || materia.tipo !== 'tecido') {
+      if (item.tecido_cor_id) {
+        throw Object.assign(new Error('Esta matéria não usa cor de tecido'), { status: 400 });
+      }
+      return null;
+    }
+    const cores = db
+      .prepare('SELECT id, status FROM tecido_cores WHERE tecido_id = ? AND empresa_id = ?')
+      .all(item.materia_prima_id, empresaId) as Array<{ id: number; status: string }>;
+    if (cores.length === 0) {
+      if (item.tecido_cor_id) {
+        throw Object.assign(new Error('Este tecido não possui essa cor'), { status: 400 });
+      }
+      return null;
+    }
+    if (!item.tecido_cor_id) {
+      throw Object.assign(new Error('Selecione a cor do tecido'), { status: 400 });
+    }
+    const cor = cores.find((itemCor) => itemCor.id === item.tecido_cor_id);
+    if (!cor) throw Object.assign(new Error('Cor do tecido não encontrada'), { status: 404 });
+    if (cor.status !== 'ativo') {
+      throw Object.assign(new Error('A cor do tecido está inativa'), { status: 409 });
+    }
+    return cor.id;
+  }
+
   function inserirItem(compraId: number, empresaId: number, item: z.infer<typeof itemSchema>) {
     const erro = validarItemAlvo(item, empresaId);
     if (erro) throw Object.assign(new Error(erro), { status: 404 });
     const unidade = exigirUnidade(item.unidade, unidadeCadastrada(item, empresaId));
+    const tecidoCorId = validarCorDoItem(item, empresaId);
     const total = arredondarDinheiro(item.quantidade * item.custo_unitario);
     let produtoId = item.produto_id ?? null;
     if (item.variante_id) {
@@ -379,10 +426,10 @@ export function createComprasRouter(db: AppDatabase): Router {
       .prepare(
         `INSERT INTO pedido_compra_itens (
            empresa_id, compra_id, materia_prima_id, produto_id, variante_id,
-           quantidade, quantidade_recebida, custo_unitario, total, unidade
+           quantidade, quantidade_recebida, custo_unitario, total, unidade, tecido_cor_id
          ) VALUES (
            @empresa_id, @compra_id, @materia_prima_id, @produto_id, @variante_id,
-           @quantidade, 0, @custo_unitario, @total, @unidade
+           @quantidade, 0, @custo_unitario, @total, @unidade, @tecido_cor_id
          )`,
       )
       .run({
@@ -395,6 +442,7 @@ export function createComprasRouter(db: AppDatabase): Router {
         custo_unitario: item.custo_unitario,
         total,
         unidade,
+        tecido_cor_id: tecidoCorId,
       });
     return Number(info.lastInsertRowid);
   }

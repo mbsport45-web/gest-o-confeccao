@@ -803,6 +803,22 @@ button {
   flex-wrap: wrap;
 }
 
+.cores-tecido {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.cores-tecido .card__head {
+  margin: 0;
+}
+
+.cores-tecido input,
+.cores-tecido select {
+  width: 100%;
+  min-width: 0;
+}
+
 .form input[readonly] {
   color: var(--muted);
 }

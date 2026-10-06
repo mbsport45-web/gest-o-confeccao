@@ -29,11 +29,36 @@ const FORM_VAZIO: TecidoPayload = {
   gramatura: undefined,
   custo: 0,
   fornecedor: '',
-  cor: '',
-  estoque_inicial: 0,
   estoque_minimo: 0,
   status: 'ativo',
 };
+
+type CorForm = {
+  chave: string;
+  id?: number;
+  nome: string;
+  estoque: number;
+  estoque_inicial: number;
+  estoque_minimo: number;
+  status: StatusMateria;
+};
+
+function corVazia(): CorForm {
+  return {
+    chave: crypto.randomUUID(),
+    nome: '',
+    estoque: 0,
+    estoque_inicial: 0,
+    estoque_minimo: 0,
+    status: 'ativo',
+  };
+}
+
+function rotuloCores(tecido: Tecido): string {
+  const nomes = (tecido.cores ?? []).map((cor) => cor.nome).filter(Boolean);
+  if (nomes.length > 0) return nomes.join(', ');
+  return tecido.cor ?? '';
+}
 
 function numeroOuNulo(valor: string): number | null {
   if (valor.trim() === '') return null;
@@ -55,6 +80,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
   const [erro, setErro] = useState<string | null>(null);
   const [modo, setModo] = useState<Modo>(null);
   const [form, setForm] = useState<TecidoPayload>(FORM_VAZIO);
+  const [coresForm, setCoresForm] = useState<CorForm[]>([corVazia()]);
   const [novaCategoria, setNovaCategoria] = useState('');
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [detalhe, setDetalhe] = useState<Tecido | null>(null);
@@ -63,6 +89,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
     tipo: 'entrada' as 'entrada' | 'saida' | 'ajuste',
     quantidade: 0,
     motivo: '',
+    tecido_cor_id: '',
   });
   const [salvando, setSalvando] = useState(false);
 
@@ -97,6 +124,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
 
   function abrirCriar() {
     setForm(FORM_VAZIO);
+    setCoresForm([corVazia()]);
     setNovaCategoria('');
     setEditandoId(null);
     setModo('criar');
@@ -112,10 +140,23 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
       gramatura: tecido.gramatura,
       custo: tecido.custo,
       fornecedor: tecido.fornecedor ?? '',
-      cor: tecido.cor ?? '',
       estoque_minimo: tecido.estoque_minimo,
       status: tecido.status,
     });
+    const atuais = tecido.cores ?? [];
+    setCoresForm(
+      atuais.length > 0
+        ? atuais.map((cor) => ({
+            chave: String(cor.id),
+            id: cor.id,
+            nome: cor.nome,
+            estoque: cor.estoque,
+            estoque_inicial: 0,
+            estoque_minimo: cor.estoque_minimo,
+            status: cor.status,
+          }))
+        : [corVazia()],
+    );
     setNovaCategoria('');
     setEditandoId(tecido.id);
     setModo('editar');
@@ -125,7 +166,12 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
   async function abrirDetalhe(tecido: Tecido) {
     setDetalhe(tecido);
     setModo('detalhe');
-    setMovimento({ tipo: 'entrada', quantidade: 0, motivo: '' });
+    setMovimento({
+      tipo: 'entrada',
+      quantidade: 0,
+      motivo: '',
+      tecido_cor_id: tecido.cores?.length === 1 ? String(tecido.cores[0].id) : '',
+    });
     try {
       setMovimentos(await listarMovimentosTecido(tecido.id));
     } catch (err) {
@@ -148,7 +194,28 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
     setSalvando(true);
     setErro(null);
     try {
+      const preenchidas = coresForm.filter((cor) => cor.nome.trim() || cor.id);
+      if (preenchidas.some((cor) => !cor.nome.trim())) {
+        setErro('Informe o nome da cor');
+        return;
+      }
+      const nomes = new Set<string>();
+      for (const cor of preenchidas) {
+        const chave = cor.nome.trim().toLocaleLowerCase('pt-BR');
+        if (nomes.has(chave)) {
+          setErro(`Já existe a cor ${cor.nome.trim()} neste tecido`);
+          return;
+        }
+        nomes.add(chave);
+      }
       const categoria = await categoriaEscolhida();
+      const cores = preenchidas.map((cor) => ({
+        id: cor.id,
+        nome: cor.nome.trim(),
+        estoque_inicial: cor.id ? undefined : Number(cor.estoque_inicial) || 0,
+        estoque_minimo: Number(cor.estoque_minimo) || 0,
+        status: cor.status,
+      }));
       const comum = {
         nome: form.nome,
         categoria,
@@ -157,14 +224,14 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
         gramatura: form.gramatura ?? null,
         custo: form.custo,
         fornecedor: form.fornecedor || undefined,
-        cor: form.cor || undefined,
         estoque_minimo: form.estoque_minimo,
         status: form.status,
+        cores,
       };
       if (modo === 'editar' && editandoId) {
         await atualizarTecido(editandoId, comum);
       } else {
-        await criarTecido({ ...comum, estoque_inicial: form.estoque_inicial });
+        await criarTecido(comum);
       }
       setModo(null);
       await recarregar();
@@ -178,6 +245,11 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
   async function registrarMovimento(e: React.FormEvent) {
     e.preventDefault();
     if (!detalhe) return;
+    const cores = detalhe.cores ?? [];
+    if (cores.length > 1 && !movimento.tecido_cor_id) {
+      setErro('Selecione a cor do tecido');
+      return;
+    }
     setSalvando(true);
     setErro(null);
     try {
@@ -186,10 +258,17 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
         quantidade: Number(movimento.quantidade),
         unidade: detalhe.unidade,
         motivo: movimento.motivo || undefined,
+        tecido_cor_id: movimento.tecido_cor_id ? Number(movimento.tecido_cor_id) : undefined,
       });
       setDetalhe(resposta.tecido);
       setMovimentos(await listarMovimentosTecido(detalhe.id));
-      setMovimento({ tipo: 'entrada', quantidade: 0, motivo: '' });
+      setMovimento({
+        tipo: 'entrada',
+        quantidade: 0,
+        motivo: '',
+        tecido_cor_id:
+          resposta.tecido.cores?.length === 1 ? String(resposta.tecido.cores[0].id) : movimento.tecido_cor_id,
+      });
       await recarregar();
     } catch (err) {
       setErro((err as Error).message);
@@ -208,7 +287,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
           <div>
             <h2>Tecidos</h2>
             <p className="dica">
-              Cada tecido tem a própria unidade. O custo e o estoque seguem KG ou metro, conforme o cadastro.
+              O tecido é cadastrado uma vez. Cada cor é uma variante com estoque próprio, na unidade do tecido.
             </p>
           </div>
           <button type="button" onClick={abrirCriar} disabled={!podeCriar}>
@@ -247,7 +326,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
                 <tr key={tecido.id} onClick={() => void abrirDetalhe(tecido)}>
                   <td>
                     {tecido.nome}
-                    {tecido.cor ? ` · ${tecido.cor}` : ''}
+                    {rotuloCores(tecido) ? ` · ${rotuloCores(tecido)}` : ''}
                   </td>
                   <td>{tecido.categoria ?? '—'}</td>
                   <td>{tecido.unidade}</td>
@@ -258,7 +337,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
                   <td>
                     {qtd.format(tecido.estoque)} {tecido.unidade === 'KG' ? 'KG' : 'METROS'}
                   </td>
-                  <td>{qtd.format(tecido.estoque_minimo)}</td>
+                  <td>{tecido.cores?.length ? 'por cor' : qtd.format(tecido.estoque_minimo)}</td>
                   <td>
                     <span className={`pill pill--${tecido.status}`}>
                       {tecido.status === 'ativo' ? 'Ativo' : 'Inativo'}
@@ -308,11 +387,13 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
                 <div><dt>Unidade de controle</dt><dd>{detalhe.unidade}</dd></div>
                 <div><dt>Custo</dt><dd>{moeda.format(detalhe.custo)} {detalhe.unidade_custo}</dd></div>
                 <div><dt>Estoque</dt><dd>{qtd.format(detalhe.estoque)} {detalhe.unidade}</dd></div>
-                <div><dt>Estoque mínimo</dt><dd>{qtd.format(detalhe.estoque_minimo)} {detalhe.unidade}</dd></div>
+                {(detalhe.cores ?? []).length === 0 && (
+                  <div><dt>Estoque mínimo</dt><dd>{qtd.format(detalhe.estoque_minimo)} {detalhe.unidade}</dd></div>
+                )}
                 <div><dt>Largura (cm)</dt><dd>{detalhe.largura_cm ?? '—'}</dd></div>
                 <div><dt>Gramatura</dt><dd>{detalhe.gramatura ?? '—'}</dd></div>
                 <div><dt>Fornecedor</dt><dd>{detalhe.fornecedor ?? '—'}</dd></div>
-                <div><dt>Cor</dt><dd>{detalhe.cor ?? '—'}</dd></div>
+                <div><dt>Cores</dt><dd>{rotuloCores(detalhe) || '—'}</dd></div>
                 <div>
                   <dt>Status</dt>
                   <dd>{detalhe.status === 'ativo' ? 'Ativo' : 'Inativo'}</dd>
@@ -335,10 +416,49 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
                   {detalhe.status === 'ativo' ? 'Inativar' : 'Ativar'}
                 </button>
               </div>
+              {(detalhe.cores ?? []).length > 0 && (
+                  <table className="tabela tabela--compacta cores-tecido">
+                    <thead>
+                      <tr>
+                        <th>Cor</th>
+                        <th>Estoque</th>
+                        <th>Estoque mínimo</th>
+                        <th>Situação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detalhe.cores.map((cor) => (
+                        <tr key={cor.id}>
+                          <td>{cor.nome}</td>
+                          <td>{qtd.format(cor.estoque)} {detalhe.unidade}</td>
+                          <td>{qtd.format(cor.estoque_minimo)}</td>
+                          <td>{cor.status === 'ativo' ? 'Ativo' : 'Inativo'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+              )}
               <form className="form" onSubmit={(e) => void registrarMovimento(e)}>
                 <h3>Movimentar estoque</h3>
                 <p className="dica">A quantidade entra em {detalhe.unidade}. Outra unidade é recusada.</p>
                 <div className="form__row">
+                  {(detalhe.cores ?? []).length > 1 && (
+                    <label>
+                      Cor
+                      <select
+                        required
+                        value={movimento.tecido_cor_id}
+                        onChange={(e) => setMovimento({ ...movimento, tecido_cor_id: e.target.value })}
+                      >
+                        <option value="">Selecione a cor</option>
+                        {detalhe.cores.map((cor) => (
+                          <option key={cor.id} value={cor.id}>
+                            {cor.nome} · {qtd.format(cor.estoque)} {detalhe.unidade}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   <label>
                     Tipo
                     <select
@@ -383,6 +503,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
                     <tr>
                       <th>Data</th>
                       <th>Tipo</th>
+                      <th>Cor</th>
                       <th>Qtd</th>
                       <th>Unidade</th>
                       <th>Anterior</th>
@@ -396,6 +517,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
                       <tr key={item.id}>
                         <td>{item.criado_em}</td>
                         <td>{item.tipo}</td>
+                        <td>{item.cor_nome ?? '—'}</td>
                         <td>{qtd.format(item.quantidade)}</td>
                         <td>{item.unidade}</td>
                         <td>{qtd.format(item.saldo_anterior)}</td>
@@ -505,42 +627,7 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
                   />
                 </label>
                 <label>
-                  Cor
-                  <input
-                    value={form.cor ?? ''}
-                    onChange={(e) => setForm({ ...form, cor: e.target.value })}
-                  />
-                </label>
-              </div>
-              <div className="form__row">
-                {modo === 'criar' && (
-                  <label>
-                    Estoque inicial ({unidadeRotulo})
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.001"
-                      value={form.estoque_inicial ?? 0}
-                      onChange={(e) =>
-                        setForm({ ...form, estoque_inicial: Number(e.target.value) })
-                      }
-                    />
-                  </label>
-                )}
-                <label>
-                  Estoque mínimo ({unidadeRotulo})
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.001"
-                    value={form.estoque_minimo ?? 0}
-                    onChange={(e) =>
-                      setForm({ ...form, estoque_minimo: Number(e.target.value) })
-                    }
-                  />
-                </label>
-                <label>
-                  Situação
+                  Situação do tecido
                   <select
                     value={form.status ?? 'ativo'}
                     onChange={(e) =>
@@ -551,6 +638,112 @@ export function TecidosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpres
                     <option value="inativo">Inativo</option>
                   </select>
                 </label>
+              </div>
+              <div className="cores-tecido">
+                <div className="card__head">
+                  <h3>Cores</h3>
+                  <button
+                    type="button"
+                    className="btn-secundario"
+                    onClick={() => setCoresForm((atual) => [...atual, corVazia()])}
+                  >
+                    + Adicionar cor
+                  </button>
+                </div>
+                <p className="dica">
+                  Cada cor tem o próprio estoque em {unidadeRotulo}. O custo padrão do tecido vale para todas,
+                  e pode ser ajustado depois.
+                </p>
+                <table className="tabela tabela--compacta">
+                  <thead>
+                    <tr>
+                      <th>Cor</th>
+                      <th>{modo === 'editar' ? 'Estoque' : 'Estoque inicial'}</th>
+                      <th>Estoque mínimo</th>
+                      <th>Situação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {coresForm.map((cor) => (
+                      <tr key={cor.chave}>
+                        <td>
+                          <input
+                            aria-label="Cor"
+                            value={cor.nome}
+                            placeholder="Preto, Branco, Azul..."
+                            onChange={(e) =>
+                              setCoresForm((atual) =>
+                                atual.map((item) =>
+                                  item.chave === cor.chave ? { ...item, nome: e.target.value } : item,
+                                ),
+                              )
+                            }
+                          />
+                        </td>
+                        <td>
+                          {cor.id ? (
+                            <span>
+                              {qtd.format(cor.estoque)} {unidadeRotulo}
+                            </span>
+                          ) : (
+                            <input
+                              aria-label={`Estoque inicial ${cor.nome || 'da cor'}`}
+                              type="number"
+                              min={0}
+                              step="0.001"
+                              value={cor.estoque_inicial}
+                              onChange={(e) =>
+                                setCoresForm((atual) =>
+                                  atual.map((item) =>
+                                    item.chave === cor.chave
+                                      ? { ...item, estoque_inicial: Number(e.target.value) }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          )}
+                        </td>
+                        <td>
+                          <input
+                            aria-label={`Estoque mínimo ${cor.nome || 'da cor'}`}
+                            type="number"
+                            min={0}
+                            step="0.001"
+                            value={cor.estoque_minimo}
+                            onChange={(e) =>
+                              setCoresForm((atual) =>
+                                atual.map((item) =>
+                                  item.chave === cor.chave
+                                    ? { ...item, estoque_minimo: Number(e.target.value) }
+                                    : item,
+                                ),
+                              )
+                            }
+                          />
+                        </td>
+                        <td>
+                          <select
+                            aria-label={`Situação ${cor.nome || 'da cor'}`}
+                            value={cor.status}
+                            onChange={(e) =>
+                              setCoresForm((atual) =>
+                                atual.map((item) =>
+                                  item.chave === cor.chave
+                                    ? { ...item, status: e.target.value as StatusMateria }
+                                    : item,
+                                ),
+                              )
+                            }
+                          >
+                            <option value="ativo">Ativo</option>
+                            <option value="inativo">Inativo</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
               <button type="submit" disabled={salvando}>
                 {modo === 'editar' ? 'Salvar' : 'Cadastrar tecido'}

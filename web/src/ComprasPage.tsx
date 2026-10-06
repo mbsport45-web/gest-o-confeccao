@@ -29,15 +29,28 @@ type OpcaoCompra = {
   tipo: TipoItemCompra;
   unidade: string;
   custo: number;
+  cores: Array<{ id: number; nome: string; status: string; estoque: number }>;
 };
 type ItemForm = {
   tipo: TipoItemCompra;
   materia_prima_id: string;
+  tecido_cor_id: string;
   quantidade: number;
   custo_unitario: number;
 };
 
-const ITEM_VAZIO: ItemForm = { tipo: 'tecido', materia_prima_id: '', quantidade: 1, custo_unitario: 0 };
+const ITEM_VAZIO: ItemForm = {
+  tipo: 'tecido',
+  materia_prima_id: '',
+  tecido_cor_id: '',
+  quantidade: 1,
+  custo_unitario: 0,
+};
+
+function corUnica(opcao?: OpcaoCompra): string {
+  const ativas = (opcao?.cores ?? []).filter((cor) => cor.status === 'ativo');
+  return ativas.length === 1 ? String(ativas[0].id) : '';
+}
 
 const FORM_VAZIO = {
   fornecedor_id: '',
@@ -99,6 +112,7 @@ export function ComprasPage() {
           tipo: 'tecido',
           unidade: tecido.unidade,
           custo: tecido.custo,
+          cores: tecido.cores ?? [],
         }));
         const ids = new Set(tecidosOpcoes.map((tecido) => tecido.id));
         const materiais: OpcaoCompra[] = materias.data
@@ -109,6 +123,7 @@ export function ComprasPage() {
             tipo: 'material',
             unidade: materia.unidade,
             custo: materia.custo,
+            cores: [],
           }));
         setOpcoes([...tecidosOpcoes, ...materiais]);
       })
@@ -166,12 +181,24 @@ export function ComprasPage() {
       setSalvando(true);
       const itens = form.itens
         .filter((i) => i.materia_prima_id)
-        .map((i) => ({
-          materia_prima_id: Number(i.materia_prima_id),
-          quantidade: Number(i.quantidade),
-          custo_unitario: Number(i.custo_unitario),
-          unidade: opcaoDoItem(i)?.unidade,
-        }));
+        .map((i) => {
+          const opcao = opcaoDoItem(i);
+          return {
+            materia_prima_id: Number(i.materia_prima_id),
+            quantidade: Number(i.quantidade),
+            custo_unitario: Number(i.custo_unitario),
+            unidade: opcao?.unidade,
+            tecido_cor_id: i.tecido_cor_id ? Number(i.tecido_cor_id) : undefined,
+          };
+        });
+      const semCor = form.itens.find((item) => {
+        const opcao = opcaoDoItem(item);
+        return item.materia_prima_id && (opcao?.cores.length ?? 0) > 0 && !item.tecido_cor_id;
+      });
+      if (semCor) {
+        setErro('Selecione a cor do tecido');
+        return;
+      }
       if (itens.length === 0) {
         setErro('Selecione o tecido ou material já cadastrado.');
         return;
@@ -437,6 +464,7 @@ export function ComprasPage() {
                           itens[idx] = {
                             ...item,
                             materia_prima_id: e.target.value,
+                            tecido_cor_id: corUnica(escolhido),
                             custo_unitario: escolhido?.custo ?? item.custo_unitario,
                           };
                           setForm({ ...form, itens });
@@ -448,6 +476,28 @@ export function ComprasPage() {
                         ))}
                       </select>
                     </label>
+                    {(escolhida?.cores.length ?? 0) > 0 && (
+                      <label>
+                        Cor
+                        <select
+                          required
+                          value={item.tecido_cor_id}
+                          onChange={(e) => {
+                            const itens = [...form.itens];
+                            itens[idx] = { ...item, tecido_cor_id: e.target.value };
+                            setForm({ ...form, itens });
+                          }}
+                        >
+                          <option value="">Selecione a cor</option>
+                          {escolhida?.cores.map((cor) => (
+                            <option key={cor.id} value={cor.id} disabled={cor.status !== 'ativo'}>
+                              {cor.nome}
+                              {cor.status !== 'ativo' ? ' (inativa)' : ''} · estoque {cor.estoque} {escolhida.unidade}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                   </div>
                   <div className="form__row">
                     <label>

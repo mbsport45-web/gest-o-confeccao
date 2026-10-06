@@ -43,24 +43,27 @@ const SALDO_SELECT = `
     s.id, s.tipo, s.produto_id, s.variante_id, s.materia_prima_id,
     s.quantidade, s.criado_em, s.atualizado_em,
     CASE
+      WHEN tc.id IS NOT NULL THEN m.nome || ' — ' || tc.nome
       WHEN s.tipo = 'materia' THEN m.nome
       ELSE p.nome
     END AS nome,
     CASE
-      WHEN s.tipo = 'materia' THEN m.codigo
+      WHEN tc.id IS NOT NULL OR s.tipo = 'materia' THEN m.codigo
       WHEN s.tipo = 'variante' THEN v.sku
       ELSE p.sku
     END AS codigo,
     CASE
       WHEN s.tipo = 'variante' THEN trim(ifnull(v.cor,'') || ' / ' || ifnull(v.tamanho,''))
+      WHEN tc.id IS NOT NULL THEN tc.nome
       WHEN s.tipo = 'materia' THEN m.tipo
       ELSE NULL
     END AS detalhe,
     CASE
-      WHEN s.tipo = 'materia' THEN ifnull(m.unidade, 'UN')
+      WHEN tc.id IS NOT NULL OR s.tipo = 'materia' THEN ifnull(m.unidade, 'UN')
       ELSE ifnull(p.unidade, 'UN')
     END AS unidade,
     CASE
+      WHEN tc.id IS NOT NULL THEN ifnull(tc.estoque_minimo, 0)
       WHEN s.tipo = 'materia' THEN ifnull(m.estoque_minimo, 0)
       WHEN s.tipo = 'variante' THEN ifnull(v.estoque_minimo, ifnull(p.estoque_minimo, 0))
       ELSE ifnull(p.estoque_minimo, 0)
@@ -68,7 +71,8 @@ const SALDO_SELECT = `
   FROM estoque_saldos s
   LEFT JOIN produtos p ON p.id = s.produto_id
   LEFT JOIN produto_variantes v ON v.id = s.variante_id
-  LEFT JOIN materias_primas m ON m.id = s.materia_prima_id
+  LEFT JOIN tecido_cores tc ON tc.id = s.tecido_cor_id
+  LEFT JOIN materias_primas m ON m.id = coalesce(s.materia_prima_id, tc.tecido_id)
 `;
 
 function comAbaixo(row: Omit<EstoqueSaldo, 'abaixo_minimo'>): EstoqueSaldo {
@@ -117,6 +121,7 @@ export type MovimentoEstoqueInput = {
   variante_id?: number;
   produto_id?: number;
   materia_prima_id?: number;
+  tecido_cor_id?: number;
   motivo?: string | null;
   observacoes?: string | null;
   unidade?: string | null;
@@ -133,8 +138,30 @@ export type ResultadoMovimentoEstoque =
 export function obterOuCriarSaldoEstoque(
   db: AppDatabase,
   empresaId: number,
-  ref: { variante_id?: number; produto_id?: number; materia_prima_id?: number },
+  ref: { variante_id?: number; produto_id?: number; materia_prima_id?: number; tecido_cor_id?: number },
 ): { ok: true; saldoId: number } | { ok: false; status: number; erro: string } {
+  if (ref.tecido_cor_id) {
+    const cor = db
+      .prepare(
+        `SELECT c.id FROM tecido_cores c
+           JOIN materias_primas m ON m.id = c.tecido_id AND m.empresa_id = c.empresa_id
+          WHERE c.id = ? AND c.empresa_id = ?`,
+      )
+      .get(ref.tecido_cor_id, empresaId) as { id: number } | undefined;
+    if (!cor) return { ok: false, status: 404, erro: 'Cor do tecido não encontrada' };
+    const atual = db
+      .prepare('SELECT id FROM estoque_saldos WHERE tecido_cor_id = ? AND empresa_id = ?')
+      .get(cor.id, empresaId) as { id: number } | undefined;
+    if (atual) return { ok: true, saldoId: atual.id };
+    const info = db
+      .prepare(
+        `INSERT INTO estoque_saldos (empresa_id, tipo, produto_id, variante_id, materia_prima_id, tecido_cor_id, quantidade)
+         VALUES (@empresa_id, 'tecido_cor', NULL, NULL, NULL, @tecido_cor_id, 0)`,
+      )
+      .run({ empresa_id: empresaId, tecido_cor_id: cor.id });
+    return { ok: true, saldoId: Number(info.lastInsertRowid) };
+  }
+
   if (ref.variante_id) {
     const variante = db
       .prepare(
@@ -163,7 +190,10 @@ export function obterOuCriarSaldoEstoque(
       .get(ref.materia_prima_id, empresaId) as { id: number } | undefined;
     if (!materia) return { ok: false, status: 404, erro: 'Matéria-prima não encontrada' };
     const atual = db
-      .prepare('SELECT id FROM estoque_saldos WHERE materia_prima_id = ? AND empresa_id = ?')
+      .prepare(
+        `SELECT id FROM estoque_saldos
+          WHERE materia_prima_id = ? AND empresa_id = ? AND tecido_cor_id IS NULL`,
+      )
       .get(materia.id, empresaId) as { id: number } | undefined;
     if (atual) return { ok: true, saldoId: atual.id };
     const info = db
@@ -217,9 +247,10 @@ export function registrarMovimentoEstoque(
   data: MovimentoEstoqueInput,
 ): ResultadoMovimentoEstoque {
   const alvo = obterOuCriarSaldoEstoque(db, empresaId, {
-    variante_id: data.variante_id,
-    produto_id: data.produto_id,
-    materia_prima_id: data.materia_prima_id,
+    variante_id: data.tecido_cor_id ? undefined : data.variante_id,
+    produto_id: data.tecido_cor_id ? undefined : data.produto_id,
+    materia_prima_id: data.tecido_cor_id ? undefined : data.materia_prima_id,
+    tecido_cor_id: data.tecido_cor_id,
   });
   if (!alvo.ok) return alvo;
 
@@ -252,11 +283,11 @@ export function registrarMovimentoEstoque(
     .prepare(
       `INSERT INTO estoque_movimentos (
          empresa_id, saldo_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, observacoes,
-         produto_id, variante_id, materia_prima_id, unidade, custo, usuario_id,
+         produto_id, variante_id, materia_prima_id, tecido_cor_id, unidade, custo, usuario_id,
          referencia_tipo, referencia_id
        ) VALUES (
          @empresa_id, @saldo_id, @tipo, @quantidade, @saldo_anterior, @saldo_posterior, @motivo, @observacoes,
-         @produto_id, @variante_id, @materia_prima_id, @unidade, @custo, @usuario_id,
+         @produto_id, @variante_id, @materia_prima_id, @tecido_cor_id, @unidade, @custo, @usuario_id,
          @referencia_tipo, @referencia_id
        )`,
     )
@@ -271,7 +302,8 @@ export function registrarMovimentoEstoque(
       observacoes: data.observacoes ?? null,
       produto_id: saldoRow.produto_id,
       variante_id: saldoRow.variante_id,
-      materia_prima_id: saldoRow.materia_prima_id,
+      materia_prima_id: data.materia_prima_id ?? saldoRow.materia_prima_id,
+      tecido_cor_id: data.tecido_cor_id ?? null,
       unidade: data.unidade ?? null,
       custo: data.custo ?? null,
       usuario_id: data.usuario_id ?? null,
@@ -322,12 +354,13 @@ export function createEstoqueRouter(db: AppDatabase): Router {
       where.push(
         `(ifnull(p.nome,'') LIKE @q OR ifnull(p.sku,'') LIKE @q
           OR ifnull(v.sku,'') LIKE @q OR ifnull(v.cor,'') LIKE @q
-          OR ifnull(m.nome,'') LIKE @q OR ifnull(m.codigo,'') LIKE @q)`,
+          OR ifnull(m.nome,'') LIKE @q OR ifnull(m.codigo,'') LIKE @q
+          OR ifnull(tc.nome,'') LIKE @q)`,
       );
       params.q = `%${q}%`;
     }
     if (tipo === 'materia') {
-      where.push(`s.tipo = 'materia'`);
+      where.push(`s.tipo IN ('materia', 'tecido_cor')`);
     } else if (tipo === 'produto') {
       where.push(`s.tipo IN ('produto', 'variante')`);
     } else if ((TIPOS_SALDO as readonly string[]).includes(tipo)) {

@@ -577,6 +577,7 @@ export function createDatabase(location: string) {
   aplicarDadosProducao(db);
   aplicarColunasEstoqueMovimento(db);
   aplicarColunaNotaFiscalCompra(db);
+  aplicarCoresTecido(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -641,6 +642,210 @@ function aplicarColunaNotaFiscalCompra(db: AppDatabase) {
   if (!cols.has('nota_fiscal')) {
     db.exec(`ALTER TABLE pedidos_compra ADD COLUMN nota_fiscal TEXT`);
   }
+}
+
+function colunaExiste(db: AppDatabase, tabela: string, coluna: string): boolean {
+  if (!tabelaExiste(db, tabela)) return false;
+  const cols = db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[];
+  return cols.some((col) => col.name === coluna);
+}
+
+function adicionarColuna(db: AppDatabase, tabela: string, coluna: string, ddl: string) {
+  if (tabelaExiste(db, tabela) && !colunaExiste(db, tabela, coluna)) db.exec(ddl);
+}
+
+export function aplicarCoresTecido(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tecido_cores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      tecido_id INTEGER NOT NULL REFERENCES materias_primas(id) ON DELETE CASCADE,
+      nome TEXT NOT NULL,
+      nome_norm TEXT NOT NULL,
+      custo REAL,
+      estoque_minimo REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'ativo',
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS tecido_cores_nome_unique
+      ON tecido_cores (empresa_id, tecido_id, nome_norm);
+    CREATE INDEX IF NOT EXISTS tecido_cores_tecido ON tecido_cores (tecido_id);
+  `);
+
+  adicionarColuna(
+    db,
+    'estoque_saldos',
+    'tecido_cor_id',
+    'ALTER TABLE estoque_saldos ADD COLUMN tecido_cor_id INTEGER REFERENCES tecido_cores(id)',
+  );
+  adicionarColuna(
+    db,
+    'estoque_movimentos',
+    'tecido_cor_id',
+    'ALTER TABLE estoque_movimentos ADD COLUMN tecido_cor_id INTEGER REFERENCES tecido_cores(id)',
+  );
+  adicionarColuna(
+    db,
+    'pedido_compra_itens',
+    'tecido_cor_id',
+    'ALTER TABLE pedido_compra_itens ADD COLUMN tecido_cor_id INTEGER REFERENCES tecido_cores(id)',
+  );
+  adicionarColuna(
+    db,
+    'enfestos',
+    'tecido_cor_id',
+    'ALTER TABLE enfestos ADD COLUMN tecido_cor_id INTEGER REFERENCES tecido_cores(id)',
+  );
+
+  db.exec(`
+    DROP INDEX IF EXISTS estoque_saldos_materia_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS estoque_saldos_materia_unique
+      ON estoque_saldos (materia_prima_id)
+      WHERE materia_prima_id IS NOT NULL AND tecido_cor_id IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS estoque_saldos_tecido_cor_unique
+      ON estoque_saldos (tecido_cor_id)
+      WHERE tecido_cor_id IS NOT NULL;
+  `);
+
+  const tecidos = db
+    .prepare(
+      `SELECT id, empresa_id, cor, estoque_minimo, status
+         FROM materias_primas
+        WHERE tipo = 'tecido' AND trim(ifnull(cor, '')) != ''`,
+    )
+    .all() as Array<{
+    id: number;
+    empresa_id: number;
+    cor: string;
+    estoque_minimo: number;
+    status: string;
+  }>;
+
+  const jaTemCor = db.prepare(
+    `SELECT id FROM tecido_cores WHERE empresa_id = ? AND tecido_id = ? AND nome_norm = ?`,
+  );
+  const inserirCor = db.prepare(
+    `INSERT INTO tecido_cores (empresa_id, tecido_id, nome, nome_norm, estoque_minimo, status)
+     VALUES (@empresa_id, @tecido_id, @nome, @nome_norm, @estoque_minimo, @status)`,
+  );
+  const saldoDoTecido = db.prepare(
+    `SELECT id FROM estoque_saldos
+      WHERE materia_prima_id = ? AND empresa_id = ? AND tecido_cor_id IS NULL`,
+  );
+  const moverSaldo = db.prepare(
+    `UPDATE estoque_saldos
+        SET tecido_cor_id = @cor_id, tipo = 'tecido_cor', materia_prima_id = NULL
+      WHERE id = @id`,
+  );
+  const marcarMovimentos = db.prepare(
+    `UPDATE estoque_movimentos
+        SET tecido_cor_id = ?
+      WHERE materia_prima_id = ? AND empresa_id = ? AND tecido_cor_id IS NULL`,
+  );
+
+  const garantirCor = db.transaction(
+    (tecido: { id: number; empresa_id: number; cor: string; estoque_minimo: number; status: string }) => {
+      const nome = tecido.cor.trim();
+      const nomeNorm = nome.toLocaleLowerCase('pt-BR');
+      let corId = (
+        jaTemCor.get(tecido.empresa_id, tecido.id, nomeNorm) as { id: number } | undefined
+      )?.id;
+      if (!corId) {
+        corId = Number(
+          inserirCor.run({
+            empresa_id: tecido.empresa_id,
+            tecido_id: tecido.id,
+            nome,
+            nome_norm: nomeNorm,
+            estoque_minimo: tecido.estoque_minimo ?? 0,
+            status: tecido.status || 'ativo',
+          }).lastInsertRowid,
+        );
+      }
+      const saldo = saldoDoTecido.get(tecido.id, tecido.empresa_id) as { id: number } | undefined;
+      if (saldo) moverSaldo.run({ cor_id: corId, id: saldo.id });
+      marcarMovimentos.run(corId, tecido.id, tecido.empresa_id);
+    },
+  );
+  for (const tecido of tecidos) garantirCor(tecido);
+
+  const grupos = db
+    .prepare(
+      `SELECT empresa_id, lower(trim(nome)) AS nome_norm, unidade, GROUP_CONCAT(id) AS ids
+         FROM materias_primas
+        WHERE tipo = 'tecido' AND unidade IN ('KG', 'METRO') AND status != 'inativo'
+        GROUP BY empresa_id, lower(trim(nome)), unidade
+        HAVING COUNT(*) > 1`,
+    )
+    .all() as Array<{ empresa_id: number; nome_norm: string; unidade: string; ids: string }>;
+
+  for (const grupo of grupos) {
+    const ids = grupo.ids
+      .split(',')
+      .map((id) => Number(id))
+      .filter((id) => id > 0)
+      .sort((a, b) => a - b);
+    const parentId = ids[0];
+    for (const siblingId of ids.slice(1)) {
+      try {
+        fundirTecidoIrmao(db, grupo.empresa_id, parentId, siblingId);
+      } catch {
+        // Um irmão com vínculo conflitante permanece como cadastro próprio.
+      }
+    }
+  }
+}
+
+function fundirTecidoIrmao(db: AppDatabase, empresaId: number, parentId: number, siblingId: number) {
+  const cores = db
+    .prepare(
+      `SELECT id, nome_norm FROM tecido_cores WHERE empresa_id = ? AND tecido_id = ? ORDER BY id`,
+    )
+    .all(empresaId, siblingId) as Array<{ id: number; nome_norm: string }>;
+  if (cores.length !== 1) throw new Error('irmão sem cor única');
+  const ocupada = db
+    .prepare(
+      `SELECT id FROM tecido_cores WHERE empresa_id = ? AND tecido_id = ? AND nome_norm = ?`,
+    )
+    .get(empresaId, parentId, cores[0].nome_norm);
+  if (ocupada) throw new Error('cor já existe no tecido principal');
+
+  const fundir = db.transaction(() => {
+    db.prepare('UPDATE tecido_cores SET tecido_id = ? WHERE id = ? AND empresa_id = ?').run(
+      parentId,
+      cores[0].id,
+      empresaId,
+    );
+    db.prepare('UPDATE enfestos SET tecido_id = ? WHERE tecido_id = ? AND empresa_id = ?').run(
+      parentId,
+      siblingId,
+      empresaId,
+    );
+    db.prepare(
+      'UPDATE pedido_compra_itens SET materia_prima_id = ? WHERE materia_prima_id = ? AND empresa_id = ?',
+    ).run(parentId, siblingId, empresaId);
+    db.prepare('UPDATE produto_bom_itens SET materia_prima_id = ? WHERE materia_prima_id = ?').run(
+      parentId,
+      siblingId,
+    );
+    db.prepare('UPDATE ordem_requisitos SET materia_prima_id = ? WHERE materia_prima_id = ?').run(
+      parentId,
+      siblingId,
+    );
+    db.prepare(
+      'UPDATE estoque_movimentos SET materia_prima_id = ? WHERE materia_prima_id = ? AND empresa_id = ?',
+    ).run(parentId, siblingId, empresaId);
+    db.prepare('DELETE FROM estoque_saldos WHERE materia_prima_id = ? AND empresa_id = ?').run(
+      siblingId,
+      empresaId,
+    );
+    db.prepare('DELETE FROM materias_primas WHERE id = ? AND empresa_id = ?').run(
+      siblingId,
+      empresaId,
+    );
+  });
+  fundir();
 }
 
 function aplicarColunasEstoqueMovimento(db: AppDatabase) {
