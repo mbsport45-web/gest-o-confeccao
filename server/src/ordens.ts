@@ -35,6 +35,38 @@ const CONSOME_ESTOQUE = new Set([
   'concluida',
 ]);
 const AINDA_PLANEJADA = new Set(['planejada', 'pendente']);
+const DEPOIS_DO_CORTE = new Set([
+  'costura',
+  'acabamento',
+  'qualidade',
+  'embalagem',
+  'concluida',
+  'em_producao',
+]);
+
+function corteAindaPendente(
+  db: AppDatabase,
+  ordemId: number,
+  empresaId: number,
+  linhas: Array<{ cor: string; quantidade: number }>,
+): boolean {
+  const totais = new Map<string, { cor: string; quantidade: number }>();
+  for (const linha of linhas) {
+    const chave = linha.cor.trim().toLowerCase();
+    const atual = totais.get(chave) ?? { cor: linha.cor, quantidade: 0 };
+    atual.quantidade += linha.quantidade;
+    totais.set(chave, atual);
+  }
+  const cores = [...totais.values()].filter((item) => item.quantidade > 0);
+  if (!cores.length) return false;
+  const finalizada = db.prepare(
+    `SELECT 1 AS ok FROM enfestos
+      WHERE empresa_id = ? AND ordem_id = ? AND lower(trim(cor)) = lower(trim(?))
+        AND status = 'finalizado'
+      LIMIT 1`,
+  );
+  return cores.some((item) => !finalizada.get(empresaId, ordemId, item.cor));
+}
 
 const textoOpcional = z
   .string()
@@ -1041,6 +1073,17 @@ export function createOrdensRouter(db: AppDatabase): Router {
           }
         }
         const novoStatus = data.status ?? atual.status;
+        if (novoStatus !== atual.status && DEPOIS_DO_CORTE.has(novoStatus)) {
+          const linhasGrade = dist ? dist.linhas : mapDistribuicao(id, empresaId);
+          if (corteAindaPendente(db, id, empresaId, linhasGrade)) {
+            throw Object.assign(
+              new Error(
+                'O corte ainda não foi concluído. Finalize o enfesto de todas as cores antes de avançar a OP.',
+              ),
+              { status: 409 },
+            );
+          }
+        }
         const produtoMudou = vinculos.produtoId !== atual.produto_id;
         const retrato = retratoProducao(vinculos.produtoId, empresaId);
         const valorCostura =

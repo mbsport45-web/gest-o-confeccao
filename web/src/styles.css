@@ -231,7 +231,8 @@ body {
   grid-template-columns: 1fr;
 }
 
-.app__main--equipe {
+.app__main--equipe,
+.app__main--enfesto {
   grid-template-columns: 1fr;
 }
 
