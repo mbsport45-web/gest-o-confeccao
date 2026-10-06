@@ -86,6 +86,23 @@ describe('papéis e permissões por módulo', () => {
   it('mapeia rota e método HTTP para módulo e ação CRUD', () => {
     expect(moduloDaRota('/api/clientes')).toBe('clientes');
     expect(moduloDaRota('/api/materias-primas/3')).toBe('materiais');
+    expect(moduloDaRota('/api/tecidos')).toBe('materiais');
+    expect(moduloDaRota('/api/tecidos/categorias')).toBe('materiais');
+    expect(moduloDaRota('/api/tecidos/4/movimentos')).toBe('materiais');
+    expect(moduloDaRota('/api/tecidos/4/status')).toBe('materiais');
+    expect(acaoDoPedido('POST', '/api/tecidos')).toBe('criar');
+    expect(acaoDoPedido('POST', '/api/tecidos/4/movimentos')).toBe('editar');
+    expect(acaoDoPedido('PATCH', '/api/tecidos/4/status')).toBe('editar');
+    for (const papel of ['proprietario', 'administrador'] as const) {
+      expect(temPermissao(papel, 'materiais', 'visualizar')).toBe(true);
+      expect(temPermissao(papel, 'materiais', 'criar')).toBe(true);
+      expect(temPermissao(papel, 'materiais', 'editar')).toBe(true);
+      expect(temPermissao(papel, 'materiais', 'excluir')).toBe(true);
+    }
+    expect(temPermissao('vendas', 'materiais', 'visualizar')).toBe(false);
+    expect(temPermissao('financeiro', 'materiais', 'criar')).toBe(false);
+    expect(temPermissao('cortador', 'materiais', 'visualizar')).toBe(true);
+    expect(temPermissao('cortador', 'materiais', 'criar')).toBe(false);
     expect(moduloDaRota('/api/membros/1')).toBe('equipe');
     expect(moduloDaRota('/api/convites')).toBe('equipe');
     expect(moduloDaRota('/api/planos')).toBe('assinatura');
