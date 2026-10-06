@@ -6,6 +6,7 @@ import {
   listarEnfestoOrdem,
   listarOrdensPaginado,
   listarTecidos,
+  obterOrdem,
   temPermissao,
   type CorEnfesto,
   type Enfesto,
@@ -26,6 +27,7 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
   const [ordens, setOrdens] = useState<OrdemProducao[]>([]);
   const [tecidos, setTecidos] = useState<Tecido[]>([]);
   const [ordemId, setOrdemId] = useState<number | null>(null);
+  const [tecidosDaOp, setTecidosDaOp] = useState<number[]>([]);
   const [cores, setCores] = useState<CorEnfesto[]>([]);
   const [enfesto, setEnfesto] = useState<Enfesto | null>(null);
   const [tecidoId, setTecidoId] = useState('');
@@ -59,7 +61,15 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
   useEffect(() => {
     if (!ordemId) return;
     carregarCores(ordemId).catch((err: Error) => setErro(err.message));
-  }, [ordemId, carregarCores]);
+    obterOrdem(ordemId)
+      .then((ordem) => {
+        const ids = (ordem.requisitos ?? [])
+          .map((item) => item.materia_prima_id)
+          .filter((id) => tecidos.some((tecido) => tecido.id === id));
+        setTecidosDaOp(ids);
+      })
+      .catch(() => setTecidosDaOp([]));
+  }, [ordemId, carregarCores, tecidos]);
 
   function preencher(atual: Enfesto) {
     setEnfesto(atual);
@@ -77,6 +87,9 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
     try {
       const atual = await abrirEnfesto(ordemId, cor);
       preencher(atual);
+      if (!atual.tecido_id && tecidosDaOp.length === 1) {
+        setTecidoId(String(tecidosDaOp[0]));
+      }
       await carregarCores(ordemId);
     } catch (err) {
       setErro((err as Error).message);
@@ -168,12 +181,21 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
       {enfesto && (
         <section className="card">
           <h2>
-            {enfesto.cor} · {enfesto.quantidade_pecas} peças
+            {enfesto.cor} — {enfesto.quantidade_pecas} peças
           </h2>
           <p className="dica">
             {enfesto.referencia ? `${enfesto.referencia} — ` : ''}
-            {enfesto.produto_nome}. O consumo desta cor não se mistura com as outras.
+            {enfesto.produto_nome}. A cor veio da OP. O consumo desta cor não se mistura com as outras.
           </p>
+          <ul className="lista-tamanhos">
+            {(cores.find((item) => item.cor.trim().toLowerCase() === enfesto.cor.trim().toLowerCase())
+              ?.tamanhos ?? []
+            ).map((item) => (
+              <li key={item.tamanho}>
+                {item.tamanho} = {item.quantidade}
+              </li>
+            ))}
+          </ul>
           {enfesto.status === 'finalizado' && (
             <p className="dica">
               Consumo de {enfesto.quantidade_consumida} {enfesto.unidade}. Estoque de{' '}
@@ -191,8 +213,11 @@ export function EnfestoPage({ permissoes }: { permissoes: PermissoesSessao }) {
                 onChange={(e) => setTecidoId(e.target.value)}
               >
                 <option value="">Selecione</option>
-                {tecidos.map((item) => (
+                {[...tecidos]
+                  .sort((a, b) => Number(tecidosDaOp.includes(b.id)) - Number(tecidosDaOp.includes(a.id)))
+                  .map((item) => (
                   <option key={item.id} value={item.id}>
+                    {tecidosDaOp.includes(item.id) ? 'BOM · ' : ''}
                     {item.nome} · {item.unidade} · estoque {item.estoque}
                   </option>
                 ))}
