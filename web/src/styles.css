@@ -904,8 +904,29 @@ button {
   gap: 0.3rem;
 }
 
-.documento-identificado select {
+.documento-identificado select,
+.cor-nova input {
   width: 100%;
+}
+
+.cor-variacao,
+.cor-nova {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cor-nova {
+  flex-direction: row;
+  align-items: center;
+}
+
+.cor-nova input {
+  min-width: 0;
+}
+
+.cor-nova .btn-secundario {
+  flex-shrink: 0;
 }
 
 .documento-acoes {

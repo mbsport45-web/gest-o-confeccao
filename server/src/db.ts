@@ -579,6 +579,7 @@ export function createDatabase(location: string) {
   aplicarColunaNotaFiscalCompra(db);
   aplicarCoresTecido(db);
   aplicarDocumentosImportados(db);
+  aplicarDocumentoNaCompra(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -848,6 +849,15 @@ function fundirTecidoIrmao(db: AppDatabase, empresaId: number, parentId: number,
     );
   });
   fundir();
+}
+
+function aplicarDocumentoNaCompra(db: AppDatabase) {
+  adicionarColuna(
+    db,
+    'pedidos_compra',
+    'documento_importado_id',
+    'ALTER TABLE pedidos_compra ADD COLUMN documento_importado_id INTEGER',
+  );
 }
 
 function aplicarDocumentosImportados(db: AppDatabase) {

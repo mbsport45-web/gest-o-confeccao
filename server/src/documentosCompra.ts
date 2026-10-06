@@ -11,8 +11,10 @@ import { textoDoPdf } from './pdfTexto.js';
 
 export type ItemSugerido = ItemLido & {
   materia_prima_id: number | null;
+  produto_id: number | null;
   tecido_cor_id: number | null;
   nome_cadastro: string | null;
+  cor_sugerida: string | null;
   aviso: string | null;
 };
 
@@ -30,6 +32,8 @@ type Cadastro = {
   tipo: string;
   cores: Array<{ id: number; nome: string; status: string }>;
 };
+
+const LIGACOES = new Set(['com', 'de', 'da', 'do', 'das', 'dos', 'para', 'sem', 'e', 'em', 'ao', 'a']);
 
 export async function processarDocumentoCompra(
   db: AppDatabase,
@@ -85,56 +89,115 @@ function listarCadastros(db: AppDatabase, empresaId: number): Cadastro[] {
   const cores = db
     .prepare('SELECT id, tecido_id, nome, status FROM tecido_cores WHERE empresa_id = ?')
     .all(empresaId) as Array<{ id: number; tecido_id: number; nome: string; status: string }>;
-  return materias.map((materia) => ({
-    ...materia,
-    cores: cores
-      .filter((cor) => cor.tecido_id === materia.id)
-      .map((cor) => ({ id: cor.id, nome: cor.nome, status: cor.status })),
-  }));
+  const produtos = db
+    .prepare(
+      `SELECT p.id, p.nome, p.unidade,
+              (SELECT COUNT(*) FROM produto_variantes v WHERE v.produto_id = p.id) AS variantes
+         FROM produtos p
+        WHERE p.empresa_id = ? AND p.status = 'ativo'`,
+    )
+    .all(empresaId) as Array<{ id: number; nome: string; unidade: string; variantes: number }>;
+  return [
+    ...materias.map((materia) => ({
+      ...materia,
+      cores: cores
+        .filter((cor) => cor.tecido_id === materia.id)
+        .map((cor) => ({ id: cor.id, nome: cor.nome, status: cor.status })),
+    })),
+    ...produtos
+      .filter((produto) => produto.variantes === 0)
+      .map((produto) => ({
+        id: produto.id,
+        nome: produto.nome,
+        unidade: produto.unidade,
+        tipo: 'produto',
+        cores: [],
+      })),
+  ];
 }
 
 function sugerirItem(item: ItemLido, cadastros: Cadastro[]): ItemSugerido {
   const descricao = normalizar(item.descricao);
-  const ordenados = [...cadastros].sort((a, b) => b.nome.length - a.nome.length);
-  const cadastro = ordenados.find((atual) => descricao.includes(normalizar(atual.nome)));
+  const materias = cadastros
+    .filter((atual) => atual.tipo !== 'produto')
+    .sort((a, b) => b.nome.length - a.nome.length);
+  const cadastro = materias.find((atual) => descricao.includes(normalizar(atual.nome)));
   if (!cadastro) {
+    const produto = cadastros
+      .filter((atual) => atual.tipo === 'produto')
+      .sort((a, b) => b.nome.length - a.nome.length)
+      .find((atual) => descricao.includes(normalizar(atual.nome)));
+    if (!produto) {
+      return {
+        ...item,
+        materia_prima_id: null,
+        produto_id: null,
+        tecido_cor_id: null,
+        nome_cadastro: null,
+        cor_sugerida: null,
+        aviso: 'Item não encontrado no cadastro',
+      };
+    }
     return {
       ...item,
       materia_prima_id: null,
+      produto_id: produto.id,
       tecido_cor_id: null,
-      nome_cadastro: null,
-      aviso: 'Item não encontrado no cadastro',
+      nome_cadastro: produto.nome,
+      cor_sugerida: null,
+      aviso: avisoDeUnidade(item.unidade, produto.unidade),
     };
   }
-  const unidadeDoc = unidadeCanonico(item.unidade);
-  const unidadeCadastro = cadastro.unidade?.trim().toUpperCase() || null;
-  let aviso: string | null = null;
-  if (unidadeDoc && unidadeCadastro && unidadeDoc !== unidadeCadastro) {
-    aviso = `A unidade do documento (${unidadeDoc}) difere da cadastrada (${unidadeCadastro})`;
-  }
+  const avisoUnidade = avisoDeUnidade(item.unidade, cadastro.unidade);
   let corId: number | null = null;
-  if (cadastro.tipo === 'tecido' && cadastro.cores.length > 0) {
+  let corNova: string | null = null;
+  let aviso = avisoUnidade;
+  if (cadastro.tipo === 'tecido') {
     const cor = [...cadastro.cores]
       .sort((a, b) => b.nome.length - a.nome.length)
       .find((atual) => atual.status === 'ativo' && temPalavra(descricao, normalizar(atual.nome)));
-    if (!cor) {
-      return {
-        ...item,
-        materia_prima_id: cadastro.id,
-        tecido_cor_id: null,
-        nome_cadastro: cadastro.nome,
-        aviso: 'Selecione a cor do tecido',
-      };
+    if (cor) {
+      corId = cor.id;
+    } else {
+      corNova = corSugerida(item.descricao, cadastro.nome);
+      if (corNova) aviso = `Cadastre a cor ${corNova} neste tecido`;
+      else if (cadastro.cores.some((atual) => atual.status === 'ativo')) aviso = 'Selecione a cor do tecido';
     }
-    corId = cor.id;
   }
   return {
     ...item,
     materia_prima_id: cadastro.id,
+    produto_id: null,
     tecido_cor_id: corId,
     nome_cadastro: cadastro.nome,
+    cor_sugerida: corNova,
     aviso,
   };
+}
+
+function avisoDeUnidade(unidadeItem: string | null, unidadeCadastro: string | null): string | null {
+  const unidadeDoc = unidadeCanonico(unidadeItem);
+  const cadastrada = unidadeCadastro?.trim().toUpperCase() || null;
+  if (unidadeDoc && cadastrada && unidadeDoc !== cadastrada) {
+    return `A unidade do documento (${unidadeDoc}) difere da cadastrada (${cadastrada})`;
+  }
+  return null;
+}
+
+function corSugerida(descricao: string, nomeCadastro: string): string | null {
+  const usadas = new Set(normalizar(nomeCadastro).split(' ').filter(Boolean));
+  const restantes = descricao.split(/\s+/).filter((palavra) => {
+    const normal = normalizar(palavra).replace(/[^a-z0-9]/g, '');
+    if (!normal || usadas.has(normal) || LIGACOES.has(normal) || /^\d/.test(normal)) return false;
+    return true;
+  });
+  if (restantes.length === 0 || restantes.length > 3) return null;
+  const nome = restantes.join(' ').trim();
+  const unidade = unidadeCanonico(nome);
+  if (nome.length < 2 || nome.length > 40 || unidade === 'KG' || unidade === 'METRO' || unidade === 'UN') {
+    return null;
+  }
+  return nome;
 }
 
 function acharFornecedor(

@@ -605,4 +605,121 @@ describe('API de compras', () => {
     expect(cores.find((cor) => cor.nome === 'Preto')?.estoque).toBe(11);
     expect(cores.find((cor) => cor.nome === 'Branco')?.estoque).toBe(20);
   });
+
+  it('sugere cor nova do tecido, ignora item sem cadastro e rastreia o documento', async () => {
+    const fornecedor = await criarFornecedor();
+    const tecido = await api.post('/api/tecidos').send({
+      nome: 'Dry Tela Cayman',
+      categoria: 'Sintetico',
+      unidade: 'KG',
+      custo: 35,
+      cores: [{ nome: 'Preto', estoque_inicial: 10 }],
+    });
+    const produto = await api.post('/api/produtos').send({
+      nome: 'Botao plastico',
+      unidade: 'UN',
+      cores: [],
+      tamanhos: [],
+    });
+    expect(produto.status).toBe(201);
+    const pdf = pdfComTexto([
+      'NF-e 000124',
+      'Fornecedor: Fiacao Norte',
+      'CNPJ: 11.444.777/0001-61',
+      '06/10/2026',
+      'Dry Tela Cayman Oliva 1 KG 35,00 35,00',
+      'Botao plastico 8 UN 0,50 4,00',
+      'Ziper nylon 4 UN 1,50 6,00',
+      'Valor total da nota 45,00',
+    ]);
+    const res = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota-oliva.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(res.status).toBe(201);
+    const oliva = res.body.itens.find((item: { descricao: string }) => item.descricao.includes('Oliva'));
+    const botao = res.body.itens.find((item: { descricao: string }) => item.descricao.startsWith('Botao'));
+    const ziper = res.body.itens.find((item: { descricao: string }) => item.descricao.startsWith('Ziper'));
+    expect(oliva).toMatchObject({
+      materia_prima_id: tecido.body.id,
+      produto_id: null,
+      tecido_cor_id: null,
+      cor_sugerida: 'Oliva',
+      aviso: 'Cadastre a cor Oliva neste tecido',
+    });
+    expect(botao).toMatchObject({
+      materia_prima_id: null,
+      produto_id: produto.body.id,
+      nome_cadastro: 'Botao plastico',
+    });
+    expect(ziper.materia_prima_id).toBeNull();
+    expect(ziper.produto_id).toBeNull();
+
+    const cor = await api.patch(`/api/tecidos/${tecido.body.id}`).send({
+      cores: [{ nome: 'Oliva', status: 'ativo' }],
+    });
+    expect(cor.status).toBe(200);
+    const olivaId = cor.body.cores.find((item: { nome: string }) => item.nome === 'Oliva').id;
+    const pretoAntes = cor.body.cores.find((item: { nome: string }) => item.nome === 'Preto').estoque;
+
+    const entrada = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      data_emissao: res.body.data_emissao,
+      nota_fiscal: res.body.numero,
+      documento_importado_id: res.body.id,
+      confirmar: true,
+      observacoes: 'Itens novos sem cadastro: Ziper nylon.',
+      itens: [
+        {
+          materia_prima_id: oliva.materia_prima_id,
+          tecido_cor_id: olivaId,
+          quantidade: oliva.quantidade,
+          custo_unitario: oliva.valor_unitario,
+          unidade: 'KG',
+        },
+        {
+          produto_id: botao.produto_id,
+          quantidade: botao.quantidade,
+          custo_unitario: botao.valor_unitario,
+          unidade: 'UN',
+        },
+      ],
+    });
+    expect(entrada.status).toBe(201);
+    expect(entrada.body.status).toBe('recebida');
+    expect(entrada.body.documento_importado_id).toBe(res.body.id);
+    expect(entrada.body.documento_nome).toBe('nota-oliva.pdf');
+    expect(entrada.body.documento_numero).toBe('000124');
+    expect(entrada.body.itens).toHaveLength(2);
+    expect(entrada.body.itens.find((item: { tecido_cor_id: number }) => item.tecido_cor_id === olivaId).quantidade_recebida).toBe(1);
+
+    const depois = await api.get(`/api/tecidos/${tecido.body.id}`);
+    expect(depois.body.cores.find((item: { nome: string }) => item.nome === 'Oliva').estoque).toBe(1);
+    expect(depois.body.cores.find((item: { nome: string }) => item.nome === 'Preto').estoque).toBe(pretoAntes);
+    const movs = await api.get(`/api/tecidos/${tecido.body.id}/movimentos`);
+    const entradaOliva = (movs.body.data as Array<{ observacoes: string; referencia_tipo: string; referencia_id: number; cor_nome: string }>).find(
+      (mov) => mov.cor_nome === 'Oliva',
+    );
+    expect(entradaOliva).toMatchObject({
+      referencia_tipo: 'compra',
+      referencia_id: entrada.body.id,
+    });
+    expect(entradaOliva?.observacoes).toContain('nota-oliva.pdf');
+    expect(entradaOliva?.observacoes).toContain('000124');
+
+    const { api: outra } = await autenticarNovaEmpresa(app);
+    const fornecedorAlheio = await outra.post('/api/fornecedores').send({
+      nome: 'Outra Fiação',
+      cpf_cnpj: '11222333000181',
+    });
+    expect(fornecedorAlheio.status).toBe(201);
+    const alheio = await outra.post('/api/compras').send({
+      fornecedor_id: fornecedorAlheio.body.id,
+      documento_importado_id: res.body.id,
+      itens: [{ produto_id: produto.body.id, quantidade: 1, custo_unitario: 1 }],
+    });
+    expect(alheio.status).toBe(404);
+    expect(alheio.body.erro).toBe('Documento não encontrado');
+  });
 });
