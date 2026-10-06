@@ -263,6 +263,28 @@ function skuUsado(
   return Boolean(variante);
 }
 
+function nomeCadastro(nome: string): string {
+  return nome.trim().replace(/\s+/g, ' ');
+}
+
+function nomeUsado(
+  db: AppDatabase,
+  empresaId: number,
+  nome: string,
+  ignorarId = 0,
+): { id: number } | undefined {
+  return db
+    .prepare(
+      `SELECT id FROM produtos
+        WHERE empresa_id = ?
+          AND lower(trim(nome)) = lower(trim(?))
+          AND id != ?
+        ORDER BY id ASC
+        LIMIT 1`,
+    )
+    .get(empresaId, nomeCadastro(nome), ignorarId) as { id: number } | undefined;
+}
+
 function barcodeUsado(
   db: AppDatabase,
   empresaId: number,
@@ -643,8 +665,15 @@ export function createProdutosRouter(db: AppDatabase): Router {
       });
     }
 
-    const data = { ...parsed.data };
+    const data = { ...parsed.data, nome: nomeCadastro(parsed.data.nome) };
     const empresaId = empresaDaSessao(req);
+    const duplicado = nomeUsado(db, empresaId, data.nome);
+    if (duplicado) {
+      return res.status(409).json({
+        erro: 'Já existe um produto com este nome. Selecione o cadastro existente.',
+        produto_id: duplicado.id,
+      });
+    }
     const codigo = skuDaRequisicao(data);
     if (!codigo.ok) return res.status(400).json({ erro: codigo.erro });
     data.sku = codigo.sku;
@@ -922,7 +951,19 @@ export function createProdutosRouter(db: AppDatabase): Router {
       return res.status(404).json({ erro: 'Produto não encontrado' });
     }
 
-    const data = { ...parsed.data };
+    const data = {
+      ...parsed.data,
+      ...(parsed.data.nome !== undefined ? { nome: nomeCadastro(parsed.data.nome) } : {}),
+    };
+    if (data.nome !== undefined) {
+      const duplicado = nomeUsado(db, empresaId, data.nome, id);
+      if (duplicado) {
+        return res.status(409).json({
+          erro: 'Já existe um produto com este nome. Selecione o cadastro existente.',
+          produto_id: duplicado.id,
+        });
+      }
+    }
     const codigo = skuDaRequisicao(data);
     if (!codigo.ok) return res.status(400).json({ erro: codigo.erro });
     if (codigo.sku !== undefined) data.sku = codigo.sku;

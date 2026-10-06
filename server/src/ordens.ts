@@ -115,6 +115,7 @@ const criarOrdemSchema = z
     responsavel: textoOpcional,
     requisitos: z.array(requisitoSchema).optional(),
     valor_costura: z.number().min(0, 'valor da costura não pode ser negativo').nullable().optional(),
+    referencia: z.union([z.string().trim().max(80), z.null()]).optional(),
     distribuicao: z.array(distribuicaoSchema).optional(),
   })
   .refine((d) => Boolean(d.cliente || d.cliente_id), {
@@ -167,6 +168,7 @@ const atualizarOrdemSchema = z.object({
     .optional(),
   requisitos: z.array(requisitoSchema).optional(),
   valor_costura: z.number().min(0, 'valor da costura não pode ser negativo').nullable().optional(),
+  referencia: z.union([z.string().trim().max(80), z.null()]).optional(),
   distribuicao: z.array(distribuicaoSchema).optional(),
 });
 
@@ -760,6 +762,13 @@ export function createOrdensRouter(db: AppDatabase): Router {
     };
   }
 
+  function referenciaDaOp(valor: string | null | undefined): string | null | undefined {
+    if (valor === undefined) return undefined;
+    if (valor === null) return null;
+    const texto = valor.trim();
+    return texto || null;
+  }
+
   function retratoProducao(produtoId: number | null, empresaId: number) {
     if (!produtoId) return { referencia: null as string | null, valor_costura: null as number | null };
     const produto = db
@@ -955,6 +964,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
       }
 
       const retrato = retratoProducao(vinculos.produtoId, empresaId);
+      const referenciaPedido = referenciaDaOp(data.referencia);
       const info = insertStmt.run({
         empresa_id: empresaId,
         cliente: vinculos.clienteNome,
@@ -970,7 +980,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         data_prevista: data.data_prevista ?? null,
         observacoes: data.observacoes ?? null,
         responsavel: data.responsavel ?? null,
-        referencia: retrato.referencia,
+        referencia: referenciaPedido !== undefined ? referenciaPedido : retrato.referencia,
         valor_costura:
           data.valor_costura === undefined ? retrato.valor_costura : data.valor_costura,
       });
@@ -1092,7 +1102,13 @@ export function createOrdensRouter(db: AppDatabase): Router {
             : produtoMudou
               ? retrato.valor_costura
               : atual.valor_costura;
-        const referencia = produtoMudou ? retrato.referencia : atual.referencia;
+        const referenciaPedido = referenciaDaOp(data.referencia);
+        const referencia =
+          referenciaPedido !== undefined
+            ? referenciaPedido
+            : produtoMudou
+              ? retrato.referencia
+              : atual.referencia;
 
         db.prepare(
           `UPDATE ordens_producao SET

@@ -70,6 +70,9 @@ describe('papéis e permissões por módulo', () => {
     expect(temPermissao('producao', 'ordens', 'criar')).toBe(true);
     expect(temPermissao('producao', 'etapas', 'editar')).toBe(true);
     expect(temPermissao('producao', 'produtos', 'visualizar')).toBe(true);
+    expect(temPermissao('producao', 'produtos', 'criar')).toBe(true);
+    expect(temPermissao('producao', 'produtos', 'editar')).toBe(true);
+    expect(temPermissao('producao', 'produtos', 'excluir')).toBe(false);
     expect(temPermissao('producao', 'pedidos', 'visualizar')).toBe(false);
     expect(temPermissao('producao', 'equipe', 'visualizar')).toBe(false);
     expect(temPermissao('producao', 'enfesto', 'editar')).toBe(true);

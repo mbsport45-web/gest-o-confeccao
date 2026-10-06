@@ -6,14 +6,18 @@ import {
   STATUS_VALIDOS,
   atualizarOrdem,
   atualizarStatus,
+  atualizarStatusProduto,
   criarOrdem,
+  criarProduto,
   listarClientes,
   listarMateriasPrimas,
   listarOrdensPaginado,
-  listarProdutos,
+  listarProdutosAtivos,
   obterFichaTecnica,
   obterOrdem,
+  obterProduto,
   removerOrdem,
+  salvarFichaTecnica,
   type Cliente,
   type MateriaPrima,
   type OrdemProducao,
@@ -31,6 +35,7 @@ import {
   eixosDasVariantes,
   somaGrade,
 } from './DistribuicaoCorte';
+import { SeletorProduto, ordenarProdutos, produtoPeloNome } from './SeletorProduto';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 
@@ -53,6 +58,25 @@ const FORM_VAZIO = {
   coresSelecionadas: [] as string[],
   tamanhosSelecionados: [] as string[],
 };
+
+const MODELO_VAZIO = {
+  nome: '',
+  referencia: '',
+  valorCostura: '' as number | '',
+  cores: '',
+  tamanhos: '',
+  materiais: [] as ReqLinha[],
+};
+
+function parseLista(texto: string): string[] {
+  const unique: string[] = [];
+  for (const raw of texto.split(/[,;]/)) {
+    const item = raw.trim();
+    if (!item) continue;
+    if (!unique.some((atual) => atual.toLowerCase() === item.toLowerCase())) unique.push(item);
+  }
+  return unique;
+}
 
 function normCor(valor: string): string {
   return valor.trim().toLowerCase();
@@ -121,6 +145,10 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [materiais, setMateriais] = useState<MateriaPrima[]>([]);
+  const [novoModelo, setNovoModelo] = useState(false);
+  const [modelo, setModelo] = useState(MODELO_VAZIO);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [reativarId, setReativarId] = useState<number | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -138,8 +166,8 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     listarClientes({ por_pagina: 100, status: 'ativo' })
       .then((lista) => setClientes(lista.data))
       .catch(() => undefined);
-    listarProdutos({ por_pagina: 100, status: 'ativo' })
-      .then((lista) => setProdutos(lista.data))
+    listarProdutosAtivos()
+      .then((lista) => setProdutos(ordenarProdutos(lista)))
       .catch(() => undefined);
     listarMateriasPrimas({ por_pagina: 100, status: 'ativo' })
       .then((lista) => setMateriais(lista.data))
@@ -201,10 +229,17 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   function abrirCriar() {
     if (!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')) return;
     setForm(FORM_VAZIO);
+    setModelo(MODELO_VAZIO);
+    setNovoModelo(false);
+    setAviso(null);
+    setReativarId(null);
     setEditandoId(null);
     setDetalhe(null);
     setModo('criar');
     setErro(null);
+    listarProdutosAtivos()
+      .then((lista) => setProdutos(ordenarProdutos(lista)))
+      .catch(() => undefined);
   }
 
   async function abrirDetalhe(id: number) {
@@ -216,7 +251,15 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
 
   async function abrirEditar(id: number) {
     const ordem = await obterOrdem(id);
-    const produto = produtos.find((item) => item.id === ordem.produto_id);
+    let produto = produtos.find((item) => item.id === ordem.produto_id);
+    if (ordem.produto_id && !produto) {
+      try {
+        produto = await obterProduto(ordem.produto_id);
+        incluirProduto(produto);
+      } catch {
+        produto = undefined;
+      }
+    }
     const grade = Object.fromEntries(
       (ordem.distribuicao ?? []).map((item) => [String(item.variante_id), item.quantidade]),
     ) as Record<string, number>;
@@ -318,12 +361,23 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       observacoes: form.observacoes,
       requisitos,
       valor_costura: form.valorCostura === '' ? null : Number(form.valorCostura),
+      referencia: form.referencia.trim() || null,
       distribuicao,
     };
   }
 
-  function aplicarProduto(produtoId: string) {
-    const produto = produtos.find((item) => String(item.id) === produtoId);
+  function incluirProduto(produto: Produto) {
+    setProdutos((atual) =>
+      ordenarProdutos([produto, ...atual.filter((item) => item.id !== produto.id)]),
+    );
+  }
+
+  function aplicarProduto(produtoId: string, produtoInformado?: Produto) {
+    const produto = produtoInformado ?? produtos.find((item) => String(item.id) === produtoId);
+    if (produto) incluirProduto(produto);
+    setNovoModelo(false);
+    setAviso(null);
+    setReativarId(null);
     setForm({
       ...form,
       produtoId,
@@ -331,45 +385,78 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       requisitos: [],
       grade: {},
       gradeEditada: false,
-      coresSelecionadas: [],
-      tamanhosSelecionados: [],
+      coresSelecionadas: produto ? coresDoProduto(produto) : [],
+      tamanhosSelecionados: produto ? tamanhosDoProduto(produto) : [],
       referencia: produto ? (produto.referencia ?? produto.sku ?? '') : '',
       valorCostura: produto?.valor_costura ?? '',
     });
   }
 
-  function aplicarReferencia(valor: string) {
-    const achado = produtos.find((item) => {
-      const codigo = (item.referencia ?? item.sku ?? '').trim().toLowerCase();
-      return codigo !== '' && codigo === valor.trim().toLowerCase();
-    });
-    if (!achado) {
-      setForm({
-        ...form,
-        referencia: valor,
-        produtoId: '',
-        varianteId: '',
-        requisitos: [],
-        grade: {},
-        gradeEditada: false,
-        coresSelecionadas: [],
-        tamanhosSelecionados: [],
-        valorCostura: '',
-      });
+  async function usarProdutoExistente(id: number) {
+    const existente = await obterProduto(id);
+    if (existente.status === 'inativo') {
+      setReativarId(existente.id);
+      setErro(`${existente.nome} já está cadastrado e está inativo.`);
       return;
     }
-    setForm({
-      ...form,
-      referencia: achado.referencia ?? achado.sku ?? valor,
-      produtoId: String(achado.id),
-      varianteId: '',
-      requisitos: [],
-      grade: {},
-      gradeEditada: false,
-      coresSelecionadas: [],
-      tamanhosSelecionados: [],
-      valorCostura: achado.valor_costura ?? '',
-    });
+    aplicarProduto(String(existente.id), existente);
+    setAviso(`${existente.nome} já está cadastrado. O cadastro existente foi selecionado.`);
+  }
+
+  async function reativarModelo() {
+    if (!reativarId) return;
+    const ativo = await atualizarStatusProduto(reativarId, 'ativo');
+    aplicarProduto(String(ativo.id), ativo);
+    setAviso(`${ativo.nome} foi reativado e selecionado nesta OP.`);
+  }
+
+  async function cadastrarModelo() {
+    const nome = modelo.nome.trim();
+    if (!nome) {
+      setErro('Informe o nome do produto ou modelo.');
+      return;
+    }
+    const achado = produtoPeloNome(produtos, nome);
+    if (achado) {
+      aplicarProduto(String(achado.id), achado);
+      setAviso(`${achado.nome} já está cadastrado. O cadastro existente foi selecionado.`);
+      return;
+    }
+    try {
+      setSalvando(true);
+      setErro(null);
+      const criado = await criarProduto({
+        nome,
+        referencia: modelo.referencia.trim() || undefined,
+        valor_costura: modelo.valorCostura === '' ? null : Number(modelo.valorCostura),
+        cores: parseLista(modelo.cores),
+        tamanhos: parseLista(modelo.tamanhos),
+      });
+      const materiaisNovos = modelo.materiais.filter(
+        (item) => item.materia_prima_id && Number(item.quantidade) > 0,
+      );
+      if (materiaisNovos.length) {
+        await salvarFichaTecnica({
+          produto_id: criado.id,
+          itens: materiaisNovos.map((item) => ({
+            materia_prima_id: Number(item.materia_prima_id),
+            quantidade: Number(item.quantidade),
+          })),
+        });
+      }
+      aplicarProduto(String(criado.id), criado);
+      setModelo(MODELO_VAZIO);
+      setAviso(`${criado.nome} foi cadastrado e já pode ser usado nas próximas ordens.`);
+    } catch (err) {
+      const falha = err as Error & { produtoId?: number };
+      if (falha.produtoId) {
+        await usarProdutoExistente(falha.produtoId);
+        return;
+      }
+      setErro(falha.message);
+    } finally {
+      setSalvando(false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -392,7 +479,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       }
       const dados = payloadDoForm();
       if (!dados.produto_id || !dados.produto) {
-        throw new Error('Selecione um produto cadastrado. O nome e a referência vêm desse cadastro.');
+        throw new Error('Selecione um produto ou modelo cadastrado.');
       }
       if (editandoId) {
         await atualizarOrdem(editandoId, dados);
@@ -658,51 +745,164 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                 ))}
               </select>
             </label>
-            <label>
-              Produto
-              <select
-                required
-                value={form.produtoId}
-                onChange={(e) => aplicarProduto(e.target.value)}
-              >
-                <option value="">Selecione</option>
-                {produtos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nome}
-                  </option>
+            <SeletorProduto
+              produtos={produtos}
+              selecionadoId={form.produtoId}
+              onSelecionar={(id) => aplicarProduto(id)}
+              onNovo={() => {
+                setNovoModelo(true);
+                setErro(null);
+                setAviso(null);
+              }}
+            />
+            {aviso && <p className="dica">{aviso}</p>}
+            {reativarId && (
+              <button type="button" className="btn-secundario" onClick={() => reativarModelo()}>
+                Reativar e usar nesta OP
+              </button>
+            )}
+            {novoModelo && (
+              <div className="novo-modelo">
+                <h3 className="subtitulo">Novo produto/modelo</h3>
+                <p className="dica">
+                  O nome fica salvo para esta empresa e aparece nas próximas ordens. A referência é
+                  outro dado, como 10234 para a Bermuda.
+                </p>
+                <label>
+                  Nome
+                  <input
+                    aria-label="Nome do novo produto"
+                    value={modelo.nome}
+                    onChange={(e) => setModelo({ ...modelo, nome: e.target.value })}
+                    placeholder="Ex.: Camiseta com trançador"
+                  />
+                </label>
+                <div className="form__row">
+                  <label>
+                    Referência
+                    <input
+                      aria-label="Referência do novo produto"
+                      value={modelo.referencia}
+                      onChange={(e) => setModelo({ ...modelo, referencia: e.target.value })}
+                      placeholder="Ex.: 10234"
+                    />
+                  </label>
+                  <label>
+                    Costura padrão (R$/peça)
+                    <input
+                      aria-label="Costura padrão do novo produto"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={modelo.valorCostura}
+                      onChange={(e) =>
+                        setModelo({
+                          ...modelo,
+                          valorCostura: e.target.value === '' ? '' : Number(e.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                <label>
+                  Cores
+                  <input
+                    aria-label="Cores do novo produto"
+                    value={modelo.cores}
+                    onChange={(e) => setModelo({ ...modelo, cores: e.target.value })}
+                    placeholder="Preto, Branco"
+                  />
+                </label>
+                <label>
+                  Tamanhos
+                  <input
+                    aria-label="Tamanhos do novo produto"
+                    value={modelo.tamanhos}
+                    onChange={(e) => setModelo({ ...modelo, tamanhos: e.target.value })}
+                    placeholder="P, M, G, GG"
+                  />
+                </label>
+                {modelo.materiais.map((linha, indice) => (
+                  <div className="form__row" key={`modelo-material-${indice}`}>
+                    <label>
+                      Material previsto
+                      <select
+                        aria-label={`Material do novo produto ${indice + 1}`}
+                        value={linha.materia_prima_id}
+                        onChange={(e) =>
+                          setModelo({
+                            ...modelo,
+                            materiais: modelo.materiais.map((item, posicao) =>
+                              posicao === indice
+                                ? { ...item, materia_prima_id: e.target.value }
+                                : item,
+                            ),
+                          })
+                        }
+                      >
+                        <option value="">Selecione</option>
+                        {materiais.map((materia) => (
+                          <option key={materia.id} value={materia.id}>
+                            {materia.nome}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Qtd por peça
+                      <input
+                        aria-label={`Quantidade do material do novo produto ${indice + 1}`}
+                        type="number"
+                        min={0.001}
+                        step="0.001"
+                        value={linha.quantidade}
+                        onChange={(e) =>
+                          setModelo({
+                            ...modelo,
+                            materiais: modelo.materiais.map((item, posicao) =>
+                              posicao === indice
+                                ? { ...item, quantidade: Number(e.target.value) }
+                                : item,
+                            ),
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
                 ))}
-              </select>
-            </label>
+                <button
+                  type="button"
+                  className="btn-secundario"
+                  onClick={() =>
+                    setModelo({
+                      ...modelo,
+                      materiais: [...modelo.materiais, { materia_prima_id: '', quantidade: 1 }],
+                    })
+                  }
+                >
+                  Adicionar material ao modelo
+                </button>
+                <button type="button" disabled={salvando} onClick={() => cadastrarModelo()}>
+                  {salvando ? 'Salvando…' : 'Salvar produto'}
+                </button>
+              </div>
+            )}
             <label>
-              Referência
+              Referência desta OP
               <input
-                list="referencias-produto"
                 value={form.referencia}
-                onChange={(e) => aplicarReferencia(e.target.value)}
+                onChange={(e) => setForm({ ...form, referencia: e.target.value })}
                 placeholder="Ex.: 10234"
               />
-              <datalist id="referencias-produto">
-                {produtos
-                  .filter((produto) => produto.referencia ?? produto.sku)
-                  .map((produto) => (
-                    <option key={produto.id} value={produto.referencia ?? produto.sku ?? ''}>
-                      {produto.nome}
-                    </option>
-                  ))}
-              </datalist>
             </label>
-            {produtoSel ? (
+            {produtoSel && (
               <p className="dica">
-                {produtoSel.nome}. Referência {produtoSel.referencia ?? produtoSel.sku ?? '—'}.{' '}
-                {produtoSel.cores.length} cores e {produtoSel.tamanhos.length} tamanhos no cadastro.
+                {produtoSel.nome}. A referência, a costura, as cores, os tamanhos e os materiais do
+                cadastro entram como sugestão e podem ser ajustados nesta OP.
                 {produtoSel.valor_costura == null
                   ? ' Costura padrão ainda não informada.'
                   : ` Costura padrão ${produtoSel.valor_costura.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por peça.`}
               </p>
-            ) : (
-              form.referencia.trim() && (
-                <p className="erro">Essa referência não está no cadastro de produtos.</p>
-              )
             )}
             <label>
               Valor da costura desta OP (R$/peça)
