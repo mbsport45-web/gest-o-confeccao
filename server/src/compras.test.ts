@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
 import { autenticar, autenticarNovaEmpresa, type TestApi } from './httpTest.js';
+import { pdfComTexto } from './pdfTexto.js';
 
 const CNPJ = '11444777000161';
 
@@ -458,5 +459,73 @@ describe('API de compras', () => {
     expect(confirmar.status).toBe(404);
     expect((await api.get(`/api/tecidos/${tecido.id}`)).body.estoque).toBe(0);
     expect((await outra.get('/api/tecidos')).body.total).toBe(0);
+  });
+
+  it('processa o PDF da nota e sugere tecido e cor sem movimentar estoque', async () => {
+    const fornecedor = await criarFornecedor();
+    const tecido = await api.post('/api/tecidos').send({
+      nome: 'Dry Tela Cayman',
+      categoria: 'Sintetico',
+      unidade: 'KG',
+      custo: 35,
+      cores: [
+        { nome: 'Preto', estoque_inicial: 10 },
+        { nome: 'Branco', estoque_inicial: 20 },
+      ],
+    });
+    expect(tecido.status).toBe(201);
+    const preto = tecido.body.cores.find((cor: { nome: string }) => cor.nome === 'Preto');
+    const pdf = pdfComTexto([
+      'NF-e 8891',
+      'Fornecedor: Fiacao Norte',
+      'CNPJ: 11.444.777/0001-61',
+      '06/10/2026',
+      'Dry Tela Cayman Preto 200 KG 35,00 7000,00',
+      'Valor total da nota 7000,00',
+    ]);
+    const res = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      tipo: 'nota_fiscal',
+      numero: '8891',
+      cnpj: '11444777000161',
+      data_emissao: '2026-10-06',
+      total: 7000,
+      fornecedor: { id: fornecedor.id, nome: 'Fiação Norte' },
+    });
+    expect(res.body.itens[0]).toMatchObject({
+      descricao: 'Dry Tela Cayman Preto',
+      quantidade: 200,
+      unidade: 'KG',
+      materia_prima_id: tecido.body.id,
+      tecido_cor_id: preto.id,
+    });
+    expect((await api.get('/api/compras')).body.total).toBe(0);
+    expect((await api.get(`/api/tecidos/${tecido.body.id}`)).body.estoque).toBe(30);
+
+    const invalido = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota.txt',
+      conteudo_base64: Buffer.from('nao e pdf').toString('base64'),
+    });
+    expect(invalido.status).toBe(400);
+
+    const { api: outra } = await autenticarNovaEmpresa(app);
+    const alheio = await outra.post('/api/compras/documentos').send({
+      tipo: 'pedido_compra',
+      nome_arquivo: 'pedido.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(alheio.status).toBe(201);
+    expect(alheio.body.fornecedor).toBeNull();
+    expect(alheio.body.itens[0].materia_prima_id).toBeNull();
+    const guardado = db
+      .prepare('SELECT empresa_id FROM documentos_importados WHERE id = ?')
+      .get(res.body.id) as { empresa_id: number };
+    expect(guardado.empresa_id).toBe(1);
   });
 });

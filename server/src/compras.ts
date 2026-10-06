@@ -4,6 +4,8 @@ import type { AppDatabase } from './db.js';
 import { registrarMovimentoEstoque } from './estoque.js';
 import { arredondarDinheiro, sincronizarContaPagarCompra } from './financeiro.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
+import { processarDocumentoCompra } from './documentosCompra.js';
+import { TIPOS_DOCUMENTO } from './leituraDocumento.js';
 
 export const STATUS_COMPRA = [
   'rascunho',
@@ -502,6 +504,35 @@ export function createComprasRouter(db: AppDatabase): Router {
       total,
       total_paginas: Math.max(1, Math.ceil(total / porPagina)),
     });
+  });
+
+  const documentoSchema = z.object({
+    tipo: z.enum(TIPOS_DOCUMENTO),
+    nome_arquivo: z.string().trim().min(1, 'informe o arquivo').max(200),
+    conteudo_base64: z.string().trim().min(20, 'envie o PDF').max(12_000_000),
+  });
+
+  router.post('/documentos', async (req, res) => {
+    const parsed = documentoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Dados inválidos',
+        detalhes: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const pdf = Buffer.from(parsed.data.conteudo_base64, 'base64');
+    if (pdf.length === 0) return res.status(400).json({ erro: 'Arquivo PDF inválido' });
+    try {
+      const documento = await processarDocumentoCompra(db, empresaDaSessao(req), req.usuario!.id, {
+        tipo: parsed.data.tipo,
+        nomeArquivo: parsed.data.nome_arquivo,
+        pdf,
+      });
+      res.status(201).json(documento);
+    } catch (err) {
+      const falha = err as Error & { status?: number };
+      return res.status(falha.status ?? 400).json({ erro: falha.message });
+    }
   });
 
   router.get('/:id', (req, res) => {
