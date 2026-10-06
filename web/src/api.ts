@@ -1513,6 +1513,10 @@ export interface PedidoCompra {
   condicao_pagamento: string | null;
   vencimento: string | null;
   nota_fiscal: string | null;
+  documento_importado_id?: number | null;
+  documento_nome?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
   fornecedor?: string;
   itens?: CompraItem[];
 }
@@ -1589,8 +1593,10 @@ export interface ItemDocumento {
   valor_unitario: number | null;
   total: number | null;
   materia_prima_id: number | null;
+  produto_id: number | null;
   tecido_cor_id: number | null;
   nome_cadastro: string | null;
+  cor_sugerida: string | null;
   aviso: string | null;
 }
 
@@ -1640,6 +1646,7 @@ export type CompraPayload = {
   condicao_pagamento?: string;
   vencimento?: string;
   nota_fiscal?: string;
+  documento_importado_id?: number;
   confirmar?: boolean;
   itens?: Array<{
     materia_prima_id?: number;

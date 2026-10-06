@@ -51,6 +51,10 @@ export interface PedidoCompra {
   condicao_pagamento: string | null;
   vencimento: string | null;
   nota_fiscal: string | null;
+  documento_importado_id?: number | null;
+  documento_nome?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
   criado_em: string;
   atualizado_em: string;
   fornecedor?: string;
@@ -102,12 +106,13 @@ const compraBaseSchema = z.object({
   condicao_pagamento: textoOpcional,
   vencimento: textoOpcional,
   nota_fiscal: textoOpcional,
+  documento_importado_id: z.number().int().positive().optional(),
   confirmar: z.boolean().optional(),
   itens: z.array(itemSchema).optional(),
 });
 
 const atualizarCompraSchema = compraBaseSchema
-  .omit({ confirmar: true })
+  .omit({ confirmar: true, documento_importado_id: true })
   .partial()
   .extend({
     fornecedor_id: z.number().int().positive().optional(),
@@ -128,9 +133,14 @@ const receberSchema = z.object({
 });
 
 const COMPRA_SELECT = `
-  SELECT c.*, f.nome AS fornecedor
+  SELECT c.*, f.nome AS fornecedor,
+         d.nome_arquivo AS documento_nome,
+         d.numero AS documento_numero,
+         d.tipo AS documento_tipo
   FROM pedidos_compra c
   JOIN fornecedores f ON f.id = c.fornecedor_id
+  LEFT JOIN documentos_importados d
+    ON d.id = c.documento_importado_id AND d.empresa_id = c.empresa_id
 `;
 
 const ITEM_SELECT = `
@@ -280,6 +290,13 @@ export function createComprasRouter(db: AppDatabase): Router {
     return cadastrada;
   }
 
+  function textoDocumento(compra: PedidoCompra): string | null {
+    if (!compra.documento_importado_id) return null;
+    const numero = compra.documento_numero || compra.nota_fiscal;
+    const arquivo = compra.documento_nome ? `(${compra.documento_nome})` : '';
+    return ['Documento', numero, arquivo].filter(Boolean).join(' ');
+  }
+
   function lancarMovimentoCompra(
     compra: PedidoCompra,
     item: CompraItem,
@@ -298,7 +315,7 @@ export function createComprasRouter(db: AppDatabase): Router {
       motivo,
       observacoes:
         tipo === 'entrada'
-          ? `Recebimento item ${item.id}`
+          ? [ `Recebimento item ${item.id}`, textoDocumento(compra) ].filter(Boolean).join('. ')
           : `Estorno da compra ${compra.codigo ?? compra.id}`,
       unidade: item.unidade || unidadeCadastrada(item, compra.empresa_id),
       custo: item.custo_unitario,
@@ -556,6 +573,12 @@ export function createComprasRouter(db: AppDatabase): Router {
       .prepare('SELECT id FROM fornecedores WHERE id = ? AND empresa_id = ?')
       .get(data.fornecedor_id, empresaId);
     if (!fornecedor) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
+    if (data.documento_importado_id) {
+      const documento = db
+        .prepare('SELECT id FROM documentos_importados WHERE id = ? AND empresa_id = ?')
+        .get(data.documento_importado_id, empresaId);
+      if (!documento) return res.status(404).json({ erro: 'Documento não encontrado' });
+    }
     if (data.status && data.status !== 'rascunho' && data.status !== 'aberta') {
       return res.status(400).json({ erro: 'Nova compra deve nascer como rascunho ou aberta' });
     }
@@ -572,10 +595,12 @@ export function createComprasRouter(db: AppDatabase): Router {
           .prepare(
             `INSERT INTO pedidos_compra (
                empresa_id, codigo, fornecedor_id, data_emissao, data_prevista, status, observacoes,
-               desconto, frete, forma_pagamento, condicao_pagamento, vencimento, nota_fiscal
+               desconto, frete, forma_pagamento, condicao_pagamento, vencimento, nota_fiscal,
+               documento_importado_id
              ) VALUES (
                @empresa_id, @codigo, @fornecedor_id, @data_emissao, @data_prevista, @status, @observacoes,
-               @desconto, @frete, @forma_pagamento, @condicao_pagamento, @vencimento, @nota_fiscal
+               @desconto, @frete, @forma_pagamento, @condicao_pagamento, @vencimento, @nota_fiscal,
+               @documento_importado_id
              )`,
           )
           .run({
@@ -592,6 +617,7 @@ export function createComprasRouter(db: AppDatabase): Router {
             condicao_pagamento: data.condicao_pagamento ?? null,
             vencimento: data.vencimento ?? data.data_prevista ?? null,
             nota_fiscal: data.nota_fiscal ?? null,
+            documento_importado_id: data.documento_importado_id ?? null,
           });
         const id = Number(info.lastInsertRowid);
         if (!data.codigo) {

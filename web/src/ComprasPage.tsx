@@ -3,12 +3,14 @@ import {
   STATUS_COMPRA,
   STATUS_COMPRA_LABEL,
   atualizarCompra,
+  atualizarTecido,
   confirmarCompra,
   criarCompra,
   criarFornecedor,
   listarCompras,
   listarFornecedores,
   listarMateriasPrimas,
+  listarProdutos,
   listarTecidos,
   obterCompra,
   processarDocumento,
@@ -32,7 +34,7 @@ const TIPOS_DOCUMENTO: Array<{ id: TipoDocumento; label: string }> = [
   { id: 'pedido_compra', label: 'Pedido de Compra' },
   { id: 'outro', label: 'Outro' },
 ];
-type TipoItemCompra = 'tecido' | 'material';
+type TipoItemCompra = 'tecido' | 'material' | 'produto';
 type OpcaoCompra = {
   id: number;
   nome: string;
@@ -60,6 +62,11 @@ const ITEM_VAZIO: ItemForm = {
 function corUnica(opcao?: OpcaoCompra): string {
   const ativas = (opcao?.cores ?? []).filter((cor) => cor.status === 'ativo');
   return ativas.length === 1 ? String(ativas[0].id) : '';
+}
+
+function mesmoNome(a: string, b: string): boolean {
+  const limpar = (valor: string) => valor.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('pt-BR').trim();
+  return limpar(a) === limpar(b);
 }
 
 const FORM_VAZIO = {
@@ -121,8 +128,9 @@ export function ComprasPage() {
     Promise.all([
       listarTecidos({ por_pagina: 100, status: 'ativo' }),
       listarMateriasPrimas({ por_pagina: 100, status: 'ativo' }),
+      listarProdutos({ por_pagina: 100, status: 'ativo' }),
     ])
-      .then(([tecidos, materias]) => {
+      .then(([tecidos, materias, produtos]) => {
         const tecidosOpcoes: OpcaoCompra[] = tecidos.data.map((tecido) => ({
           id: tecido.id,
           nome: tecido.nome,
@@ -142,7 +150,17 @@ export function ComprasPage() {
             custo: materia.custo,
             cores: [],
           }));
-        setOpcoes([...tecidosOpcoes, ...materiais]);
+        const produtosOpcoes: OpcaoCompra[] = produtos.data
+          .filter((produto) => (produto.variantes ?? []).length === 0)
+          .map((produto) => ({
+            id: produto.id,
+            nome: produto.nome,
+            tipo: 'produto',
+            unidade: produto.unidade,
+            custo: produto.preco_custo,
+            cores: [],
+          }));
+        setOpcoes([...tecidosOpcoes, ...materiais, ...produtosOpcoes]);
       })
       .catch(() => undefined);
   }, []);
@@ -383,10 +401,54 @@ export function ComprasPage() {
     });
   }
 
+  function itemVinculado(item: ItemDocumento): boolean {
+    return item.materia_prima_id != null || item.produto_id != null;
+  }
+
+  async function cadastrarCorDoItem(indice: number) {
+    if (!leitura) return;
+    const item = leitura.itens[indice];
+    const nome = item?.cor_sugerida?.trim();
+    if (!item?.materia_prima_id || !nome) {
+      setErro('Informe o nome da nova cor');
+      return;
+    }
+    const tecido = opcoes.find((opcao) => opcao.tipo === 'tecido' && opcao.id === item.materia_prima_id);
+    if (!tecido) {
+      setErro('Selecione o tecido antes de cadastrar a cor');
+      return;
+    }
+    const existente = tecido.cores.find((cor) => mesmoNome(cor.nome, nome));
+    if (existente) {
+      atualizarItemLido(indice, { tecido_cor_id: existente.id, cor_sugerida: null, aviso: null });
+      return;
+    }
+    try {
+      setSalvando(true);
+      setErro(null);
+      const atualizado = await atualizarTecido(tecido.id, { cores: [{ nome, status: 'ativo' }] });
+      const criada = atualizado.cores.find((cor) => mesmoNome(cor.nome, nome));
+      setOpcoes((atual) => atual.map((opcao) => (
+        opcao.tipo === 'tecido' && opcao.id === tecido.id
+          ? { ...opcao, cores: atualizado.cores }
+          : opcao
+      )));
+      atualizarItemLido(indice, {
+        tecido_cor_id: criada?.id ?? null,
+        cor_sugerida: null,
+        aviso: null,
+      });
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   async function confirmarEntradaDoDocumento() {
     if (!leitura) return;
-    const reconhecidos = leitura.itens.filter((item) => item.materia_prima_id);
-    const novos = leitura.itens.filter((item) => !item.materia_prima_id);
+    const reconhecidos = leitura.itens.filter(itemVinculado);
+    const novos = leitura.itens.filter((item) => !itemVinculado(item));
     if (reconhecidos.length === 0) {
       setConferindoItens(true);
       setErro('Vincule os itens ao cadastro antes de confirmar a entrada no estoque');
@@ -398,22 +460,31 @@ export function ComprasPage() {
       return;
     }
     const semCor = reconhecidos.find((item) => {
-      const opcao = opcoes.find((atual) => atual.id === item.materia_prima_id);
+      const opcao = opcoes.find((atual) => atual.tipo !== 'produto' && atual.id === item.materia_prima_id);
       return opcao && opcao.cores.length > 0 && !item.tecido_cor_id;
     });
     if (semCor) {
       setConferindoItens(true);
-      setErro(`Selecione a cor de ${semCor.descricao}`);
+      setErro(
+        semCor.cor_sugerida
+          ? `Cadastre a cor ${semCor.cor_sugerida} antes de confirmar a entrada`
+          : `Selecione a cor de ${semCor.descricao}`,
+      );
       return;
     }
     const itens = reconhecidos
       .filter((item) => item.quantidade && item.quantidade > 0)
       .map((item) => ({
-        materia_prima_id: item.materia_prima_id ?? undefined,
-        tecido_cor_id: item.tecido_cor_id ?? undefined,
+        materia_prima_id: item.produto_id ? undefined : item.materia_prima_id ?? undefined,
+        produto_id: item.produto_id ?? undefined,
+        tecido_cor_id: item.produto_id ? undefined : item.tecido_cor_id ?? undefined,
         quantidade: item.quantidade ?? 0,
         custo_unitario: item.valor_unitario ?? 0,
-        unidade: opcoes.find((opcao) => opcao.id === item.materia_prima_id)?.unidade,
+        unidade: opcoes.find((opcao) => (
+          item.produto_id
+            ? opcao.tipo === 'produto' && opcao.id === item.produto_id
+            : opcao.tipo !== 'produto' && opcao.id === item.materia_prima_id
+        ))?.unidade,
       }));
     if (itens.length === 0) {
       setConferindoItens(true);
@@ -435,6 +506,7 @@ export function ComprasPage() {
         fornecedor_id: Number(fornecedorDoc),
         data_emissao: leitura.data_emissao ?? undefined,
         nota_fiscal: leitura.tipo === 'nota_fiscal' ? leitura.numero ?? undefined : undefined,
+        documento_importado_id: leitura.id,
         observacoes,
         confirmar: true,
         itens,
@@ -613,8 +685,8 @@ export function ComprasPage() {
               </dl>
               <ul className="documento-contagem">
                 <li>Produtos encontrados: {leitura.itens.length}</li>
-                <li>Itens novos: {leitura.itens.filter((item) => !item.materia_prima_id).length}</li>
-                <li>Itens reconhecidos: {leitura.itens.filter((item) => item.materia_prima_id).length}</li>
+                <li>Itens novos: {leitura.itens.filter((item) => !item.materia_prima_id && !item.produto_id).length}</li>
+                <li>Itens reconhecidos: {leitura.itens.filter((item) => item.materia_prima_id || item.produto_id).length}</li>
               </ul>
               {leitura.avisos.map((aviso) => (
                 <p key={aviso} className="dica">{aviso}</p>
@@ -642,7 +714,16 @@ export function ComprasPage() {
                       </thead>
                       <tbody>
                         {leitura.itens.map((item, indice) => {
-                          const escolhido = opcoes.find((opcao) => opcao.id === item.materia_prima_id);
+                          const escolhido = opcoes.find((opcao) => (
+                            item.produto_id
+                              ? opcao.tipo === 'produto' && opcao.id === item.produto_id
+                              : opcao.tipo !== 'produto' && opcao.id === item.materia_prima_id
+                          ));
+                          const valorCadastro = item.produto_id
+                            ? `produto:${item.produto_id}`
+                            : item.materia_prima_id
+                              ? `materia:${item.materia_prima_id}`
+                              : '';
                           return (
                             <tr key={`${item.descricao}-${indice}`}>
                               <td>
@@ -653,41 +734,70 @@ export function ComprasPage() {
                               <td>
                                 <select
                                   aria-label={`Cadastro de ${item.descricao}`}
-                                  value={item.materia_prima_id ?? ''}
+                                  value={valorCadastro}
                                   onChange={(e) => {
-                                    const id = e.target.value ? Number(e.target.value) : null;
-                                    const opcao = opcoes.find((atual) => atual.id === id);
+                                    const [tipo, idTexto] = e.target.value.split(':');
+                                    const id = idTexto ? Number(idTexto) : null;
+                                    const opcao = opcoes.find((atual) => (
+                                      tipo === 'produto'
+                                        ? atual.tipo === 'produto' && atual.id === id
+                                        : atual.tipo !== 'produto' && atual.id === id
+                                    ));
                                     const coresAtivas = (opcao?.cores ?? []).filter((cor) => cor.status === 'ativo');
                                     atualizarItemLido(indice, {
-                                      materia_prima_id: id,
+                                      materia_prima_id: tipo === 'produto' ? null : id,
+                                      produto_id: tipo === 'produto' ? id : null,
                                       tecido_cor_id: coresAtivas.length === 1 ? coresAtivas[0].id : null,
                                       nome_cadastro: opcao?.nome ?? null,
+                                      cor_sugerida: null,
                                       aviso: null,
                                     });
                                   }}
                                 >
                                   <option value="">Não lançar</option>
                                   {opcoes.map((opcao) => (
-                                    <option key={`${opcao.tipo}-${opcao.id}`} value={opcao.id}>{opcao.nome}</option>
+                                    <option key={`${opcao.tipo}-${opcao.id}`} value={`${opcao.tipo === 'produto' ? 'produto' : 'materia'}:${opcao.id}`}>
+                                      {opcao.tipo === 'produto' ? `${opcao.nome} (produto)` : opcao.nome}
+                                    </option>
                                   ))}
                                 </select>
                               </td>
                               <td>
-                                {(escolhido?.cores.length ?? 0) > 0 ? (
-                                  <select
-                                    aria-label={`Cor de ${item.descricao}`}
-                                    value={item.tecido_cor_id ?? ''}
-                                    onChange={(e) =>
-                                      atualizarItemLido(indice, {
-                                        tecido_cor_id: e.target.value ? Number(e.target.value) : null,
-                                      })
-                                    }
-                                  >
-                                    <option value="">Selecione a cor</option>
-                                    {escolhido?.cores.map((cor) => (
-                                      <option key={cor.id} value={cor.id}>{cor.nome}</option>
-                                    ))}
-                                  </select>
+                                {escolhido?.tipo === 'tecido' ? (
+                                  <div className="cor-variacao">
+                                    {escolhido.cores.length > 0 && (
+                                      <select
+                                        aria-label={`Cor de ${item.descricao}`}
+                                        value={item.tecido_cor_id ?? ''}
+                                        onChange={(e) =>
+                                          atualizarItemLido(indice, {
+                                            tecido_cor_id: e.target.value ? Number(e.target.value) : null,
+                                          })
+                                        }
+                                      >
+                                        <option value="">Selecione a cor</option>
+                                        {escolhido.cores.map((cor) => (
+                                          <option key={cor.id} value={cor.id}>{cor.nome}</option>
+                                        ))}
+                                      </select>
+                                    )}
+                                    <div className="cor-nova">
+                                      <input
+                                        aria-label={`Nova cor de ${item.descricao}`}
+                                        placeholder="Nova cor"
+                                        value={item.cor_sugerida ?? ''}
+                                        onChange={(e) => atualizarItemLido(indice, { cor_sugerida: e.target.value })}
+                                      />
+                                      <button
+                                        type="button"
+                                        className="btn-secundario"
+                                        disabled={salvando || !(item.cor_sugerida ?? '').trim()}
+                                        onClick={() => void cadastrarCorDoItem(indice)}
+                                      >
+                                        Cadastrar cor
+                                      </button>
+                                    </div>
+                                  </div>
                                 ) : '—'}
                               </td>
                             </tr>
@@ -900,6 +1010,15 @@ export function ComprasPage() {
             <div><dt>Data da compra</dt><dd>{detalhe.data_emissao?.slice(0, 10).split('-').reverse().join('/')}</dd></div>
             <div><dt>Status</dt><dd>{STATUS_COMPRA_LABEL[detalhe.status]}</dd></div>
             <div><dt>Nota fiscal</dt><dd>{detalhe.nota_fiscal || '—'}</dd></div>
+            {detalhe.documento_nome && (
+              <div>
+                <dt>Documento de origem</dt>
+                <dd>
+                  {detalhe.documento_nome}
+                  {detalhe.documento_numero ? ` · ${detalhe.documento_numero}` : ''}
+                </dd>
+              </div>
+            )}
             <div><dt>Forma de pagamento</dt><dd>{detalhe.forma_pagamento || '—'}</dd></div>
             <div><dt>Vencimento</dt><dd>{detalhe.vencimento ? detalhe.vencimento.slice(0, 10).split('-').reverse().join('/') : '—'}</dd></div>
             <div><dt>Subtotal</dt><dd>{moeda.format(detalhe.subtotal)}</dd></div>
