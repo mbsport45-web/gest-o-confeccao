@@ -120,7 +120,7 @@ function sugerirItem(item: ItemLido, cadastros: Cadastro[]): ItemSugerido {
     if (!cor) {
       return {
         ...item,
-        materia_prima_id: null,
+        materia_prima_id: cadastro.id,
         tecido_cor_id: null,
         nome_cadastro: cadastro.nome,
         aviso: 'Selecione a cor do tecido',

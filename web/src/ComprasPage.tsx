@@ -101,6 +101,7 @@ export function ComprasPage() {
   const [arrastandoPdf, setArrastandoPdf] = useState(false);
   const [leitura, setLeitura] = useState<DocumentoProcessado | null>(null);
   const [fornecedorDoc, setFornecedorDoc] = useState('');
+  const [conferindoItens, setConferindoItens] = useState(false);
   const arquivoRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -328,6 +329,7 @@ export function ComprasPage() {
     setTipoDocumento('nota_fiscal');
     setLeitura(null);
     setFornecedorDoc('');
+    setConferindoItens(false);
     setArrastandoPdf(false);
     setModo('importar');
     setErro(null);
@@ -343,6 +345,7 @@ export function ComprasPage() {
     setErro(null);
     setArquivoPdf(arquivo);
     setLeitura(null);
+    setConferindoItens(false);
   }
 
   async function processarPdf() {
@@ -364,6 +367,7 @@ export function ComprasPage() {
       });
       setLeitura(documento);
       setFornecedorDoc(documento.fornecedor ? String(documento.fornecedor.id) : '');
+      setConferindoItens(false);
     } catch (err) {
       setErro((err as Error).message);
     } finally {
@@ -379,22 +383,31 @@ export function ComprasPage() {
     });
   }
 
-  async function criarRascunhoDoDocumento() {
+  async function confirmarEntradaDoDocumento() {
     if (!leitura) return;
+    const reconhecidos = leitura.itens.filter((item) => item.materia_prima_id);
+    const novos = leitura.itens.filter((item) => !item.materia_prima_id);
+    if (reconhecidos.length === 0) {
+      setConferindoItens(true);
+      setErro('Vincule os itens ao cadastro antes de confirmar a entrada no estoque');
+      return;
+    }
     if (!fornecedorDoc) {
+      setConferindoItens(true);
       setErro('Selecione o fornecedor da compra');
       return;
     }
-    const semCor = leitura.itens.find((item) => {
+    const semCor = reconhecidos.find((item) => {
       const opcao = opcoes.find((atual) => atual.id === item.materia_prima_id);
       return opcao && opcao.cores.length > 0 && !item.tecido_cor_id;
     });
     if (semCor) {
+      setConferindoItens(true);
       setErro(`Selecione a cor de ${semCor.descricao}`);
       return;
     }
-    const itens = leitura.itens
-      .filter((item) => item.materia_prima_id && item.quantidade && item.quantidade > 0)
+    const itens = reconhecidos
+      .filter((item) => item.quantidade && item.quantidade > 0)
       .map((item) => ({
         materia_prima_id: item.materia_prima_id ?? undefined,
         tecido_cor_id: item.tecido_cor_id ?? undefined,
@@ -402,12 +415,16 @@ export function ComprasPage() {
         custo_unitario: item.valor_unitario ?? 0,
         unidade: opcoes.find((opcao) => opcao.id === item.materia_prima_id)?.unidade,
       }));
-    const pendentes = leitura.itens.filter((item) => !item.materia_prima_id);
+    if (itens.length === 0) {
+      setConferindoItens(true);
+      setErro('Nenhum item reconhecido com quantidade para entrar no estoque');
+      return;
+    }
     const observacoes = [
       `Importado de ${leitura.nome_arquivo}.`,
       leitura.numero ? `Documento ${leitura.numero}.` : '',
-      pendentes.length > 0
-        ? `Itens sem cadastro: ${pendentes.map((item) => item.descricao).join('; ')}.`
+      novos.length > 0
+        ? `Itens novos sem cadastro: ${novos.map((item) => item.descricao).join('; ')}.`
         : '',
     ]
       .filter(Boolean)
@@ -419,6 +436,7 @@ export function ComprasPage() {
         data_emissao: leitura.data_emissao ?? undefined,
         nota_fiscal: leitura.tipo === 'nota_fiscal' ? leitura.numero ?? undefined : undefined,
         observacoes,
+        confirmar: true,
         itens,
       });
       setModo(null);
@@ -572,96 +590,127 @@ export function ComprasPage() {
             {salvando ? 'Processando…' : 'Processar documento'}
           </button>
           {leitura && (
-            <div className="importar-leitura">
-              <h3>Leitura</h3>
-              <dl className="detalhe">
-                <div><dt>Arquivo</dt><dd>{leitura.nome_arquivo}</dd></div>
-                <div><dt>Número</dt><dd>{leitura.numero || '—'}</dd></div>
-                <div><dt>Emitente</dt><dd>{leitura.emitente || '—'}</dd></div>
-                <div><dt>CNPJ</dt><dd>{leitura.cnpj || '—'}</dd></div>
-                <div><dt>Data</dt><dd>{leitura.data_emissao ? leitura.data_emissao.split('-').reverse().join('/') : '—'}</dd></div>
-                <div><dt>Total</dt><dd>{leitura.total == null ? '—' : moeda.format(leitura.total)}</dd></div>
+            <div className="documento-identificado">
+              <h3>Documento identificado</h3>
+              <dl className="documento-ficha">
+                <div>
+                  <dt>Fornecedor</dt>
+                  <dd>
+                    {fornecedores.find((fornecedor) => String(fornecedor.id) === fornecedorDoc)?.nome
+                      || leitura.fornecedor?.nome
+                      || leitura.emitente
+                      || '—'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{leitura.tipo === 'pedido_compra' ? 'Pedido' : leitura.tipo === 'outro' ? 'Número' : 'NF'}</dt>
+                  <dd>{leitura.numero || '—'}</dd>
+                </div>
+                <div>
+                  <dt>Data</dt>
+                  <dd>{leitura.data_emissao ? leitura.data_emissao.split('-').reverse().join('/') : '—'}</dd>
+                </div>
               </dl>
+              <ul className="documento-contagem">
+                <li>Produtos encontrados: {leitura.itens.length}</li>
+                <li>Itens novos: {leitura.itens.filter((item) => !item.materia_prima_id).length}</li>
+                <li>Itens reconhecidos: {leitura.itens.filter((item) => item.materia_prima_id).length}</li>
+              </ul>
               {leitura.avisos.map((aviso) => (
                 <p key={aviso} className="dica">{aviso}</p>
               ))}
-              <label>
-                Fornecedor
-                <select value={fornecedorDoc} onChange={(e) => setFornecedorDoc(e.target.value)}>
-                  <option value="">Selecione</option>
-                  {fornecedores.map((fornecedor) => (
-                    <option key={fornecedor.id} value={fornecedor.id}>{fornecedor.nome}</option>
-                  ))}
-                </select>
-              </label>
-              {leitura.itens.length > 0 && (
-                <table className="tabela tabela--compacta">
-                  <thead>
-                    <tr>
-                      <th>Item do documento</th>
-                      <th>Qtd.</th>
-                      <th>Cadastro</th>
-                      <th>Cor</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leitura.itens.map((item, indice) => {
-                      const escolhido = opcoes.find((opcao) => opcao.id === item.materia_prima_id);
-                      return (
-                        <tr key={`${item.descricao}-${indice}`}>
-                          <td>
-                            {item.descricao}
-                            {item.aviso && <div className="dica">{item.aviso}</div>}
-                          </td>
-                          <td>{item.quantidade ?? '—'} {item.unidade ?? ''}</td>
-                          <td>
-                            <select
-                              aria-label={`Cadastro de ${item.descricao}`}
-                              value={item.materia_prima_id ?? ''}
-                              onChange={(e) => {
-                                const id = e.target.value ? Number(e.target.value) : null;
-                                const opcao = opcoes.find((atual) => atual.id === id);
-                                const corUnica = (opcao?.cores ?? []).filter((cor) => cor.status === 'ativo');
-                                atualizarItemLido(indice, {
-                                  materia_prima_id: id,
-                                  tecido_cor_id: corUnica.length === 1 ? corUnica[0].id : null,
-                                  aviso: null,
-                                });
-                              }}
-                            >
-                              <option value="">Não lançar</option>
-                              {opcoes.map((opcao) => (
-                                <option key={`${opcao.tipo}-${opcao.id}`} value={opcao.id}>{opcao.nome}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td>
-                            {(escolhido?.cores.length ?? 0) > 0 ? (
-                              <select
-                                aria-label={`Cor de ${item.descricao}`}
-                                value={item.tecido_cor_id ?? ''}
-                                onChange={(e) =>
-                                  atualizarItemLido(indice, {
-                                    tecido_cor_id: e.target.value ? Number(e.target.value) : null,
-                                  })
-                                }
-                              >
-                                <option value="">Selecione a cor</option>
-                                {escolhido?.cores.map((cor) => (
-                                  <option key={cor.id} value={cor.id}>{cor.nome}</option>
-                                ))}
-                              </select>
-                            ) : '—'}
-                          </td>
+              {conferindoItens && (
+                <>
+                  <label>
+                    Fornecedor
+                    <select value={fornecedorDoc} onChange={(e) => setFornecedorDoc(e.target.value)}>
+                      <option value="">Selecione</option>
+                      {fornecedores.map((fornecedor) => (
+                        <option key={fornecedor.id} value={fornecedor.id}>{fornecedor.nome}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {leitura.itens.length > 0 && (
+                    <table className="tabela tabela--compacta">
+                      <thead>
+                        <tr>
+                          <th>Item do documento</th>
+                          <th>Qtd.</th>
+                          <th>Cadastro</th>
+                          <th>Cor</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody>
+                        {leitura.itens.map((item, indice) => {
+                          const escolhido = opcoes.find((opcao) => opcao.id === item.materia_prima_id);
+                          return (
+                            <tr key={`${item.descricao}-${indice}`}>
+                              <td>
+                                {item.descricao}
+                                {item.aviso && <div className="dica">{item.aviso}</div>}
+                              </td>
+                              <td>{item.quantidade ?? '—'} {item.unidade ?? ''}</td>
+                              <td>
+                                <select
+                                  aria-label={`Cadastro de ${item.descricao}`}
+                                  value={item.materia_prima_id ?? ''}
+                                  onChange={(e) => {
+                                    const id = e.target.value ? Number(e.target.value) : null;
+                                    const opcao = opcoes.find((atual) => atual.id === id);
+                                    const coresAtivas = (opcao?.cores ?? []).filter((cor) => cor.status === 'ativo');
+                                    atualizarItemLido(indice, {
+                                      materia_prima_id: id,
+                                      tecido_cor_id: coresAtivas.length === 1 ? coresAtivas[0].id : null,
+                                      nome_cadastro: opcao?.nome ?? null,
+                                      aviso: null,
+                                    });
+                                  }}
+                                >
+                                  <option value="">Não lançar</option>
+                                  {opcoes.map((opcao) => (
+                                    <option key={`${opcao.tipo}-${opcao.id}`} value={opcao.id}>{opcao.nome}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td>
+                                {(escolhido?.cores.length ?? 0) > 0 ? (
+                                  <select
+                                    aria-label={`Cor de ${item.descricao}`}
+                                    value={item.tecido_cor_id ?? ''}
+                                    onChange={(e) =>
+                                      atualizarItemLido(indice, {
+                                        tecido_cor_id: e.target.value ? Number(e.target.value) : null,
+                                      })
+                                    }
+                                  >
+                                    <option value="">Selecione a cor</option>
+                                    {escolhido?.cores.map((cor) => (
+                                      <option key={cor.id} value={cor.id}>{cor.nome}</option>
+                                    ))}
+                                  </select>
+                                ) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </>
               )}
-              <button type="button" disabled={salvando} onClick={() => void criarRascunhoDoDocumento()}>
-                {salvando ? 'Salvando…' : 'Criar rascunho'}
-              </button>
+              <div className="documento-acoes">
+                <button type="button" className="btn-secundario" onClick={() => setConferindoItens(true)}>
+                  Conferir itens
+                </button>
+                <button
+                  type="button"
+                  className="btn-confirmar-entrada"
+                  disabled={salvando}
+                  onClick={() => void confirmarEntradaDoDocumento()}
+                >
+                  {salvando ? 'Confirmando…' : 'Confirmar entrada no estoque'}
+                </button>
+              </div>
             </div>
           )}
         </section>
