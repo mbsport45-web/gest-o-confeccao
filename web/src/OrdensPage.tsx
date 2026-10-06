@@ -8,12 +8,14 @@ import {
   atualizarStatus,
   criarOrdem,
   listarClientes,
+  listarMateriasPrimas,
   listarOrdensPaginado,
   listarProdutos,
   obterFichaTecnica,
   obterOrdem,
   removerOrdem,
   type Cliente,
+  type MateriaPrima,
   type OrdemProducao,
   type PrioridadeOp,
   type Produto,
@@ -118,6 +120,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   const [salvando, setSalvando] = useState(false);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
+  const [materiais, setMateriais] = useState<MateriaPrima[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -137,6 +140,9 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       .catch(() => undefined);
     listarProdutos({ por_pagina: 100, status: 'ativo' })
       .then((lista) => setProdutos(lista.data))
+      .catch(() => undefined);
+    listarMateriasPrimas({ por_pagina: 100, status: 'ativo' })
+      .then((lista) => setMateriais(lista.data))
       .catch(() => undefined);
   }, []);
 
@@ -794,8 +800,8 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                 />
                 <h3 className="subtitulo">Distribuição cor × tamanho</h3>
                 <p className="dica">
-                  As linhas são as cores desta OP e as colunas são os tamanhos cadastrados no produto.
-                  A soma da grade precisa ser igual à quantidade total.
+                  Os tamanhos aparecem na ordem P, M, G e GG. O total de cada cor é a soma dos
+                  tamanhos dela. A soma de todas as cores precisa ser igual à quantidade total da OP.
                 </p>
                 {coresEscolhidas.length === 0 || tamanhosEscolhidos.length === 0 ? (
                   <p className="erro">Selecione ao menos uma cor e um tamanho.</p>
@@ -834,6 +840,86 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                 Este produto ainda não tem cores e tamanhos. A OP fica com a quantidade total informada.
               </p>
             )}
+
+            <h3 className="subtitulo">Materiais e tecidos previstos</h3>
+            <p className="dica">
+              Quantidade por peça. A ficha técnica do produto entra nesta lista e pode ser ajustada
+              só nesta OP. No enfesto, o cortador informa o consumo real e o estoque baixa na unidade
+              do tecido.
+            </p>
+            {form.requisitos.map((linha, indice) => (
+              <div className="form__row" key={`${linha.materia_prima_id}-${indice}`}>
+                <label>
+                  Material
+                  <select
+                    aria-label={`Material previsto ${indice + 1}`}
+                    value={linha.materia_prima_id}
+                    onChange={(e) => {
+                      const requisitos = form.requisitos.map((item, posicao) =>
+                        posicao === indice ? { ...item, materia_prima_id: e.target.value } : item,
+                      );
+                      setForm({ ...form, requisitos });
+                    }}
+                  >
+                    <option value="">Selecione</option>
+                    {[...materiais]
+                      .sort(
+                        (a, b) =>
+                          Number(b.tipo === 'tecido') - Number(a.tipo === 'tecido') ||
+                          a.nome.localeCompare(b.nome, 'pt-BR'),
+                      )
+                      .map((materia) => (
+                        <option key={materia.id} value={materia.id}>
+                          {materia.tipo === 'tecido' ? 'Tecido · ' : ''}
+                          {materia.nome} · {materia.unidade}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  Qtd por peça
+                  <input
+                    aria-label={`Quantidade do material ${indice + 1}`}
+                    type="number"
+                    min={0.001}
+                    step="0.001"
+                    value={linha.quantidade}
+                    onChange={(e) => {
+                      const requisitos = form.requisitos.map((item, posicao) =>
+                        posicao === indice
+                          ? { ...item, quantidade: Number(e.target.value) }
+                          : item,
+                      );
+                      setForm({ ...form, requisitos });
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn-remover-texto"
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      requisitos: form.requisitos.filter((_, posicao) => posicao !== indice),
+                    })
+                  }
+                >
+                  Remover
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="btn-secundario"
+              onClick={() =>
+                setForm({
+                  ...form,
+                  requisitos: [...form.requisitos, { materia_prima_id: '', quantidade: 1 }],
+                })
+              }
+            >
+              Adicionar material
+            </button>
 
             <button
               type="submit"

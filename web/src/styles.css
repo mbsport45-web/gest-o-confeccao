@@ -231,7 +231,12 @@ body {
   grid-template-columns: 1fr;
 }
 
-.app__main--equipe {
+.app__main--ordens {
+  grid-template-columns: minmax(280px, 0.85fr) minmax(560px, 1.15fr);
+}
+
+.app__main--equipe,
+.app__main--enfesto {
   grid-template-columns: 1fr;
 }
 
@@ -378,7 +383,8 @@ button {
 }
 
 .form button:disabled {
-  opacity: 0.6;
+  background: #475569;
+  color: #cbd5e1;
   cursor: not-allowed;
 }
 

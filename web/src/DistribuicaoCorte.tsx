@@ -124,7 +124,9 @@ export function TabelaDistribuicao({
   tamanhosPreferidos?: string[];
 }) {
   const cores = ordenarEixo(coresPreferidas, itens.map((item) => item.cor));
-  const tamanhos = ordenarEixo(tamanhosPreferidos, itens.map((item) => item.tamanho));
+  const tamanhos = ordenarTamanhos(
+    ordenarEixo(tamanhosPreferidos, itens.map((item) => item.tamanho)),
+  );
   const celula = (cor: string, tamanho: string) =>
     itens.find(
       (item) =>
@@ -195,7 +197,8 @@ export function GradeDistribuicao({
   valores: Record<string, number>;
   onChange: (varianteId: number, quantidade: number) => void;
 }) {
-  const { cores: linhas, tamanhos: colunas } = eixosDasVariantes(variantes, cores, tamanhos);
+  const { cores: linhas, tamanhos: tamanhosDaGrade } = eixosDasVariantes(variantes, cores, tamanhos);
+  const colunas = ordenarTamanhos(tamanhosDaGrade);
   const quantidadeDe = (varianteId: number) => valores[String(varianteId)] ?? 0;
   const totalCor = (cor: string) =>
     colunas.reduce((total, tamanho) => {

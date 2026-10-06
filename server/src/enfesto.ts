@@ -6,11 +6,6 @@ import { empresaDaSessao } from './tenant.js';
 
 export const STATUS_ENFESTO = ['pendente', 'em_enfesto', 'finalizado', 'cancelado'] as const;
 
-const itemGradeSchema = z.object({
-  tamanho: z.string().trim().min(1).max(80),
-  quantidade: z.number().int().min(0),
-});
-
 const dadosSchema = z.object({
   tecido_id: z.number().int().positive().optional(),
   folhas: z.number().int().positive('informe a quantidade de folhas').optional(),
@@ -25,12 +20,6 @@ const dadosSchema = z.object({
     .or(z.literal(''))
     .transform((v) => (v ? v : undefined)),
   unidade: z.enum(UNIDADES_TECIDO).optional(),
-  tamanhos: z.array(itemGradeSchema).optional(),
-});
-
-const gradeCorSchema = z.object({
-  cor: z.string().trim().min(1).max(80),
-  tamanhos: z.array(itemGradeSchema).min(1),
 });
 
 const abrirSchema = z.object({
@@ -197,48 +186,32 @@ function linhasDaCor(db: AppDatabase, ordemId: number, empresaId: number, cor: s
     .all(ordemId, empresaId, cor) as LinhaGrade[];
 }
 
-function conferirTamanhos(
-  existentes: LinhaGrade[],
-  recebidos: ItemGrade[],
-  cor: string,
-  planejada: number,
-):
-  | { ok: true; atualizacoes: Array<{ id: number; quantidade: number }> }
-  | { ok: false; status: number; erro: string } {
-  const vistos = new Set<string>();
-  const atualizacoes: Array<{ id: number; quantidade: number }> = [];
-  for (const item of recebidos) {
-    const chave = norm(item.tamanho);
-    if (vistos.has(chave)) {
-      return { ok: false, status: 400, erro: 'Tamanho repetido na grade' };
-    }
-    vistos.add(chave);
-    const linha = existentes.find((atual) => norm(atual.tamanho) === chave);
-    if (!linha) {
-      return { ok: false, status: 400, erro: `O tamanho ${item.tamanho} não está na OP` };
-    }
-    atualizacoes.push({ id: linha.id, quantidade: item.quantidade });
-  }
-  const faltou = existentes.find((linha) => !vistos.has(norm(linha.tamanho)));
-  if (faltou) {
-    return { ok: false, status: 400, erro: 'Informe todos os tamanhos da cor' };
-  }
-  const soma = somaQuantidades(recebidos);
-  if (soma !== planejada) {
-    return { ok: false, status: 400, erro: mensagemGradeDivergente(cor, soma, planejada) };
-  }
-  return { ok: true, atualizacoes };
-}
+function avancarOrdemAposCorte(db: AppDatabase, ordemId: number, empresaId: number) {
+  const ordem = db
+    .prepare(`SELECT status FROM ordens_producao WHERE id = ? AND empresa_id = ?`)
+    .get(ordemId, empresaId) as { status: string } | undefined;
+  if (!ordem || !['planejada', 'pendente', 'corte'].includes(ordem.status)) return;
 
-function gravarQuantidades(
-  db: AppDatabase,
-  empresaId: number,
-  atualizacoes: Array<{ id: number; quantidade: number }>,
-) {
-  const stmt = db.prepare(
-    `UPDATE ordem_distribuicao SET quantidade = ? WHERE id = ? AND empresa_id = ?`,
+  const grade = gradeDaOrdem(db, ordemId, empresaId) ?? [];
+  const cores = grade.filter((item) => item.persistida && item.quantidade > 0);
+  if (!cores.length) return;
+
+  const finalizada = db.prepare(
+    `SELECT 1 AS ok FROM enfestos
+      WHERE empresa_id = ? AND ordem_id = ? AND lower(trim(cor)) = lower(trim(?))
+        AND status = 'finalizado'
+      LIMIT 1`,
   );
-  for (const item of atualizacoes) stmt.run(item.quantidade, item.id, empresaId);
+  const pendente = cores.some(
+    (item) => !finalizada.get(empresaId, ordemId, item.cor),
+  );
+  if (pendente) return;
+
+  db.prepare(
+    `UPDATE ordens_producao
+        SET status = 'costura', atualizado_em = datetime('now')
+      WHERE id = ? AND empresa_id = ? AND status IN ('planejada', 'pendente', 'corte')`,
+  ).run(ordemId, empresaId);
 }
 
 function consumoDaUnidade(unidade: UnidadeTecido, dados: { peso?: number | null; metragem?: number | null }) {
@@ -351,51 +324,6 @@ export function createEnfestoRouter(db: AppDatabase): Router {
         quantidade_pecas: cor.quantidade,
       });
     res.status(201).json(ler(Number(info.lastInsertRowid), empresaId));
-  });
-
-  router.patch('/ordem/:ordemId/cor', (req, res) => {
-    const parsed = gradeCorSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({
-        erro: 'Dados inválidos',
-        detalhes: parsed.error.flatten().fieldErrors,
-      });
-    }
-    const ordemId = Number(req.params.ordemId);
-    const empresaId = empresaDaSessao(req);
-    const ordem = retratoOrdem(ordemId, empresaId);
-    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
-    const grade = gradeDaOrdem(db, ordem.id, empresaId) ?? [];
-    const cor = grade.find((item) => norm(item.cor) === norm(parsed.data.cor));
-    if (!cor) return res.status(400).json({ erro: 'Essa cor não está na distribuição da OP' });
-
-    const ativo = ativoPorCor.get(empresaId, ordem.id, cor.cor) as { id: number } | undefined;
-    const enfesto = ativo ? ler(ativo.id, empresaId) : undefined;
-    if (enfesto?.status === 'finalizado') {
-      return res.status(409).json({ erro: 'Enfesto finalizado não pode ter a grade alterada' });
-    }
-
-    const linhas = linhasDaCor(db, ordem.id, empresaId, cor.cor);
-    if (!linhas.length) {
-      return res.status(400).json({ erro: 'Essa cor não tem grade de tamanhos na OP' });
-    }
-    const planejada = enfesto?.quantidade_pecas ?? somaQuantidades(linhas);
-    const conferencia = conferirTamanhos(linhas, parsed.data.tamanhos, cor.cor, planejada);
-    if (!conferencia.ok) return res.status(conferencia.status).json({ erro: conferencia.erro });
-
-    db.transaction(() => {
-      gravarQuantidades(db, empresaId, conferencia.atualizacoes);
-    })();
-
-    const atualizada = (gradeDaOrdem(db, ordem.id, empresaId) ?? []).find(
-      (item) => norm(item.cor) === norm(cor.cor),
-    );
-    res.json({
-      cor: cor.cor,
-      quantidade_pecas: planejada,
-      tamanhos: atualizada?.tamanhos ?? [],
-      grade_persistida: true,
-    });
   });
 
   router.get('/:id', (req, res) => {
@@ -517,25 +445,7 @@ export function createEnfestoRouter(db: AppDatabase): Router {
         if (!consumo.ok) return { ok: false as const, status: 400, erro: consumo.erro };
 
         const linhas = linhasDaCor(db, atual.ordem_id, empresaId, atual.cor);
-        if (data.tamanhos && data.tamanhos.length > 0) {
-          if (linhas.length) {
-            const conferencia = conferirTamanhos(linhas, data.tamanhos, atual.cor, atual.quantidade_pecas);
-            if (!conferencia.ok) {
-              return { ok: false as const, status: conferencia.status, erro: conferencia.erro };
-            }
-            gravarQuantidades(db, empresaId, conferencia.atualizacoes);
-          } else if (!gradeDaCorFecha(data.tamanhos, atual.quantidade_pecas)) {
-            return {
-              ok: false as const,
-              status: 400,
-              erro: mensagemGradeDivergente(
-                atual.cor,
-                somaQuantidades(data.tamanhos),
-                atual.quantidade_pecas,
-              ),
-            };
-          }
-        } else if (linhas.length && !gradeDaCorFecha(linhas, atual.quantidade_pecas)) {
+        if (linhas.length && !gradeDaCorFecha(linhas, atual.quantidade_pecas)) {
           return {
             ok: false as const,
             status: 400,
@@ -614,6 +524,7 @@ export function createEnfestoRouter(db: AppDatabase): Router {
           movimento_id: baixa.movimentoId,
           usuario_id: usuarioId,
         });
+        avancarOrdemAposCorte(db, atual.ordem_id, empresaId);
         return { ok: true as const };
       })();
 
