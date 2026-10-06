@@ -7,16 +7,13 @@ import {
   atualizarOrdem,
   atualizarStatus,
   criarOrdem,
-  criarProduto,
   listarClientes,
-  listarMateriasPrimas,
   listarOrdensPaginado,
   listarProdutos,
   obterFichaTecnica,
   obterOrdem,
   removerOrdem,
   type Cliente,
-  type MateriaPrima,
   type OrdemProducao,
   type PrioridadeOp,
   type Produto,
@@ -28,6 +25,7 @@ import {
   GradeDistribuicao,
   SeletorBusca,
   TabelaDistribuicao,
+  distribuicaoFechaOp,
   eixosDasVariantes,
   somaGrade,
 } from './DistribuicaoCorte';
@@ -40,7 +38,6 @@ const FORM_VAZIO = {
   clienteId: '',
   produtoId: '',
   referencia: '',
-  nomeNovo: '',
   valorCostura: '' as number | '',
   varianteId: '',
   quantidade: 1,
@@ -121,7 +118,6 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   const [salvando, setSalvando] = useState(false);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
-  const [materias, setMaterias] = useState<MateriaPrima[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -141,9 +137,6 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       .catch(() => undefined);
     listarProdutos({ por_pagina: 100, status: 'ativo' })
       .then((lista) => setProdutos(lista.data))
-      .catch(() => undefined);
-    listarMateriasPrimas({ por_pagina: 100, status: 'ativo' })
-      .then((lista) => setMaterias(lista.data))
       .catch(() => undefined);
   }, []);
 
@@ -259,9 +252,8 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     setForm({
       clienteId: ordem.cliente_id ? String(ordem.cliente_id) : '',
       produtoId: ordem.produto_id ? String(ordem.produto_id) : '',
-      referencia: ordem.referencia ?? '',
-      nomeNovo: ordem.produto,
-      valorCostura: ordem.valor_costura ?? '',
+      referencia: ordem.referencia ?? produto?.referencia ?? produto?.sku ?? '',
+      valorCostura: ordem.valor_costura ?? produto?.valor_costura ?? '',
       varianteId: '',
       quantidade: ordem.quantidade,
       prioridade: ordem.prioridade || 'normal',
@@ -335,8 +327,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       gradeEditada: false,
       coresSelecionadas: [],
       tamanhosSelecionados: [],
-      referencia: produto?.referencia ?? produto?.sku ?? form.referencia,
-      nomeNovo: produto?.nome ?? '',
+      referencia: produto ? (produto.referencia ?? produto.sku ?? '') : '',
       valorCostura: produto?.valor_costura ?? '',
     });
   }
@@ -353,6 +344,11 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
         produtoId: '',
         varianteId: '',
         requisitos: [],
+        grade: {},
+        gradeEditada: false,
+        coresSelecionadas: [],
+        tamanhosSelecionados: [],
+        valorCostura: '',
       });
       return;
     }
@@ -362,7 +358,10 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       produtoId: String(achado.id),
       varianteId: '',
       requisitos: [],
-      nomeNovo: achado.nome,
+      grade: {},
+      gradeEditada: false,
+      coresSelecionadas: [],
+      tamanhosSelecionados: [],
       valorCostura: achado.valor_costura ?? '',
     });
   }
@@ -385,24 +384,9 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
           );
         }
       }
-      let dados = payloadDoForm();
-      if (!dados.produto_id) {
-        const referencia = form.referencia.trim();
-        const nome = form.nomeNovo.trim();
-        if (!referencia || !nome) {
-          throw new Error('Informe a referência e o nome do produto');
-        }
-        const criado = await criarProduto({
-          nome,
-          referencia,
-          valor_costura: form.valorCostura === '' ? null : Number(form.valorCostura),
-        });
-        dados = {
-          ...dados,
-          produto: criado.nome,
-          produto_id: criado.id,
-          tamanho: 'U',
-        };
+      const dados = payloadDoForm();
+      if (!dados.produto_id || !dados.produto) {
+        throw new Error('Selecione um produto cadastrado. O nome e a referência vêm desse cadastro.');
       }
       if (editandoId) {
         await atualizarOrdem(editandoId, dados);
@@ -467,13 +451,11 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
         if (normCor(texto) === normCor(valor)) grade[String(variante.id)] = 0;
       }
     }
-    const soma = somaGrade(grade);
     setForm({
       ...form,
       [campo]: proximos,
       grade,
       varianteId: '',
-      quantidade: form.gradeEditada && soma > 0 ? soma : form.quantidade,
     });
   }
 
@@ -495,9 +477,12 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   const gradeIncompleta = Boolean(
     produtoSel &&
       produtoSel.variantes.length > 0 &&
-      (coresEscolhidas.length === 0 ||
-        tamanhosEscolhidos.length === 0 ||
-        somaGrade(form.grade) !== Number(form.quantidade)),
+      !distribuicaoFechaOp(
+        Number(form.quantidade),
+        somaGrade(form.grade),
+        coresEscolhidas.length,
+        tamanhosEscolhidos.length,
+      ),
   );
 
   return (
@@ -668,6 +653,21 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               </select>
             </label>
             <label>
+              Produto
+              <select
+                required
+                value={form.produtoId}
+                onChange={(e) => aplicarProduto(e.target.value)}
+              >
+                <option value="">Selecione</option>
+                {produtos.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nome}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Referência
               <input
                 list="referencias-produto"
@@ -685,18 +685,21 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                   ))}
               </datalist>
             </label>
-            {!form.produtoId && (
-              <label>
-                Nome do produto
-                <input
-                  value={form.nomeNovo}
-                  onChange={(e) => setForm({ ...form, nomeNovo: e.target.value })}
-                  placeholder="Primeira vez desta referência"
-                />
-              </label>
+            {produtoSel ? (
+              <p className="dica">
+                {produtoSel.nome}. Referência {produtoSel.referencia ?? produtoSel.sku ?? '—'}.{' '}
+                {produtoSel.cores.length} cores e {produtoSel.tamanhos.length} tamanhos no cadastro.
+                {produtoSel.valor_costura == null
+                  ? ' Costura padrão ainda não informada.'
+                  : ` Costura padrão ${produtoSel.valor_costura.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por peça.`}
+              </p>
+            ) : (
+              form.referencia.trim() && (
+                <p className="erro">Essa referência não está no cadastro de produtos.</p>
+              )
             )}
             <label>
-              Valor da costura (R$/peça)
+              Valor da costura desta OP (R$/peça)
               <input
                 type="number"
                 min={0}
@@ -708,7 +711,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                     valorCostura: e.target.value === '' ? '' : Number(e.target.value),
                   })
                 }
-                placeholder="Opcional"
+                placeholder="Vem do cadastro do produto"
               />
             </label>
             {produtoSel && produtoSel.valor_costura != null && form.valorCostura !== produtoSel.valor_costura && (
@@ -716,48 +719,9 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                 O padrão desta referência continua {produtoSel.valor_costura.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por peça. O valor desta OP fica só nela.
               </p>
             )}
-            {produtoSel && (produtoSel.cores.length > 0 || produtoSel.tamanhos.length > 0) && (
-              <p className="dica">
-                {produtoSel.cores.length > 0 ? `Cores cadastradas: ${produtoSel.cores.join(', ')}. ` : ''}
-                {produtoSel.tamanhos.length > 0 ? `Tamanhos cadastrados: ${produtoSel.tamanhos.join(', ')}.` : ''}
-              </p>
-            )}
-            <label>
-              Produto
-              <select
-                value={form.produtoId}
-                onChange={(e) => aplicarProduto(e.target.value)}
-              >
-                <option value="">Selecione</option>
-                {produtos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.sku ? `${p.sku} — ` : ''}
-                    {p.nome}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {produtoSel && produtoSel.variantes.length > 0 && (
-              <div className="seletores-op">
-                <SeletorBusca
-                  rotulo="Cores"
-                  opcoes={coresDoProduto(produtoSel)}
-                  selecionados={form.coresSelecionadas}
-                  onToggle={(cor) => alternarEixo('cor', cor)}
-                  placeholder="Pesquisar cor cadastrada"
-                />
-                <SeletorBusca
-                  rotulo="Tamanhos"
-                  opcoes={tamanhosDoProduto(produtoSel)}
-                  selecionados={form.tamanhosSelecionados}
-                  onToggle={(tamanho) => alternarEixo('tamanho', tamanho)}
-                  placeholder="Pesquisar tamanho cadastrado"
-                />
-              </div>
-            )}
             <div className="form__row">
               <label>
-                Quantidade
+                Quantidade total
                 <input
                   required
                   type="number"
@@ -783,43 +747,6 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                 </select>
               </label>
             </div>
-            {produtoSel && produtoSel.variantes.length > 0 && (
-              <div>
-                <h3 className="subtitulo">Distribuição de corte</h3>
-                <p className="dica">
-                  Pesquise e escolha as cores e os tamanhos cadastrados neste produto. A grade usa só essa seleção.
-                  Zero significa que a combinação não será produzida. O total precisa ser igual à quantidade da OP.
-                </p>
-                {coresEscolhidas.length === 0 || tamanhosEscolhidos.length === 0 ? (
-                  <p className="erro">Selecione ao menos uma cor e um tamanho.</p>
-                ) : (
-                <GradeDistribuicao
-                  variantes={variantesGrade}
-                  cores={coresEscolhidas}
-                  tamanhos={tamanhosEscolhidos}
-                  valores={form.grade}
-                  onChange={(varianteId, quantidade) => {
-                    const grade = { ...form.grade, [String(varianteId)]: quantidade };
-                    const soma = somaGrade(grade);
-                    setForm({
-                      ...form,
-                      grade,
-                      gradeEditada: true,
-                      quantidade: soma > 0 ? soma : form.quantidade,
-                    });
-                  }}
-                />
-                )}
-                {somaGrade(form.grade) === Number(form.quantidade) ? (
-                  <p className="dica">Total geral: {Number(form.quantidade)} peças.</p>
-                ) : (
-                  <p className="erro">
-                    A soma da distribuição ({somaGrade(form.grade)}) deve ser igual à quantidade da OP (
-                    {Number(form.quantidade)}).
-                  </p>
-                )}
-              </div>
-            )}
             <div className="form__row">
               <label>
                 Data prevista
@@ -847,57 +774,66 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               />
             </label>
 
-            <h3 className="subtitulo">Requisitos de material (BOM)</h3>
-            <p className="dica">Quantidade por peça. O total usa a quantidade da OP. O estoque é consultado ao avançar para corte.</p>
-            {form.requisitos.map((linha, idx) => (
-              <div className="form__row" key={idx}>
-                <label>
-                  Matéria-prima
-                  <select
-                    value={linha.materia_prima_id}
-                    onChange={(e) => {
-                      const requisitos = [...form.requisitos];
-                      requisitos[idx] = { ...linha, materia_prima_id: e.target.value };
-                      setForm({ ...form, requisitos });
-                    }}
-                  >
-                    <option value="">Selecione</option>
-                    {materias.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.codigo ? `${m.codigo} — ` : ''}
-                        {m.nome}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Qtd. por peça
-                  <input
-                    type="number"
-                    min={0.01}
-                    step="0.01"
-                    value={linha.quantidade}
-                    onChange={(e) => {
-                      const requisitos = [...form.requisitos];
-                      requisitos[idx] = { ...linha, quantidade: Number(e.target.value) };
-                      setForm({ ...form, requisitos });
+            {produtoSel && produtoSel.variantes.length > 0 && (
+              <>
+                <h3 className="subtitulo">Seleção de cores</h3>
+                <SeletorBusca
+                  rotulo="Cores"
+                  opcoes={coresDoProduto(produtoSel)}
+                  selecionados={form.coresSelecionadas}
+                  onToggle={(cor) => alternarEixo('cor', cor)}
+                  placeholder="Pesquisar cor cadastrada"
+                />
+                <h3 className="subtitulo">Seleção de tamanhos</h3>
+                <SeletorBusca
+                  rotulo="Tamanhos"
+                  opcoes={tamanhosDoProduto(produtoSel)}
+                  selecionados={form.tamanhosSelecionados}
+                  onToggle={(tamanho) => alternarEixo('tamanho', tamanho)}
+                  placeholder="Pesquisar tamanho cadastrado"
+                />
+                <h3 className="subtitulo">Distribuição cor × tamanho</h3>
+                <p className="dica">
+                  As linhas são as cores desta OP e as colunas são os tamanhos cadastrados no produto.
+                  A soma da grade precisa ser igual à quantidade total.
+                </p>
+                {coresEscolhidas.length === 0 || tamanhosEscolhidos.length === 0 ? (
+                  <p className="erro">Selecione ao menos uma cor e um tamanho.</p>
+                ) : (
+                  <GradeDistribuicao
+                    variantes={variantesGrade}
+                    cores={coresEscolhidas}
+                    tamanhos={tamanhosEscolhidos}
+                    valores={form.grade}
+                    onChange={(varianteId, quantidade) => {
+                      setForm({
+                        ...form,
+                        grade: { ...form.grade, [String(varianteId)]: quantidade },
+                        gradeEditada: true,
+                      });
                     }}
                   />
-                </label>
-              </div>
-            ))}
-            <button
-              type="button"
-              className="btn-secundario"
-              onClick={() =>
-                setForm({
-                  ...form,
-                  requisitos: [...form.requisitos, { materia_prima_id: '', quantidade: 1 }],
-                })
-              }
-            >
-              Adicionar material
-            </button>
+                )}
+                {distribuicaoFechaOp(
+                  Number(form.quantidade),
+                  somaGrade(form.grade),
+                  coresEscolhidas.length,
+                  tamanhosEscolhidos.length,
+                ) ? (
+                  <p className="dica">Total geral: {Number(form.quantidade)} peças.</p>
+                ) : (
+                  <p className="erro">
+                    A soma da distribuição ({somaGrade(form.grade)}) deve ser igual à quantidade da OP (
+                    {Number(form.quantidade)}).
+                  </p>
+                )}
+              </>
+            )}
+            {produtoSel && produtoSel.variantes.length === 0 && (
+              <p className="dica">
+                Este produto ainda não tem cores e tamanhos. A OP fica com a quantidade total informada.
+              </p>
+            )}
 
             <button
               type="submit"

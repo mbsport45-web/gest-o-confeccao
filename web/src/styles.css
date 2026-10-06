@@ -682,6 +682,16 @@ button {
   margin: 0.4rem 0 0.8rem;
 }
 
+.lista-tamanhos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  margin: 0.35rem 0 0.8rem;
+  padding: 0;
+  list-style: none;
+  font-weight: 600;
+}
+
 .grade-corte__tabela input[type='number'] {
   width: 4.5rem;
   text-align: right;

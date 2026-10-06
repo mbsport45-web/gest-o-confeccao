@@ -56,6 +56,15 @@ export function somaGrade(valores: Record<string, number>): number {
   return Object.values(valores).reduce((total, quantidade) => total + (Number.isFinite(quantidade) ? quantidade : 0), 0);
 }
 
+export function distribuicaoFechaOp(
+  quantidadeOp: number,
+  soma: number,
+  cores: number,
+  tamanhos: number,
+): boolean {
+  return quantidadeOp > 0 && cores > 0 && tamanhos > 0 && soma === quantidadeOp;
+}
+
 export function TabelaDistribuicao({
   itens,
   coresPreferidas = [],
