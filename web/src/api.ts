@@ -940,6 +940,24 @@ export interface TecidoCategoria {
   criado_em?: string;
 }
 
+export interface TecidoCor {
+  id: number;
+  nome: string;
+  custo: number | null;
+  estoque_minimo: number;
+  status: StatusMateria;
+  estoque: number;
+}
+
+export interface TecidoCorPayload {
+  id?: number;
+  nome: string;
+  estoque_inicial?: number;
+  estoque_minimo?: number;
+  custo?: number | null;
+  status?: StatusMateria;
+}
+
 export interface Tecido {
   id: number;
   nome: string;
@@ -951,6 +969,7 @@ export interface Tecido {
   custo: number;
   fornecedor: string | null;
   cor: string | null;
+  cores: TecidoCor[];
   estoque_minimo: number;
   estoque: number;
   status: StatusMateria;
@@ -971,6 +990,7 @@ export interface TecidoPayload {
   estoque_inicial?: number;
   estoque_minimo?: number;
   status?: StatusMateria;
+  cores?: TecidoCorPayload[];
 }
 
 export interface TecidoMovimento {
@@ -982,6 +1002,7 @@ export interface TecidoMovimento {
   saldo_anterior: number;
   saldo_posterior: number;
   motivo: string | null;
+  cor_nome?: string | null;
   usuario_id: number | null;
   usuario_nome: string | null;
   referencia_tipo: string | null;
@@ -1074,6 +1095,7 @@ export async function movimentarTecido(
     unidade: UnidadeTecido;
     custo?: number;
     motivo?: string;
+    tecido_cor_id?: number;
   },
 ): Promise<{ tecido: Tecido; movimento: TecidoMovimento }> {
   const res = await apiFetch(`/api/tecidos/${id}/movimentos`, {
@@ -1097,6 +1119,8 @@ export interface Enfesto {
   quantidade_pecas: number;
   tecido_id: number | null;
   tecido_nome: string | null;
+  tecido_cor_id: number | null;
+  tecido_cor_nome: string | null;
   folhas: number | null;
   comprimento: number | null;
   metragem: number | null;
@@ -1154,6 +1178,7 @@ export async function finalizarEnfesto(
     peso?: number | null;
     observacoes?: string;
     unidade: UnidadeTecido;
+    tecido_cor_id?: number | null;
   },
 ): Promise<Enfesto> {
   const res = await apiFetch(`/api/enfesto/${id}/finalizar`, {
@@ -1466,6 +1491,8 @@ export interface CompraItem {
   custo_unitario: number;
   total: number;
   unidade: string | null;
+  tecido_cor_id?: number | null;
+  cor_tecido?: string | null;
   nome?: string | null;
   codigo?: string | null;
 }
@@ -1579,6 +1606,7 @@ export type CompraPayload = {
     quantidade: number;
     custo_unitario: number;
     unidade?: string;
+    tecido_cor_id?: number;
   }>;
 };
 

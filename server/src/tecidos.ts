@@ -20,6 +20,15 @@ const textoOpcional = z
 
 const numeroOpcional = z.number().min(0, 'valor não pode ser negativo').nullable().optional();
 
+const corSchema = z.object({
+  id: z.number().int().positive().optional(),
+  nome: z.string().trim().min(1, 'informe o nome da cor').max(80),
+  estoque_inicial: z.number().min(0, 'estoque inicial não pode ser negativo').optional(),
+  estoque_minimo: z.number().min(0, 'estoque mínimo não pode ser negativo').optional(),
+  custo: z.number().min(0, 'custo não pode ser negativo').nullable().optional(),
+  status: z.enum(STATUS_TECIDO).optional(),
+});
+
 const tecidoSchema = z.object({
   nome: z.string().trim().min(1, 'nome é obrigatório').max(200),
   categoria: z.string().trim().min(1, 'categoria é obrigatória').max(80),
@@ -32,6 +41,7 @@ const tecidoSchema = z.object({
   estoque_inicial: z.number().min(0, 'estoque inicial não pode ser negativo').optional(),
   estoque_minimo: z.number().min(0, 'estoque mínimo não pode ser negativo').optional(),
   status: z.enum(STATUS_TECIDO).optional(),
+  cores: z.array(corSchema).optional(),
 });
 
 const atualizarTecidoSchema = tecidoSchema
@@ -51,6 +61,7 @@ const movimentoSchema = z
     quantidade: z.number().min(0, 'quantidade não pode ser negativa'),
     unidade: z.enum(UNIDADES_TECIDO),
     custo: z.number().min(0, 'custo não pode ser negativo').optional(),
+    tecido_cor_id: z.number().int().positive().optional(),
     motivo: textoOpcional,
     referencia_tipo: z
       .string()
@@ -91,10 +102,28 @@ type TecidoRow = {
 
 export type BaixaEnfestoInput = {
   tecido_id: number;
+  tecido_cor_id?: number | null;
   quantidade: number;
   referencia_id?: number | null;
   motivo?: string | null;
 };
+
+export type TecidoCor = {
+  id: number;
+  nome: string;
+  custo: number | null;
+  estoque_minimo: number;
+  status: (typeof STATUS_TECIDO)[number];
+  estoque: number;
+};
+
+function normCor(nome: string): string {
+  return nome.trim().toLocaleLowerCase('pt-BR');
+}
+
+function falhar(status: number, erro: string): never {
+  throw Object.assign(new Error(erro), { status });
+}
 
 function normCategoria(nome: string): string {
   return nome.trim().toLocaleLowerCase('pt-BR');
@@ -127,7 +156,7 @@ function obterOuCriarCategoria(db: AppDatabase, empresaId: number, nome: string)
   return { id: Number(info.lastInsertRowid), nome: nome.trim() };
 }
 
-function mapTecido(row: TecidoRow) {
+function mapTecido(row: TecidoRow, cores: TecidoCor[] = []) {
   const unidade = row.unidade === 'METRO' ? 'METRO' : 'KG';
   return {
     id: row.id,
@@ -139,7 +168,8 @@ function mapTecido(row: TecidoRow) {
     gramatura: row.gramatura,
     custo: row.custo,
     fornecedor: row.fornecedor,
-    cor: row.cor,
+    cor: cores.length === 1 ? cores[0].nome : cores.length > 1 ? null : row.cor,
+    cores,
     estoque_minimo: row.estoque_minimo,
     estoque: row.estoque,
     status: row.status,
@@ -154,10 +184,17 @@ const TECIDO_SELECT = `
     m.id, m.nome, m.categoria, m.unidade, m.largura_cm, m.gramatura, m.custo,
     m.fornecedor, m.cor, m.estoque_minimo, m.status, m.empresa_id,
     m.criado_em, m.atualizado_em,
-    ifnull(s.quantidade, 0) AS estoque
+    ifnull((
+      SELECT SUM(s.quantidade)
+        FROM estoque_saldos s
+        LEFT JOIN tecido_cores c ON c.id = s.tecido_cor_id
+       WHERE s.empresa_id = m.empresa_id
+         AND (
+           (s.materia_prima_id = m.id AND s.tecido_cor_id IS NULL)
+           OR c.tecido_id = m.id
+         )
+    ), 0) AS estoque
   FROM materias_primas m
-  LEFT JOIN estoque_saldos s
-    ON s.materia_prima_id = m.id AND s.empresa_id = m.empresa_id
 `;
 
 function tecidoWhereBase() {
@@ -173,10 +210,90 @@ export function baixarTecidoEnfesto(
   return movimentarTecido(db, empresaId, usuarioId, input.tecido_id, {
     tipo: 'saida',
     quantidade: input.quantidade,
+    tecido_cor_id: input.tecido_cor_id ?? undefined,
     motivo: input.motivo?.trim() || 'Enfesto',
     referencia_tipo: 'enfesto',
     referencia_id: input.referencia_id ?? null,
   });
+}
+
+function listarCores(db: AppDatabase, tecidoId: number, empresaId: number): TecidoCor[] {
+  return db
+    .prepare(
+      `SELECT c.id, c.nome, c.custo, c.estoque_minimo, c.status, ifnull(s.quantidade, 0) AS estoque
+         FROM tecido_cores c
+         LEFT JOIN estoque_saldos s
+           ON s.tecido_cor_id = c.id AND s.empresa_id = c.empresa_id
+        WHERE c.tecido_id = ? AND c.empresa_id = ?
+        ORDER BY c.nome COLLATE NOCASE, c.id`,
+    )
+    .all(tecidoId, empresaId) as TecidoCor[];
+}
+
+function garantirCorDoTecido(
+  db: AppDatabase,
+  empresaId: number,
+  tecidoId: number,
+  cor: {
+    id?: number;
+    nome: string;
+    estoque_minimo?: number;
+    custo?: number | null;
+    status?: (typeof STATUS_TECIDO)[number];
+  },
+): { ok: true; id: number; nova: boolean } | { ok: false; status: number; erro: string } {
+  const nome = cor.nome.trim();
+  const nomeNorm = normCor(nome);
+  if (!nomeNorm) return { ok: false, status: 400, erro: 'Informe o nome da cor' };
+  const duplicada = db
+    .prepare(
+      `SELECT id FROM tecido_cores
+        WHERE empresa_id = ? AND tecido_id = ? AND nome_norm = ? AND id != ?`,
+    )
+    .get(empresaId, tecidoId, nomeNorm, cor.id ?? 0) as { id: number } | undefined;
+  if (duplicada) {
+    return { ok: false, status: 409, erro: `Já existe a cor ${nome} neste tecido` };
+  }
+  if (cor.id) {
+    const atual = db
+      .prepare(
+        'SELECT id, custo, estoque_minimo, status FROM tecido_cores WHERE id = ? AND tecido_id = ? AND empresa_id = ?',
+      )
+      .get(cor.id, tecidoId, empresaId) as
+      | { id: number; custo: number | null; estoque_minimo: number; status: string }
+      | undefined;
+    if (!atual) return { ok: false, status: 404, erro: 'Cor do tecido não encontrada' };
+    db.prepare(
+      `UPDATE tecido_cores
+          SET nome = @nome, nome_norm = @nome_norm, estoque_minimo = @estoque_minimo,
+              custo = @custo, status = @status, atualizado_em = datetime('now')
+        WHERE id = @id AND empresa_id = @empresa_id`,
+    ).run({
+      id: cor.id,
+      empresa_id: empresaId,
+      nome,
+      nome_norm: nomeNorm,
+      estoque_minimo: cor.estoque_minimo ?? atual.estoque_minimo,
+      custo: cor.custo === undefined ? atual.custo : cor.custo,
+      status: cor.status ?? atual.status,
+    });
+    return { ok: true, id: cor.id, nova: false };
+  }
+  const info = db
+    .prepare(
+      `INSERT INTO tecido_cores (empresa_id, tecido_id, nome, nome_norm, custo, estoque_minimo, status)
+       VALUES (@empresa_id, @tecido_id, @nome, @nome_norm, @custo, @estoque_minimo, @status)`,
+    )
+    .run({
+      empresa_id: empresaId,
+      tecido_id: tecidoId,
+      nome,
+      nome_norm: nomeNorm,
+      custo: cor.custo ?? null,
+      estoque_minimo: cor.estoque_minimo ?? 0,
+      status: cor.status ?? 'ativo',
+    });
+  return { ok: true, id: Number(info.lastInsertRowid), nova: true };
 }
 
 function movimentarTecido(
@@ -189,6 +306,7 @@ function movimentarTecido(
     quantidade: number;
     unidade?: UnidadeTecido;
     custo?: number;
+    tecido_cor_id?: number;
     motivo?: string | null;
     referencia_tipo?: string | null;
     referencia_id?: number | null;
@@ -208,13 +326,29 @@ function movimentarTecido(
       erro: `A movimentação precisa usar a unidade de controle do tecido (${tecido.unidade})`,
     };
   }
+  const cores = listarCores(db, tecido.id, empresaId);
+  let corId = data.tecido_cor_id;
+  if (!corId && cores.length === 1) corId = cores[0].id;
+  if (cores.length > 1 && !corId) {
+    return { ok: false as const, status: 400, erro: 'Selecione a cor do tecido' };
+  }
+  let custo = data.custo ?? tecido.custo;
+  if (corId) {
+    const cor = cores.find((item) => item.id === corId);
+    if (!cor) return { ok: false as const, status: 404, erro: 'Cor do tecido não encontrada' };
+    if (cor.status !== 'ativo' && data.tipo !== 'ajuste') {
+      return { ok: false as const, status: 409, erro: 'A cor do tecido está inativa' };
+    }
+    if (data.custo === undefined && cor.custo != null) custo = cor.custo;
+  }
   return registrarMovimentoEstoque(db, empresaId, {
     tipo: data.tipo,
     quantidade: data.quantidade,
     materia_prima_id: tecido.id,
+    tecido_cor_id: corId,
     motivo: data.motivo ?? null,
     unidade: tecido.unidade,
-    custo: data.custo ?? tecido.custo,
+    custo,
     usuario_id: usuarioId,
     referencia_tipo: data.referencia_tipo ?? null,
     referencia_id: data.referencia_id ?? null,
@@ -227,10 +361,15 @@ export function createTecidosRouter(db: AppDatabase): Router {
   const getTecido = db.prepare(
     `${TECIDO_SELECT} WHERE m.id = ? AND m.empresa_id = ? AND ${tecidoWhereBase()}`,
   );
+
+  function apresentar(row: TecidoRow) {
+    return mapTecido(row, listarCores(db, row.id, row.empresa_id));
+  }
   const listarMovimentos = db.prepare(
-    `SELECT mv.*, u.nome AS usuario_nome
+    `SELECT mv.*, u.nome AS usuario_nome, tc.nome AS cor_nome
        FROM estoque_movimentos mv
        LEFT JOIN usuarios u ON u.id = mv.usuario_id
+       LEFT JOIN tecido_cores tc ON tc.id = mv.tecido_cor_id AND tc.empresa_id = mv.empresa_id
       WHERE mv.materia_prima_id = ? AND mv.empresa_id = ?
       ORDER BY datetime(mv.criado_em) DESC, mv.id DESC`,
   );
@@ -275,7 +414,11 @@ export function createTecidosRouter(db: AppDatabase): Router {
     aplicarEmpresa(where, params, req, 'm.empresa_id');
     if (q) {
       where.push(
-        `(m.nome LIKE @q OR ifnull(m.cor,'') LIKE @q OR ifnull(m.fornecedor,'') LIKE @q OR ifnull(m.categoria,'') LIKE @q)`,
+        `(m.nome LIKE @q OR ifnull(m.cor,'') LIKE @q OR ifnull(m.fornecedor,'') LIKE @q OR ifnull(m.categoria,'') LIKE @q
+          OR EXISTS (
+            SELECT 1 FROM tecido_cores c
+             WHERE c.tecido_id = m.id AND c.empresa_id = m.empresa_id AND c.nome LIKE @q
+          ))`,
       );
       params.q = `%${q}%`;
     }
@@ -303,7 +446,7 @@ export function createTecidosRouter(db: AppDatabase): Router {
       )
       .all({ ...params, limit: porPagina, offset: (pagina - 1) * porPagina }) as TecidoRow[];
     res.json({
-      data: rows.map(mapTecido),
+      data: rows.map(apresentar),
       pagina,
       por_pagina: porPagina,
       total,
@@ -323,9 +466,29 @@ export function createTecidosRouter(db: AppDatabase): Router {
     const usuarioId = req.usuario!.id;
     const data = parsed.data;
     const categoria = obterOuCriarCategoria(db, empresaId, data.categoria);
-    const estoqueInicial = data.estoque_inicial ?? 0;
+    const coresInformadas =
+      data.cores && data.cores.length > 0
+        ? data.cores
+        : data.cor
+          ? [
+              {
+                nome: data.cor,
+                estoque_inicial: data.estoque_inicial,
+                estoque_minimo: data.estoque_minimo,
+                status: data.status,
+              },
+            ]
+          : [];
+    const nomes = new Set<string>();
+    for (const cor of coresInformadas) {
+      const chave = normCor(cor.nome);
+      if (nomes.has(chave)) {
+        return res.status(409).json({ erro: `Já existe a cor ${cor.nome.trim()} neste tecido` });
+      }
+      nomes.add(chave);
+    }
 
-    const criado = db.transaction(() => {
+    const gravar = db.transaction(() => {
       const info = db
         .prepare(
           `INSERT INTO materias_primas (
@@ -340,7 +503,7 @@ export function createTecidosRouter(db: AppDatabase): Router {
           empresa_id: empresaId,
           nome: data.nome,
           categoria: categoria.nome,
-          cor: data.cor ?? null,
+          cor: coresInformadas.length === 1 ? coresInformadas[0].nome : data.cor ?? null,
           largura_cm: data.largura_cm ?? null,
           gramatura: data.gramatura ?? null,
           unidade: data.unidade,
@@ -350,30 +513,53 @@ export function createTecidosRouter(db: AppDatabase): Router {
           status: data.status ?? 'ativo',
         });
       const id = Number(info.lastInsertRowid);
-      if (estoqueInicial > 0) {
-        const movimento = movimentarTecido(db, empresaId, usuarioId, id, {
-          tipo: 'entrada',
-          quantidade: estoqueInicial,
-          unidade: data.unidade,
-          custo: data.custo,
-          motivo: 'Estoque inicial',
-          referencia_tipo: 'estoque_inicial',
-        });
-        if (!movimento.ok) return movimento;
-      } else {
-        const saldo = db
-          .prepare(
+      if (coresInformadas.length === 0) {
+        const estoqueInicial = data.estoque_inicial ?? 0;
+        if (estoqueInicial > 0) {
+          const movimento = movimentarTecido(db, empresaId, usuarioId, id, {
+            tipo: 'entrada',
+            quantidade: estoqueInicial,
+            unidade: data.unidade,
+            custo: data.custo,
+            motivo: 'Estoque inicial',
+            referencia_tipo: 'estoque_inicial',
+          });
+          if (!movimento.ok) falhar(movimento.status, movimento.erro);
+        } else {
+          db.prepare(
             `INSERT INTO estoque_saldos (empresa_id, tipo, materia_prima_id, quantidade)
              VALUES (?, 'materia', ?, 0)`,
-          )
-          .run(empresaId, id);
-        if (!saldo.changes) return { ok: false as const, status: 500, erro: 'Falha ao abrir saldo' };
+          ).run(empresaId, id);
+        }
+      } else {
+        for (const cor of coresInformadas) {
+          const criada = garantirCorDoTecido(db, empresaId, id, cor);
+          if (!criada.ok) falhar(criada.status, criada.erro);
+          const inicial = cor.estoque_inicial ?? 0;
+          if (inicial > 0) {
+            const movimento = movimentarTecido(db, empresaId, usuarioId, id, {
+              tipo: 'entrada',
+              quantidade: inicial,
+              unidade: data.unidade,
+              custo: cor.custo ?? data.custo,
+              tecido_cor_id: criada.id,
+              motivo: 'Estoque inicial',
+              referencia_tipo: 'estoque_inicial',
+            });
+            if (!movimento.ok) falhar(movimento.status, movimento.erro);
+          }
+        }
       }
-      return { ok: true as const, id };
-    })();
-
-    if (!criado.ok) return res.status(criado.status).json({ erro: criado.erro });
-    res.status(201).json(mapTecido(getTecido.get(criado.id, empresaId) as TecidoRow));
+      return { id };
+    });
+    let criado: { id: number };
+    try {
+      criado = gravar();
+    } catch (err) {
+      const status = (err as { status?: number }).status ?? 400;
+      return res.status(status).json({ erro: (err as Error).message });
+    }
+    res.status(201).json(apresentar(getTecido.get(criado.id, empresaId) as TecidoRow));
   });
 
   router.get('/:id/movimentos', (req, res) => {
@@ -400,7 +586,7 @@ export function createTecidosRouter(db: AppDatabase): Router {
     if (!resultado.ok) return res.status(resultado.status).json({ erro: resultado.erro });
     const tecido = getTecido.get(id, empresaId) as TecidoRow;
     const movimento = listarMovimentos.all(id, empresaId)[0];
-    res.status(201).json({ tecido: mapTecido(tecido), movimento });
+    res.status(201).json({ tecido: apresentar(tecido), movimento });
   });
 
   router.post('/:id/baixas-enfesto', (req, res) => {
@@ -423,7 +609,7 @@ export function createTecidosRouter(db: AppDatabase): Router {
     if (!resultado.ok) return res.status(resultado.status).json({ erro: resultado.erro });
     const tecido = getTecido.get(id, empresaId) as TecidoRow;
     res.status(201).json({
-      tecido: mapTecido(tecido),
+      tecido: apresentar(tecido),
       movimento: listarMovimentos.all(id, empresaId)[0],
     });
   });
@@ -431,7 +617,7 @@ export function createTecidosRouter(db: AppDatabase): Router {
   router.get('/:id', (req, res) => {
     const row = getTecido.get(Number(req.params.id), empresaDaSessao(req)) as TecidoRow | undefined;
     if (!row) return res.status(404).json({ erro: 'Tecido não encontrado' });
-    res.json(mapTecido(row));
+    res.json(apresentar(row));
   });
 
   router.patch('/:id/status', (req, res) => {
@@ -451,7 +637,7 @@ export function createTecidosRouter(db: AppDatabase): Router {
       )
       .run({ id, empresa_id: empresaId, status: parsed.data.status });
     if (info.changes === 0) return res.status(404).json({ erro: 'Tecido não encontrado' });
-    res.json(mapTecido(getTecido.get(id, empresaId) as TecidoRow));
+    res.json(apresentar(getTecido.get(id, empresaId) as TecidoRow));
   });
 
   router.patch('/:id', (req, res) => {
@@ -484,35 +670,92 @@ export function createTecidosRouter(db: AppDatabase): Router {
     const categoria = data.categoria
       ? obterOuCriarCategoria(db, empresaId, data.categoria).nome
       : atual.categoria;
-    db.prepare(
-      `UPDATE materias_primas SET
-         nome = @nome,
-         categoria = @categoria,
-         unidade = @unidade,
-         largura_cm = @largura_cm,
-         gramatura = @gramatura,
-         custo = @custo,
-         fornecedor = @fornecedor,
-         cor = @cor,
-         estoque_minimo = @estoque_minimo,
-         status = @status,
-         atualizado_em = datetime('now')
-       WHERE id = @id AND empresa_id = @empresa_id`,
-    ).run({
-      id,
-      empresa_id: empresaId,
-      nome: data.nome ?? atual.nome,
-      categoria,
-      unidade: data.unidade ?? atual.unidade,
-      largura_cm: data.largura_cm === undefined ? atual.largura_cm : data.largura_cm,
-      gramatura: data.gramatura === undefined ? atual.gramatura : data.gramatura,
-      custo: data.custo ?? atual.custo,
-      fornecedor: data.fornecedor === undefined ? atual.fornecedor : data.fornecedor,
-      cor: data.cor === undefined ? atual.cor : data.cor,
-      estoque_minimo: data.estoque_minimo ?? atual.estoque_minimo,
-      status: data.status ?? atual.status,
-    });
-    res.json(mapTecido(getTecido.get(id, empresaId) as TecidoRow));
+    if (data.cores) {
+      const nomes = new Set<string>();
+      for (const cor of data.cores) {
+        const chave = normCor(cor.nome);
+        if (nomes.has(chave)) {
+          return res.status(409).json({ erro: `Já existe a cor ${cor.nome.trim()} neste tecido` });
+        }
+        nomes.add(chave);
+      }
+    }
+    try {
+      db.transaction(() => {
+        const atuais = listarCores(db, id, empresaId);
+        let coresParaSalvar = data.cores;
+        if (coresParaSalvar === undefined && data.cor) {
+          if (atuais.length > 1) {
+            falhar(409, 'Este tecido tem várias cores. Atualize cada cor na lista de variantes.');
+          }
+          coresParaSalvar = [
+            {
+              id: atuais[0]?.id,
+              nome: data.cor,
+              estoque_minimo: data.estoque_minimo,
+              status: data.status,
+            },
+          ];
+        }
+        db.prepare(
+          `UPDATE materias_primas SET
+             nome = @nome,
+             categoria = @categoria,
+             unidade = @unidade,
+             largura_cm = @largura_cm,
+             gramatura = @gramatura,
+             custo = @custo,
+             fornecedor = @fornecedor,
+             cor = @cor,
+             estoque_minimo = @estoque_minimo,
+             status = @status,
+             atualizado_em = datetime('now')
+           WHERE id = @id AND empresa_id = @empresa_id`,
+        ).run({
+          id,
+          empresa_id: empresaId,
+          nome: data.nome ?? atual.nome,
+          categoria,
+          unidade: data.unidade ?? atual.unidade,
+          largura_cm: data.largura_cm === undefined ? atual.largura_cm : data.largura_cm,
+          gramatura: data.gramatura === undefined ? atual.gramatura : data.gramatura,
+          custo: data.custo ?? atual.custo,
+          fornecedor: data.fornecedor === undefined ? atual.fornecedor : data.fornecedor,
+          cor: atual.cor,
+          estoque_minimo: data.estoque_minimo ?? atual.estoque_minimo,
+          status: data.status ?? atual.status,
+        });
+        for (const cor of coresParaSalvar ?? []) {
+          const resultado = garantirCorDoTecido(db, empresaId, id, cor);
+          if (!resultado.ok) falhar(resultado.status, resultado.erro);
+          const inicial = cor.estoque_inicial ?? 0;
+          if (resultado.nova && inicial > 0) {
+            const movimento = movimentarTecido(db, empresaId, req.usuario!.id, id, {
+              tipo: 'entrada',
+              quantidade: inicial,
+              unidade: (data.unidade ?? atual.unidade) as UnidadeTecido,
+              custo: cor.custo ?? data.custo ?? atual.custo,
+              tecido_cor_id: resultado.id,
+              motivo: 'Estoque inicial',
+              referencia_tipo: 'estoque_inicial',
+            });
+            if (!movimento.ok) falhar(movimento.status, movimento.erro);
+          }
+        }
+        const finais = listarCores(db, id, empresaId);
+        const corColuna =
+          finais.length === 1 ? finais[0].nome : finais.length > 1 ? null : data.cor === undefined ? atual.cor : data.cor;
+        db.prepare('UPDATE materias_primas SET cor = ? WHERE id = ? AND empresa_id = ?').run(
+          corColuna ?? null,
+          id,
+          empresaId,
+        );
+      })();
+      res.json(apresentar(getTecido.get(id, empresaId) as TecidoRow));
+    } catch (err) {
+      const status = (err as { status?: number }).status ?? 400;
+      return res.status(status).json({ erro: (err as Error).message });
+    }
   });
 
   router.delete('/:id', (req, res) => {
@@ -537,10 +780,14 @@ export function createTecidosRouter(db: AppDatabase): Router {
         erro: 'Tecido possui movimentação ou vínculos e não pode ser excluído',
       });
     }
-    db.prepare('DELETE FROM estoque_saldos WHERE materia_prima_id = ? AND empresa_id = ?').run(
-      id,
-      empresaId,
-    );
+    db.prepare(
+      `DELETE FROM estoque_saldos
+        WHERE empresa_id = ?
+          AND (
+            materia_prima_id = ?
+            OR tecido_cor_id IN (SELECT id FROM tecido_cores WHERE tecido_id = ? AND empresa_id = ?)
+          )`,
+    ).run(empresaId, id, id, empresaId);
     db.prepare('DELETE FROM materias_primas WHERE id = ? AND empresa_id = ?').run(id, empresaId);
     res.status(204).send();
   });
