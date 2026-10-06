@@ -819,6 +819,61 @@ button {
   min-width: 0;
 }
 
+.importar-pdf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 120px;
+  padding: 1.25rem;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  text-align: center;
+}
+
+.importar-pdf--ativo {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.importar-ou {
+  margin: 0.35rem 0;
+  text-align: center;
+  color: var(--muted);
+}
+
+.importar-tipo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.75rem 0 1rem;
+  padding: 0;
+  border: 0;
+}
+
+.importar-tipo legend {
+  margin-bottom: 0.35rem;
+}
+
+.importar-tipo label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.importar-leitura {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.importar-leitura select {
+  width: 100%;
+}
+
 .form input[readonly] {
   color: var(--muted);
 }

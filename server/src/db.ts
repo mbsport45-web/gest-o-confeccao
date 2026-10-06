@@ -578,6 +578,7 @@ export function createDatabase(location: string) {
   aplicarColunasEstoqueMovimento(db);
   aplicarColunaNotaFiscalCompra(db);
   aplicarCoresTecido(db);
+  aplicarDocumentosImportados(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -603,6 +604,7 @@ const TABELAS_TENANT = [
   'fornecedores',
   'pedidos_compra',
   'pedido_compra_itens',
+  'documentos_importados',
   'financeiro_lancamentos',
   'pedidos',
   'pedido_itens',
@@ -846,6 +848,29 @@ function fundirTecidoIrmao(db: AppDatabase, empresaId: number, parentId: number,
     );
   });
   fundir();
+}
+
+function aplicarDocumentosImportados(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS documentos_importados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      usuario_id INTEGER,
+      tipo TEXT NOT NULL,
+      nome_arquivo TEXT NOT NULL,
+      numero TEXT,
+      emitente TEXT,
+      cnpj TEXT,
+      data_emissao TEXT,
+      total REAL,
+      itens_json TEXT NOT NULL DEFAULT '[]',
+      avisos_json TEXT NOT NULL DEFAULT '[]',
+      texto TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS documentos_importados_empresa
+      ON documentos_importados (empresa_id, criado_em);
+  `);
 }
 
 function aplicarColunasEstoqueMovimento(db: AppDatabase) {

@@ -124,6 +124,7 @@ const ROTAS_PROTEGIDAS: Array<{ metodo: string; caminho: string }> = [
   { metodo: 'GET', caminho: '/api/compras' },
   { metodo: 'GET', caminho: '/api/compras/1' },
   { metodo: 'POST', caminho: '/api/compras' },
+  { metodo: 'POST', caminho: '/api/compras/documentos' },
   { metodo: 'PATCH', caminho: '/api/compras/1' },
   { metodo: 'POST', caminho: '/api/compras/1/itens' },
   { metodo: 'PATCH', caminho: '/api/compras/1/itens/1' },
