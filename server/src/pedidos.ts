@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { proximoCodigoOp } from './codigoOp.js';
 import type { AppDatabase } from './db.js';
 import { arredondarDinheiro, sincronizarContaReceberPedido } from './financeiro.js';
 import { avaliarLimite, exigirLimite } from './planos.js';
@@ -408,16 +409,17 @@ export function createPedidosRouter(db: AppDatabase): Router {
     }
     if (!tamanho) tamanho = 'U';
 
+    const codigo = proximoCodigoOp(db, pedido.empresa_id);
     const info = db
       .prepare(
         `INSERT INTO ordens_producao (
            empresa_id, cliente, produto, tamanho, quantidade, status,
-           cliente_id, produto_id, variante_id,
+           cliente_id, produto_id, variante_id, codigo,
            prioridade, data_prevista, observacoes,
            pedido_id, pedido_item_id, atualizado_em
          ) VALUES (
            @empresa_id, @cliente, @produto, @tamanho, @quantidade, 'planejada',
-           @cliente_id, @produto_id, @variante_id,
+           @cliente_id, @produto_id, @variante_id, @codigo,
            @prioridade, @data_prevista, @observacoes,
            @pedido_id, @pedido_item_id, datetime('now')
          )`,
@@ -431,6 +433,7 @@ export function createPedidosRouter(db: AppDatabase): Router {
         cliente_id: pedido.cliente_id,
         produto_id: item.produto_id,
         variante_id: item.variante_id,
+        codigo,
         prioridade: pedido.prioridade,
         data_prevista: pedido.data_prevista,
         observacoes: `Pedido ${pedido.codigo ?? pedido.id}`,
@@ -438,10 +441,6 @@ export function createPedidosRouter(db: AppDatabase): Router {
         pedido_item_id: item.id,
       });
     const id = Number(info.lastInsertRowid);
-    const codigo = `OP-${String(id).padStart(4, '0')}`;
-    db.prepare(
-      `UPDATE ordens_producao SET codigo = @codigo, atualizado_em = datetime('now') WHERE id = @id`,
-    ).run({ id, codigo });
     copiarBom(id, pedido.empresa_id, item.produto_id, item.variante_id, item.quantidade);
     return { id, codigo };
   }

@@ -149,6 +149,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   const [modelo, setModelo] = useState(MODELO_VAZIO);
   const [aviso, setAviso] = useState<string | null>(null);
   const [reativarId, setReativarId] = useState<number | null>(null);
+  const [codigoGerado, setCodigoGerado] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -484,7 +485,8 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       if (editandoId) {
         await atualizarOrdem(editandoId, dados);
       } else {
-        await criarOrdem({ ...dados, status: 'planejada' });
+        const criada = await criarOrdem({ ...dados, status: 'planejada' });
+        setCodigoGerado(criada.codigo);
       }
       setForm(FORM_VAZIO);
       setModo(null);
@@ -633,6 +635,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
         </div>
 
         {erro && <p className="erro">{erro}</p>}
+        {codigoGerado && <p className="dica">Ordem {codigoGerado} criada.</p>}
 
         {carregando ? (
           <p className="vazio">Carregando…</p>
@@ -655,7 +658,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
             <tbody>
               {ordens.map((o) => (
                 <tr key={o.id}>
-                  <td>{o.codigo ?? `OP-${o.id}`}</td>
+                  <td>{o.codigo ?? '—'}</td>
                   <td>{o.cliente}</td>
                   <td>
                     {o.produto}
