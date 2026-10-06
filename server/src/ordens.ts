@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { proximoCodigoOp } from './codigoOp.js';
 import type { AppDatabase } from './db.js';
 import { sincronizarStatusPedidoFromOps } from './pedidos.js';
 import { lerDadosProducao } from './dadosProducao.js';
@@ -236,9 +237,6 @@ export function createOrdensRouter(db: AppDatabase): Router {
   const router = Router();
 
   const getStmt = db.prepare('SELECT * FROM ordens_producao WHERE id = ? AND empresa_id = ?');
-  const getByCodigo = db.prepare(
-    'SELECT id FROM ordens_producao WHERE codigo = ? AND id != ? AND empresa_id = ?',
-  );
   const insertStmt = db.prepare(
     `INSERT INTO ordens_producao (
        empresa_id, cliente, produto, tamanho, quantidade, status,
@@ -251,10 +249,6 @@ export function createOrdensRouter(db: AppDatabase): Router {
        @codigo, @prioridade, @data_prevista, @observacoes, @responsavel,
        @referencia, @valor_costura, datetime('now')
      )`,
-  );
-  const setCodigoStmt = db.prepare(
-    `UPDATE ordens_producao SET codigo = @codigo, atualizado_em = datetime('now')
-      WHERE id = @id AND empresa_id = @empresa_id`,
   );
   const deleteStmt = db.prepare('DELETE FROM ordens_producao WHERE id = ? AND empresa_id = ?');
   const deleteRequisitos = db.prepare('DELETE FROM ordem_requisitos WHERE ordem_id = ?');
@@ -959,13 +953,9 @@ export function createOrdensRouter(db: AppDatabase): Router {
       const vinculos = dist
         ? { ...previa, varianteId: dist.varianteId, tamanho: dist.tamanho }
         : previa;
-      if (data.codigo && getByCodigo.get(data.codigo, 0, empresaId)) {
-        return res.status(409).json({ erro: 'Já existe uma OP com este código' });
-      }
-
       const retrato = retratoProducao(vinculos.produtoId, empresaId);
       const referenciaPedido = referenciaDaOp(data.referencia);
-      const info = insertStmt.run({
+      const valores = {
         empresa_id: empresaId,
         cliente: vinculos.clienteNome,
         produto: vinculos.produtoNome,
@@ -975,7 +965,6 @@ export function createOrdensRouter(db: AppDatabase): Router {
         cliente_id: vinculos.clienteId,
         produto_id: vinculos.produtoId,
         variante_id: vinculos.varianteId,
-        codigo: data.codigo ?? null,
         prioridade: data.prioridade ?? 'normal',
         data_prevista: data.data_prevista ?? null,
         observacoes: data.observacoes ?? null,
@@ -983,11 +972,17 @@ export function createOrdensRouter(db: AppDatabase): Router {
         referencia: referenciaPedido !== undefined ? referenciaPedido : retrato.referencia,
         valor_costura:
           data.valor_costura === undefined ? retrato.valor_costura : data.valor_costura,
-      });
-      const id = Number(info.lastInsertRowid);
-      if (!data.codigo) {
-        setCodigoStmt.run({ id, empresa_id: empresaId, codigo: `OP-${String(id).padStart(4, '0')}` });
+      };
+      let info: { lastInsertRowid: number | bigint } | undefined;
+      for (let tentativa = 0; tentativa < 5; tentativa += 1) {
+        try {
+          info = insertStmt.run({ ...valores, codigo: proximoCodigoOp(db, empresaId) });
+          break;
+        } catch (err) {
+          if (!(err instanceof Error) || !/UNIQUE/i.test(err.message) || tentativa === 4) throw err;
+        }
       }
+      const id = Number(info!.lastInsertRowid);
 
       let itens = data.requisitos ?? [];
       if (!itens.length && vinculos.produtoId) {
@@ -1041,10 +1036,6 @@ export function createOrdensRouter(db: AppDatabase): Router {
           erro: `Não é possível alterar o status de ${atual.status} para ${data.status}`,
         });
       }
-    }
-
-    if (data.codigo && getByCodigo.get(data.codigo, id, empresaId)) {
-      return res.status(409).json({ erro: 'Já existe uma OP com este código' });
     }
 
     try {
@@ -1140,7 +1131,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
           cliente_id: vinculos.clienteId,
           produto_id: vinculos.produtoId,
           variante_id: vinculos.varianteId,
-          codigo: data.codigo ?? atual.codigo,
+          codigo: atual.codigo,
           prioridade: data.prioridade ?? atual.prioridade ?? 'normal',
           data_prevista:
             data.data_prevista === undefined ? atual.data_prevista : data.data_prevista,

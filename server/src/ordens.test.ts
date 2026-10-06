@@ -70,7 +70,7 @@ describe('API de ordens de produção', () => {
       prioridade: 'normal',
     });
     expect(res.body.id).toBeGreaterThan(0);
-    expect(res.body.codigo).toBe('OP-0001');
+    expect(res.body.codigo).toBe('OP-01');
   });
 
   it('persiste e lista ordens criadas', async () => {
