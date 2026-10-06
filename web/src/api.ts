@@ -97,6 +97,7 @@ export interface NovaOrdem {
   responsavel?: string;
   requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
   valor_costura?: number | null;
+  referencia?: string | null;
   distribuicao?: Array<{ variante_id: number; quantidade: number }>;
 }
 
@@ -118,13 +119,18 @@ export interface FiltrosOrdens {
 
 async function parseError(res: Response): Promise<never> {
   let mensagem = `Erro ${res.status}`;
+  let produtoId: number | undefined;
   try {
     const body = await res.json();
     if (body?.erro) mensagem = body.erro;
+    if (typeof body?.produto_id === 'number') produtoId = body.produto_id;
   } catch {
     // resposta sem corpo JSON
   }
-  throw new Error(mensagem);
+  const erro = new Error(mensagem) as Error & { status?: number; produtoId?: number };
+  erro.status = res.status;
+  erro.produtoId = produtoId;
+  throw erro;
 }
 
 function apiFetch(input: string, init: RequestInit = {}) {
@@ -389,6 +395,19 @@ export async function gerarFinanceiroPedido(
 export async function removerPedido(id: number): Promise<void> {
   const res = await apiFetch(`/api/pedidos/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function salvarFichaTecnica(dados: {
+  produto_id: number;
+  variante_id?: number;
+  itens: Array<{ materia_prima_id: number; quantidade: number }>;
+}): Promise<void> {
+  const res = await apiFetch('/api/ordens/ficha-tecnica', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
 }
 
 export async function obterFichaTecnica(
@@ -671,6 +690,18 @@ export async function listarProdutos(
   const res = await apiFetch(`/api/produtos?${params.toString()}`);
   if (!res.ok) return parseError(res);
   return res.json();
+}
+
+export async function listarProdutosAtivos(): Promise<Produto[]> {
+  const todos: Produto[] = [];
+  let pagina = 1;
+  for (;;) {
+    const lista = await listarProdutos({ status: 'ativo', pagina, por_pagina: 100 });
+    todos.push(...lista.data);
+    if (pagina >= lista.total_paginas || lista.data.length === 0) break;
+    pagina += 1;
+  }
+  return todos;
 }
 
 export async function obterProduto(id: number): Promise<Produto> {

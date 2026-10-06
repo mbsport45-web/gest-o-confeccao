@@ -139,13 +139,11 @@ export const PERMISSOES: Record<Papel, MatrizModulos> = {
     'produtos',
     'assinatura',
   ], LER), ['enfesto'], LER),
-  producao: marcar(marcar(marcar(vazio(), ['ordens', 'etapas'], CRUD), ['enfesto'], OPERAR), [
-    'produtos',
-    'materiais',
-    'estoque',
-    'clientes',
-    'assinatura',
-  ], LER),
+  producao: marcar(
+    marcar(marcar(vazio(), ['ordens', 'etapas'], CRUD), ['enfesto', 'produtos'], OPERAR),
+    ['materiais', 'estoque', 'clientes', 'assinatura'],
+    LER,
+  ),
   cortador: marcar(marcar(vazio(), ['enfesto'], OPERAR), [
     'ordens',
     'etapas',

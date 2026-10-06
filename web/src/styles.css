@@ -388,6 +388,45 @@ button {
   cursor: not-allowed;
 }
 
+.form button.btn-secundario {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.form button.seletor-produto__opcao {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  font-weight: 500;
+  text-align: left;
+}
+
+.form button.seletor-produto__opcao.is-selecionada {
+  background: rgba(99, 102, 241, 0.18);
+}
+
+.seletor-produto__lista {
+  max-height: 12rem;
+  overflow: auto;
+  margin: 0.35rem 0 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.novo-modelo {
+  margin: 0.4rem 0 0.8rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
 .tabela {
   width: 100%;
   border-collapse: collapse;
