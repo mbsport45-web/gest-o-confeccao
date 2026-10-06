@@ -1089,6 +1089,7 @@ export interface CorEnfesto {
   cor: string;
   quantidade_pecas: number;
   tamanhos: Array<{ tamanho: string; quantidade: number }>;
+  grade_persistida: boolean;
   status: StatusEnfesto;
   enfesto: Enfesto | null;
 }
@@ -1112,6 +1113,25 @@ export async function abrirEnfesto(ordemId: number, cor: string): Promise<Enfest
   return res.json();
 }
 
+export async function atualizarGradeEnfesto(
+  ordemId: number,
+  cor: string,
+  tamanhos: Array<{ tamanho: string; quantidade: number }>,
+): Promise<{
+  cor: string;
+  quantidade_pecas: number;
+  tamanhos: Array<{ tamanho: string; quantidade: number }>;
+  grade_persistida: boolean;
+}> {
+  const res = await apiFetch(`/api/enfesto/ordem/${ordemId}/cor`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cor, tamanhos }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function finalizarEnfesto(
   id: number,
   dados: {
@@ -1122,6 +1142,7 @@ export async function finalizarEnfesto(
     peso?: number | null;
     observacoes?: string;
     unidade: UnidadeTecido;
+    tamanhos?: Array<{ tamanho: string; quantidade: number }>;
   },
 ): Promise<Enfesto> {
   const res = await apiFetch(`/api/enfesto/${id}/finalizar`, {

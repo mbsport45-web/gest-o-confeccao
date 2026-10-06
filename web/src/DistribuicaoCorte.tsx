@@ -52,6 +52,55 @@ export function eixosDasVariantes(
   };
 }
 
+const TAMANHOS_CANONICOS = ['P', 'M', 'G', 'GG'];
+
+export function ordenarTamanhos(tamanhos: string[]): string[] {
+  const unicos: string[] = [];
+  const vistos = new Set<string>();
+  for (const item of tamanhos) {
+    const chave = norm(item);
+    if (!chave || vistos.has(chave)) continue;
+    vistos.add(chave);
+    unicos.push(item.trim());
+  }
+  const canonico: string[] = [];
+  const usados = new Set<string>();
+  for (const preferido of TAMANHOS_CANONICOS) {
+    const encontrado = unicos.find((atual) => norm(atual) === preferido.toLowerCase());
+    if (!encontrado) continue;
+    canonico.push(encontrado);
+    usados.add(norm(encontrado));
+  }
+  const resto = unicos.filter((item) => !usados.has(norm(item)));
+  resto.sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }));
+  return [...canonico, ...resto];
+}
+
+export function colunasDaGrade(cores: Array<{ tamanhos: Array<{ tamanho: string }> }>): string[] {
+  return ordenarTamanhos(cores.flatMap((cor) => cor.tamanhos.map((item) => item.tamanho)));
+}
+
+export function somaQuantidades(itens: Array<{ quantidade: number }>): number {
+  return itens.reduce((total, item) => total + (Number.isFinite(item.quantidade) ? item.quantidade : 0), 0);
+}
+
+export function gradeDaCorFecha(itens: Array<{ quantidade: number }>, planejada: number): boolean {
+  if (itens.length === 0) return true;
+  return somaQuantidades(itens) === planejada;
+}
+
+export function atualizarQuantidadeGrade<T extends { tamanho: string; quantidade: number }>(
+  itens: T[],
+  tamanho: string,
+  quantidade: number,
+): T[] {
+  return itens.map((item) => (norm(item.tamanho) === norm(tamanho) ? { ...item, quantidade } : item));
+}
+
+export function mensagemGradeDivergente(cor: string, soma: number, planejada: number): string {
+  return `A soma dos tamanhos de ${cor} (${soma}) é diferente da quantidade planejada (${planejada})`;
+}
+
 export function somaGrade(valores: Record<string, number>): number {
   return Object.values(valores).reduce((total, quantidade) => total + (Number.isFinite(quantidade) ? quantidade : 0), 0);
 }

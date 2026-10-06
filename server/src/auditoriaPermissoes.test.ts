@@ -97,6 +97,7 @@ const ROTAS_PROTEGIDAS: Array<{ metodo: string; caminho: string }> = [
   { metodo: 'PUT', caminho: '/api/ordens/ficha-tecnica' },
   { metodo: 'GET', caminho: '/api/enfesto' },
   { metodo: 'POST', caminho: '/api/enfesto' },
+  { metodo: 'PATCH', caminho: '/api/enfesto/ordem/1/cor' },
   { metodo: 'GET', caminho: '/api/enfesto/1' },
   { metodo: 'PATCH', caminho: '/api/enfesto/1' },
   { metodo: 'POST', caminho: '/api/enfesto/1/finalizar' },

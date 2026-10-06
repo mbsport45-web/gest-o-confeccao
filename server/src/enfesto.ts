@@ -6,6 +6,11 @@ import { empresaDaSessao } from './tenant.js';
 
 export const STATUS_ENFESTO = ['pendente', 'em_enfesto', 'finalizado', 'cancelado'] as const;
 
+const itemGradeSchema = z.object({
+  tamanho: z.string().trim().min(1).max(80),
+  quantidade: z.number().int().min(0),
+});
+
 const dadosSchema = z.object({
   tecido_id: z.number().int().positive().optional(),
   folhas: z.number().int().positive('informe a quantidade de folhas').optional(),
@@ -20,6 +25,12 @@ const dadosSchema = z.object({
     .or(z.literal(''))
     .transform((v) => (v ? v : undefined)),
   unidade: z.enum(UNIDADES_TECIDO).optional(),
+  tamanhos: z.array(itemGradeSchema).optional(),
+});
+
+const gradeCorSchema = z.object({
+  cor: z.string().trim().min(1).max(80),
+  tamanhos: z.array(itemGradeSchema).min(1),
 });
 
 const abrirSchema = z.object({
@@ -27,11 +38,18 @@ const abrirSchema = z.object({
   cor: z.string().trim().min(1).max(80),
 });
 
+type ItemGrade = { tamanho: string; quantidade: number };
+
 type GradeCor = {
   cor: string;
   quantidade: number;
-  tamanhos: Array<{ tamanho: string; quantidade: number }>;
+  tamanhos: ItemGrade[];
+  persistida: boolean;
 };
+
+type LinhaGrade = { id: number; cor: string; tamanho: string; quantidade: number };
+
+const TAMANHOS_CANONICOS = ['P', 'M', 'G', 'GG'];
 
 type EnfestoRow = {
   id: number;
@@ -69,6 +87,46 @@ function norm(valor: string): string {
   return valor.trim().toLowerCase();
 }
 
+export function ordenarTamanhos(tamanhos: string[]): string[] {
+  const unicos: string[] = [];
+  const vistos = new Set<string>();
+  for (const item of tamanhos) {
+    const chave = norm(item);
+    if (!chave || vistos.has(chave)) continue;
+    vistos.add(chave);
+    unicos.push(item.trim());
+  }
+  const canonico: string[] = [];
+  const usados = new Set<string>();
+  for (const preferido of TAMANHOS_CANONICOS) {
+    const encontrado = unicos.find((item) => norm(item) === preferido.toLowerCase());
+    if (!encontrado) continue;
+    canonico.push(encontrado);
+    usados.add(norm(encontrado));
+  }
+  const resto = unicos.filter((item) => !usados.has(norm(item)));
+  resto.sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }));
+  return [...canonico, ...resto];
+}
+
+export function somaQuantidades(itens: Array<{ quantidade: number }>): number {
+  return itens.reduce((total, item) => total + item.quantidade, 0);
+}
+
+export function gradeDaCorFecha(itens: Array<{ quantidade: number }>, planejada: number): boolean {
+  if (itens.length === 0) return true;
+  return somaQuantidades(itens) === planejada;
+}
+
+export function mensagemGradeDivergente(cor: string, soma: number, planejada: number): string {
+  return `A soma dos tamanhos de ${cor} (${soma}) é diferente da quantidade planejada (${planejada})`;
+}
+
+function ordenarItens(itens: ItemGrade[]): ItemGrade[] {
+  const ordem = new Map(ordenarTamanhos(itens.map((item) => item.tamanho)).map((tamanho, indice) => [norm(tamanho), indice]));
+  return [...itens].sort((a, b) => (ordem.get(norm(a.tamanho)) ?? 0) - (ordem.get(norm(b.tamanho)) ?? 0));
+}
+
 function gradeDaOrdem(db: AppDatabase, ordemId: number, empresaId: number): GradeCor[] | null {
   const ordem = db
     .prepare(
@@ -83,7 +141,7 @@ function gradeDaOrdem(db: AppDatabase, ordemId: number, empresaId: number): Grad
     .prepare(
       `SELECT cor, tamanho, quantidade
          FROM ordem_distribuicao
-        WHERE ordem_id = ? AND empresa_id = ? AND quantidade > 0
+        WHERE ordem_id = ? AND empresa_id = ?
         ORDER BY id`,
     )
     .all(ordemId, empresaId) as Array<{ cor: string; tamanho: string; quantidade: number }>;
@@ -92,12 +150,19 @@ function gradeDaOrdem(db: AppDatabase, ordemId: number, empresaId: number): Grad
     const grupos = new Map<string, GradeCor>();
     for (const linha of linhas) {
       const chave = norm(linha.cor);
-      const atual = grupos.get(chave) ?? { cor: linha.cor, quantidade: 0, tamanhos: [] };
+      const atual = grupos.get(chave) ?? {
+        cor: linha.cor,
+        quantidade: 0,
+        tamanhos: [],
+        persistida: true,
+      };
       atual.quantidade += linha.quantidade;
       atual.tamanhos.push({ tamanho: linha.tamanho, quantidade: linha.quantidade });
       grupos.set(chave, atual);
     }
-    return [...grupos.values()];
+    return [...grupos.values()]
+      .filter((grupo) => grupo.quantidade > 0)
+      .map((grupo) => ({ ...grupo, tamanhos: ordenarItens(grupo.tamanhos) }));
   }
 
   if (ordem.variante_id) {
@@ -112,12 +177,68 @@ function gradeDaOrdem(db: AppDatabase, ordemId: number, empresaId: number): Grad
           cor: variante.cor,
           quantidade: ordem.quantidade,
           tamanhos: [{ tamanho: variante.tamanho, quantidade: ordem.quantidade }],
+          persistida: false,
         },
       ];
     }
   }
 
-  return [{ cor: 'Única', quantidade: ordem.quantidade, tamanhos: [] }];
+  return [{ cor: 'Única', quantidade: ordem.quantidade, tamanhos: [], persistida: false }];
+}
+
+function linhasDaCor(db: AppDatabase, ordemId: number, empresaId: number, cor: string): LinhaGrade[] {
+  return db
+    .prepare(
+      `SELECT id, cor, tamanho, quantidade
+         FROM ordem_distribuicao
+        WHERE ordem_id = ? AND empresa_id = ? AND lower(trim(cor)) = lower(trim(?))
+        ORDER BY id`,
+    )
+    .all(ordemId, empresaId, cor) as LinhaGrade[];
+}
+
+function conferirTamanhos(
+  existentes: LinhaGrade[],
+  recebidos: ItemGrade[],
+  cor: string,
+  planejada: number,
+):
+  | { ok: true; atualizacoes: Array<{ id: number; quantidade: number }> }
+  | { ok: false; status: number; erro: string } {
+  const vistos = new Set<string>();
+  const atualizacoes: Array<{ id: number; quantidade: number }> = [];
+  for (const item of recebidos) {
+    const chave = norm(item.tamanho);
+    if (vistos.has(chave)) {
+      return { ok: false, status: 400, erro: 'Tamanho repetido na grade' };
+    }
+    vistos.add(chave);
+    const linha = existentes.find((atual) => norm(atual.tamanho) === chave);
+    if (!linha) {
+      return { ok: false, status: 400, erro: `O tamanho ${item.tamanho} não está na OP` };
+    }
+    atualizacoes.push({ id: linha.id, quantidade: item.quantidade });
+  }
+  const faltou = existentes.find((linha) => !vistos.has(norm(linha.tamanho)));
+  if (faltou) {
+    return { ok: false, status: 400, erro: 'Informe todos os tamanhos da cor' };
+  }
+  const soma = somaQuantidades(recebidos);
+  if (soma !== planejada) {
+    return { ok: false, status: 400, erro: mensagemGradeDivergente(cor, soma, planejada) };
+  }
+  return { ok: true, atualizacoes };
+}
+
+function gravarQuantidades(
+  db: AppDatabase,
+  empresaId: number,
+  atualizacoes: Array<{ id: number; quantidade: number }>,
+) {
+  const stmt = db.prepare(
+    `UPDATE ordem_distribuicao SET quantidade = ? WHERE id = ? AND empresa_id = ?`,
+  );
+  for (const item of atualizacoes) stmt.run(item.quantidade, item.id, empresaId);
 }
 
 function consumoDaUnidade(unidade: UnidadeTecido, dados: { peso?: number | null; metragem?: number | null }) {
@@ -184,8 +305,9 @@ export function createEnfestoRouter(db: AppDatabase): Router {
       const enfesto = ativo ? ler(ativo.id, empresaId) : undefined;
       return {
         cor: item.cor,
-        quantidade_pecas: item.quantidade,
+        quantidade_pecas: enfesto?.quantidade_pecas ?? item.quantidade,
         tamanhos: item.tamanhos,
+        grade_persistida: item.persistida,
         status: enfesto?.status ?? 'pendente',
         enfesto: enfesto ?? null,
       };
@@ -229,6 +351,51 @@ export function createEnfestoRouter(db: AppDatabase): Router {
         quantidade_pecas: cor.quantidade,
       });
     res.status(201).json(ler(Number(info.lastInsertRowid), empresaId));
+  });
+
+  router.patch('/ordem/:ordemId/cor', (req, res) => {
+    const parsed = gradeCorSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Dados inválidos',
+        detalhes: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const ordemId = Number(req.params.ordemId);
+    const empresaId = empresaDaSessao(req);
+    const ordem = retratoOrdem(ordemId, empresaId);
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const grade = gradeDaOrdem(db, ordem.id, empresaId) ?? [];
+    const cor = grade.find((item) => norm(item.cor) === norm(parsed.data.cor));
+    if (!cor) return res.status(400).json({ erro: 'Essa cor não está na distribuição da OP' });
+
+    const ativo = ativoPorCor.get(empresaId, ordem.id, cor.cor) as { id: number } | undefined;
+    const enfesto = ativo ? ler(ativo.id, empresaId) : undefined;
+    if (enfesto?.status === 'finalizado') {
+      return res.status(409).json({ erro: 'Enfesto finalizado não pode ter a grade alterada' });
+    }
+
+    const linhas = linhasDaCor(db, ordem.id, empresaId, cor.cor);
+    if (!linhas.length) {
+      return res.status(400).json({ erro: 'Essa cor não tem grade de tamanhos na OP' });
+    }
+    const planejada = enfesto?.quantidade_pecas ?? somaQuantidades(linhas);
+    const conferencia = conferirTamanhos(linhas, parsed.data.tamanhos, cor.cor, planejada);
+    if (!conferencia.ok) return res.status(conferencia.status).json({ erro: conferencia.erro });
+
+    db.transaction(() => {
+      gravarQuantidades(db, empresaId, conferencia.atualizacoes);
+    })();
+
+    const atualizada = (gradeDaOrdem(db, ordem.id, empresaId) ?? []).find(
+      (item) => norm(item.cor) === norm(cor.cor),
+    );
+    res.json({
+      cor: cor.cor,
+      quantidade_pecas: planejada,
+      tamanhos: atualizada?.tamanhos ?? [],
+      grade_persistida: true,
+    });
   });
 
   router.get('/:id', (req, res) => {
@@ -348,6 +515,33 @@ export function createEnfestoRouter(db: AppDatabase): Router {
 
         const consumo = consumoDaUnidade(tecido.unidade, { peso, metragem });
         if (!consumo.ok) return { ok: false as const, status: 400, erro: consumo.erro };
+
+        const linhas = linhasDaCor(db, atual.ordem_id, empresaId, atual.cor);
+        if (data.tamanhos && data.tamanhos.length > 0) {
+          if (linhas.length) {
+            const conferencia = conferirTamanhos(linhas, data.tamanhos, atual.cor, atual.quantidade_pecas);
+            if (!conferencia.ok) {
+              return { ok: false as const, status: conferencia.status, erro: conferencia.erro };
+            }
+            gravarQuantidades(db, empresaId, conferencia.atualizacoes);
+          } else if (!gradeDaCorFecha(data.tamanhos, atual.quantidade_pecas)) {
+            return {
+              ok: false as const,
+              status: 400,
+              erro: mensagemGradeDivergente(
+                atual.cor,
+                somaQuantidades(data.tamanhos),
+                atual.quantidade_pecas,
+              ),
+            };
+          }
+        } else if (linhas.length && !gradeDaCorFecha(linhas, atual.quantidade_pecas)) {
+          return {
+            ok: false as const,
+            status: 400,
+            erro: mensagemGradeDivergente(atual.cor, somaQuantidades(linhas), atual.quantidade_pecas),
+          };
+        }
 
         const reservado = db
           .prepare(
