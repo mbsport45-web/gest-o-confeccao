@@ -638,7 +638,6 @@ export function ComprasPage() {
               accept="application/pdf,.pdf"
               onChange={(e) => {
                 aceitarPdf(e.target.files?.[0] ?? null);
-                e.target.value = '';
               }}
             />
           </label>
