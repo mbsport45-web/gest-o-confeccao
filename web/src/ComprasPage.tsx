@@ -630,17 +630,18 @@ export function ComprasPage() {
             {arquivoPdf && <span className="dica">{arquivoPdf.name}</span>}
           </div>
           <p className="importar-ou">ou</p>
-          <label className="importar-arquivo" htmlFor="pdf-compra">
-            Selecionar arquivo
+          <div className="importar-arquivo">
+            <span id="pdf-compra-rotulo">Selecionar arquivo</span>
             <input
               id="pdf-compra"
+              aria-labelledby="pdf-compra-rotulo"
               type="file"
               accept="application/pdf,.pdf"
               onChange={(e) => {
                 aceitarPdf(e.target.files?.[0] ?? null);
               }}
             />
-          </label>
+          </div>
           <fieldset className="importar-tipo">
             <legend>Tipo</legend>
             {TIPOS_DOCUMENTO.map((tipo) => (
