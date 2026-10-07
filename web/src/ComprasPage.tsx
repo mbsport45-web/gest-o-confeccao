@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   STATUS_COMPRA,
   STATUS_COMPRA_LABEL,
@@ -109,7 +109,6 @@ export function ComprasPage() {
   const [leitura, setLeitura] = useState<DocumentoProcessado | null>(null);
   const [fornecedorDoc, setFornecedorDoc] = useState('');
   const [conferindoItens, setConferindoItens] = useState(false);
-  const arquivoRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -631,19 +630,18 @@ export function ComprasPage() {
             {arquivoPdf && <span className="dica">{arquivoPdf.name}</span>}
           </div>
           <p className="importar-ou">ou</p>
-          <button type="button" className="btn-secundario" onClick={() => arquivoRef.current?.click()}>
+          <label className="importar-arquivo" htmlFor="pdf-compra">
             Selecionar arquivo
-          </button>
-          <input
-            ref={arquivoRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            hidden
-            onChange={(e) => {
-              aceitarPdf(e.target.files?.[0] ?? null);
-              e.target.value = '';
-            }}
-          />
+            <input
+              id="pdf-compra"
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={(e) => {
+                aceitarPdf(e.target.files?.[0] ?? null);
+                e.target.value = '';
+              }}
+            />
+          </label>
           <fieldset className="importar-tipo">
             <legend>Tipo</legend>
             {TIPOS_DOCUMENTO.map((tipo) => (
