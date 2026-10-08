@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
-import { autenticar, type TestApi } from './httpTest.js';
+import { autenticar, autenticarNovaEmpresa, type TestApi } from './httpTest.js';
+import { pdfComTexto } from './pdfTexto.js';
 
 const CNPJ = '11444777000161';
 
 describe('API de compras', () => {
   let db: AppDatabase;
+  let app: ReturnType<typeof createApp>;
   let api: TestApi;
 
   beforeEach(async () => {
     db = createDatabase(':memory:');
-    api = await autenticar(createApp(db));
+    app = createApp(db);
+    api = await autenticar(app);
   });
 
   afterEach(() => {
@@ -234,5 +237,62 @@ describe('API de compras', () => {
     expect(fluxo.status).toBe(201);
     const estoque = await api.get('/api/estoque');
     expect(estoque.status).toBe(200);
+  });
+
+  it('processa o PDF da nota e sugere o material sem movimentar estoque', async () => {
+    const fornecedor = await criarFornecedor();
+    const materia = await criarMateria();
+    const pdf = pdfComTexto([
+      'NF-e 8891',
+      'Fornecedor: Fiacao Norte',
+      'CNPJ: 11.444.777/0001-61',
+      '06/10/2026',
+      'Malha Compra 200 KG 20,00 4000,00',
+      'Valor total da nota 4000,00',
+    ]);
+    const res = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      tipo: 'nota_fiscal',
+      numero: '8891',
+      cnpj: '11444777000161',
+      data_emissao: '2026-10-06',
+      total: 4000,
+      fornecedor: { id: fornecedor.id, nome: 'Fiação Norte' },
+    });
+    expect(res.body.itens[0]).toMatchObject({
+      descricao: 'Malha Compra',
+      quantidade: 200,
+      unidade: 'KG',
+      materia_prima_id: materia.id,
+      tecido_cor_id: null,
+    });
+    expect((await api.get('/api/compras')).body.total).toBe(0);
+    expect((await api.get('/api/estoque/movimentos')).body.total).toBe(0);
+
+    const invalido = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota.txt',
+      conteudo_base64: Buffer.from('nao e pdf').toString('base64'),
+    });
+    expect(invalido.status).toBe(400);
+
+    const { api: outra } = await autenticarNovaEmpresa(app);
+    const alheio = await outra.post('/api/compras/documentos').send({
+      tipo: 'pedido_compra',
+      nome_arquivo: 'pedido.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(alheio.status).toBe(201);
+    expect(alheio.body.fornecedor).toBeNull();
+    expect(alheio.body.itens[0].materia_prima_id).toBeNull();
+    const guardado = db
+      .prepare('SELECT empresa_id FROM documentos_importados WHERE id = ?')
+      .get(res.body.id) as { empresa_id: number };
+    expect(guardado.empresa_id).toBe(1);
   });
 });

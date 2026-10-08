@@ -9,18 +9,34 @@ import {
   listarFornecedores,
   listarMateriasPrimas,
   obterCompra,
+  processarDocumento,
   receberCompra,
   removerCompra,
   type CompraItem,
+  type DocumentoProcessado,
   type Fornecedor,
+  type ItemDocumento,
   type MateriaPrima,
   type PedidoCompra,
+  type TipoDocumento,
 } from './api';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
-type Modo = 'criar' | 'detalhe' | 'fornecedor' | null;
+type Modo = 'criar' | 'detalhe' | 'fornecedor' | 'importar' | null;
 type ItemForm = { materia_prima_id: string; quantidade: number; custo_unitario: number };
+type OpcaoCompra = {
+  id: number;
+  nome: string;
+  unidade: string;
+  cores: Array<{ id: number; nome: string; status: string }>;
+};
+
+const TIPOS_DOCUMENTO: Array<{ id: TipoDocumento; label: string }> = [
+  { id: 'nota_fiscal', label: 'Nota Fiscal' },
+  { id: 'pedido_compra', label: 'Pedido de Compra' },
+  { id: 'outro', label: 'Outro' },
+];
 
 const FORM_VAZIO = {
   fornecedor_id: '',
@@ -54,6 +70,18 @@ export function ComprasPage() {
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [materias, setMaterias] = useState<MateriaPrima[]>([]);
   const [novoForn, setNovoForn] = useState({ nome: '', cidade: '', estado: 'SP' });
+  const [arquivoPdf, setArquivoPdf] = useState<File | null>(null);
+  const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento>('nota_fiscal');
+  const [arrastandoPdf, setArrastandoPdf] = useState(false);
+  const [leitura, setLeitura] = useState<DocumentoProcessado | null>(null);
+  const [fornecedorDoc, setFornecedorDoc] = useState('');
+
+  const opcoes: OpcaoCompra[] = materias.map((materia) => ({
+    id: materia.id,
+    nome: materia.nome,
+    unidade: materia.unidade,
+    cores: [],
+  }));
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -187,6 +215,113 @@ export function ComprasPage() {
     }
   }
 
+  function abrirImportar() {
+    setArquivoPdf(null);
+    setTipoDocumento('nota_fiscal');
+    setLeitura(null);
+    setFornecedorDoc('');
+    setArrastandoPdf(false);
+    setModo('importar');
+    setErro(null);
+  }
+
+  function aceitarPdf(arquivo: File | null) {
+    if (!arquivo) return;
+    const pdf = arquivo.type === 'application/pdf' || arquivo.name.toLowerCase().endsWith('.pdf');
+    if (!pdf) {
+      setErro('Envie um arquivo PDF');
+      return;
+    }
+    setErro(null);
+    setArquivoPdf(arquivo);
+    setLeitura(null);
+  }
+
+  async function processarPdf() {
+    if (!arquivoPdf) {
+      setErro('Selecione o PDF');
+      return;
+    }
+    try {
+      setSalvando(true);
+      setErro(null);
+      const conteudo = await arquivoPdf.arrayBuffer();
+      const bytes = new Uint8Array(conteudo);
+      let binario = '';
+      for (const byte of bytes) binario += String.fromCharCode(byte);
+      const documento = await processarDocumento({
+        tipo: tipoDocumento,
+        nome_arquivo: arquivoPdf.name,
+        conteudo_base64: btoa(binario),
+      });
+      setLeitura(documento);
+      setFornecedorDoc(documento.fornecedor ? String(documento.fornecedor.id) : '');
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  function atualizarItemLido(indice: number, patch: Partial<ItemDocumento>) {
+    setLeitura((atual) => {
+      if (!atual) return atual;
+      const itens = atual.itens.map((item, i) => (i === indice ? { ...item, ...patch } : item));
+      return { ...atual, itens };
+    });
+  }
+
+  async function criarRascunhoDoDocumento() {
+    if (!leitura) return;
+    if (!fornecedorDoc) {
+      setErro('Selecione o fornecedor da compra');
+      return;
+    }
+    const semCor = leitura.itens.find((item) => {
+      const opcao = opcoes.find((atual) => atual.id === item.materia_prima_id);
+      return opcao && opcao.cores.length > 0 && !item.tecido_cor_id;
+    });
+    if (semCor) {
+      setErro(`Selecione a cor de ${semCor.descricao}`);
+      return;
+    }
+    const itens = leitura.itens
+      .filter((item) => item.materia_prima_id && item.quantidade && item.quantidade > 0)
+      .map((item) => ({
+        materia_prima_id: item.materia_prima_id ?? undefined,
+        quantidade: item.quantidade ?? 0,
+        custo_unitario: item.valor_unitario ?? 0,
+        unidade: opcoes.find((opcao) => opcao.id === item.materia_prima_id)?.unidade,
+      }));
+    const pendentes = leitura.itens.filter((item) => !item.materia_prima_id);
+    const observacoes = [
+      `Importado de ${leitura.nome_arquivo}.`,
+      leitura.numero ? `Documento ${leitura.numero}.` : '',
+      pendentes.length > 0
+        ? `Itens sem cadastro: ${pendentes.map((item) => item.descricao).join('; ')}.`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    try {
+      setSalvando(true);
+      const compra = await criarCompra({
+        fornecedor_id: Number(fornecedorDoc),
+        data_emissao: leitura.data_emissao ?? undefined,
+        observacoes,
+        itens,
+      });
+      setModo(null);
+      setErro(null);
+      await recarregar();
+      await abrirDetalhe(compra.id);
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   return (
     <main className="app__main app__main--compras">
       <section className="card card--wide">
@@ -196,6 +331,9 @@ export function ComprasPage() {
             <span className="badge">
               {total} compra{total === 1 ? '' : 's'}
             </span>
+            <button type="button" className="btn-secundario" onClick={abrirImportar}>
+              Importar documento
+            </button>
             <button type="button" className="btn-secundario" onClick={() => { setForm(FORM_VAZIO); setModo('criar'); }}>
               Nova compra
             </button>
@@ -268,6 +406,155 @@ export function ComprasPage() {
           </div>
         </div>
       </section>
+
+      {modo === 'importar' && (
+        <section className="card">
+          <div className="card__head">
+            <h2>Importar documento</h2>
+            <button type="button" className="btn-fechar" onClick={() => setModo(null)}>×</button>
+          </div>
+          {erro && <p className="erro">{erro}</p>}
+          <div
+            className={`importar-pdf${arrastandoPdf ? ' importar-pdf--ativo' : ''}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setArrastandoPdf(true);
+            }}
+            onDragLeave={() => setArrastandoPdf(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setArrastandoPdf(false);
+              aceitarPdf(e.dataTransfer.files[0] ?? null);
+            }}
+          >
+            Arraste o PDF aqui
+            {arquivoPdf && <span className="dica">{arquivoPdf.name}</span>}
+          </div>
+          <p className="importar-ou">ou</p>
+          <div className="importar-arquivo">
+            <span id="pdf-compra-rotulo">Selecionar arquivo</span>
+            <input
+              id="pdf-compra"
+              aria-labelledby="pdf-compra-rotulo"
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={(e) => {
+                aceitarPdf(e.target.files?.[0] ?? null);
+              }}
+            />
+          </div>
+          <fieldset className="importar-tipo">
+            <legend>Tipo</legend>
+            {TIPOS_DOCUMENTO.map((tipo) => (
+              <label key={tipo.id}>
+                <input
+                  type="radio"
+                  name="tipo-documento"
+                  checked={tipoDocumento === tipo.id}
+                  onChange={() => setTipoDocumento(tipo.id)}
+                />
+                {tipo.label}
+              </label>
+            ))}
+          </fieldset>
+          <button type="button" disabled={salvando || !arquivoPdf} onClick={() => void processarPdf()}>
+            {salvando ? 'Processando…' : 'Processar documento'}
+          </button>
+          {leitura && (
+            <div className="importar-leitura">
+              <h3>Leitura</h3>
+              <dl className="detalhe">
+                <div><dt>Arquivo</dt><dd>{leitura.nome_arquivo}</dd></div>
+                <div><dt>Número</dt><dd>{leitura.numero || '—'}</dd></div>
+                <div><dt>Emitente</dt><dd>{leitura.emitente || '—'}</dd></div>
+                <div><dt>CNPJ</dt><dd>{leitura.cnpj || '—'}</dd></div>
+                <div><dt>Data</dt><dd>{leitura.data_emissao ? leitura.data_emissao.split('-').reverse().join('/') : '—'}</dd></div>
+                <div><dt>Total</dt><dd>{leitura.total == null ? '—' : moeda.format(leitura.total)}</dd></div>
+              </dl>
+              {leitura.avisos.map((aviso) => (
+                <p key={aviso} className="dica">{aviso}</p>
+              ))}
+              <label>
+                Fornecedor
+                <select value={fornecedorDoc} onChange={(e) => setFornecedorDoc(e.target.value)}>
+                  <option value="">Selecione</option>
+                  {fornecedores.map((fornecedor) => (
+                    <option key={fornecedor.id} value={fornecedor.id}>{fornecedor.nome}</option>
+                  ))}
+                </select>
+              </label>
+              {leitura.itens.length > 0 && (
+                <table className="tabela tabela--compacta">
+                  <thead>
+                    <tr>
+                      <th>Item do documento</th>
+                      <th>Qtd.</th>
+                      <th>Cadastro</th>
+                      <th>Cor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leitura.itens.map((item, indice) => {
+                      const escolhido = opcoes.find((opcao) => opcao.id === item.materia_prima_id);
+                      return (
+                        <tr key={`${item.descricao}-${indice}`}>
+                          <td>
+                            {item.descricao}
+                            {item.aviso && <div className="dica">{item.aviso}</div>}
+                          </td>
+                          <td>{item.quantidade ?? '—'} {item.unidade ?? ''}</td>
+                          <td>
+                            <select
+                              aria-label={`Cadastro de ${item.descricao}`}
+                              value={item.materia_prima_id ?? ''}
+                              onChange={(e) => {
+                                const id = e.target.value ? Number(e.target.value) : null;
+                                const opcao = opcoes.find((atual) => atual.id === id);
+                                const corUnica = (opcao?.cores ?? []).filter((cor) => cor.status === 'ativo');
+                                atualizarItemLido(indice, {
+                                  materia_prima_id: id,
+                                  tecido_cor_id: corUnica.length === 1 ? corUnica[0].id : null,
+                                  aviso: null,
+                                });
+                              }}
+                            >
+                              <option value="">Não lançar</option>
+                              {opcoes.map((opcao) => (
+                                <option key={opcao.id} value={opcao.id}>{opcao.nome}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            {(escolhido?.cores.length ?? 0) > 0 ? (
+                              <select
+                                aria-label={`Cor de ${item.descricao}`}
+                                value={item.tecido_cor_id ?? ''}
+                                onChange={(e) =>
+                                  atualizarItemLido(indice, {
+                                    tecido_cor_id: e.target.value ? Number(e.target.value) : null,
+                                  })
+                                }
+                              >
+                                <option value="">Selecione a cor</option>
+                                {escolhido?.cores.map((cor) => (
+                                  <option key={cor.id} value={cor.id}>{cor.nome}</option>
+                                ))}
+                              </select>
+                            ) : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              <button type="button" disabled={salvando} onClick={() => void criarRascunhoDoDocumento()}>
+                {salvando ? 'Salvando…' : 'Criar rascunho'}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
 
       {modo === 'criar' && (
         <section className="card">
