@@ -495,6 +495,7 @@ export function createDatabase(location: string) {
     `INSERT OR IGNORE INTO empresas (id, nome, status) VALUES (1, 'Empresa 1', 'ativa')`,
   ).run();
 
+  aplicarDocumentosImportados(db);
   aplicarColunaEmpresaId(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
@@ -517,6 +518,7 @@ const TABELAS_TENANT = [
   'fornecedores',
   'pedidos_compra',
   'pedido_compra_itens',
+  'documentos_importados',
   'financeiro_lancamentos',
   'pedidos',
   'pedido_itens',
@@ -608,6 +610,29 @@ function aplicarColunaEmpresaId(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS pedidos_empresa ON pedidos (empresa_id);
     CREATE INDEX IF NOT EXISTS etapas_producao_empresa ON etapas_producao (empresa_id);
     CREATE INDEX IF NOT EXISTS expedicoes_empresa ON expedicoes (empresa_id);
+  `);
+}
+
+function aplicarDocumentosImportados(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS documentos_importados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      usuario_id INTEGER,
+      tipo TEXT NOT NULL,
+      nome_arquivo TEXT NOT NULL,
+      numero TEXT,
+      emitente TEXT,
+      cnpj TEXT,
+      data_emissao TEXT,
+      total REAL,
+      itens_json TEXT NOT NULL DEFAULT '[]',
+      avisos_json TEXT NOT NULL DEFAULT '[]',
+      texto TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS documentos_importados_empresa
+      ON documentos_importados (empresa_id, criado_em);
   `);
 }
 
