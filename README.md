@@ -26,8 +26,8 @@ Isso instala as dependências dos dois workspaces (`server` e `web`).
 npm run dev
 ```
 
-- API: http://localhost:3001 (health check em `/api/health`)
-- Web: http://localhost:5173 (proxy de `/api` → API)
+- API: http://127.0.0.1:3002 (health check em `/api/health`)
+- Web: http://127.0.0.1:5173 (proxy de `/api` → http://127.0.0.1:3002)
 
 Também é possível rodar cada parte separadamente:
 

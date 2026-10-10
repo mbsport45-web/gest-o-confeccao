@@ -42,13 +42,29 @@ fi
 export PORT=3002
 export VITE_API_TARGET=http://127.0.0.1:3002
 
-if api_ok && web_ok; then
-  echo "[start] API :3002 and web proxy :5173 already healthy (root=$APP_ROOT)"
-  exit 0
-fi
+# The Cloud environment also starts dev:server and dev:web in terminals.
+# Wait for that single pair before launching, so this script does not bind a second API or Vite.
+i=0
+while [ "$i" -lt 20 ]; do
+  if api_ok && web_ok; then
+    echo "[start] API :3002 and web proxy :5173 already healthy (root=$APP_ROOT)"
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 1
+done
 
 if ! node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.dev ? 0 : 1)"; then
   echo "[start] No npm dev script in $APP_ROOT" >&2
+  exit 1
+fi
+
+port_open() {
+  node -e 'const net=require("net"); const port=Number(process.argv[1]); const socket=net.connect(port,"127.0.0.1",()=>{socket.end(); process.exit(0)}); socket.on("error",()=>process.exit(1));' "$1"
+}
+
+if port_open 3002 || port_open 5173; then
+  echo "[start] Port 3002 or 5173 is busy but /api/health is not ready. Not starting another server." >&2
   exit 1
 fi
 
