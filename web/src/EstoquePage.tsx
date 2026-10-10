@@ -4,6 +4,7 @@ import {
   TIPOS_MOVIMENTO,
   criarMovimentoEstoque,
   listarEstoque,
+  listarMovimentosEstoque,
   listarMateriasPrimas,
   listarProdutos,
   obterEstoque,
@@ -27,18 +28,27 @@ const FORM_VAZIO = {
   observacoes: '',
 };
 
-export function EstoquePage() {
+type VisaoEstoque = 'completo' | 'materiais' | 'movimentacoes';
+
+export function EstoquePage({ visao = 'completo' }: { visao?: VisaoEstoque } = {}) {
+  if (visao === 'movimentacoes') return <MovimentacoesMateriais />;
+  return <EstoqueSaldos visao={visao} />;
+}
+
+function EstoqueSaldos({ visao }: { visao: 'completo' | 'materiais' }) {
   const [saldos, setSaldos] = useState<EstoqueSaldo[]>([]);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState('');
   const [qDebounced, setQDebounced] = useState('');
-  const [tipoFiltro, setTipoFiltro] = useState('');
+  const [tipoFiltro, setTipoFiltro] = useState(visao === 'materiais' ? 'materia' : '');
   const [abaixoMinimo, setAbaixoMinimo] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
-  const [form, setForm] = useState(FORM_VAZIO);
+  const [form, setForm] = useState(
+    visao === 'materiais' ? { ...FORM_VAZIO, alvo: 'materia' as Alvo } : FORM_VAZIO,
+  );
   const [salvando, setSalvando] = useState(false);
   const [detalhe, setDetalhe] = useState<EstoqueSaldo | null>(null);
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -58,9 +68,11 @@ export function EstoquePage() {
   }, [tipoFiltro, abaixoMinimo]);
 
   useEffect(() => {
-    listarProdutos({ por_pagina: 100 }).then((lista) => setProdutos(lista.data)).catch(() => undefined);
+    if (visao === 'completo') {
+      listarProdutos({ por_pagina: 100 }).then((lista) => setProdutos(lista.data)).catch(() => undefined);
+    }
     listarMateriasPrimas({ por_pagina: 100 }).then((lista) => setMaterias(lista.data)).catch(() => undefined);
-  }, []);
+  }, [visao]);
 
   const recarregar = useCallback(async () => {
     try {
@@ -128,7 +140,7 @@ export function EstoquePage() {
     <main className="app__main app__main--estoque">
       <section className="card card--wide">
         <div className="card__head">
-          <h2>Estoque</h2>
+          <h2>{visao === 'materiais' ? 'Estoque de materiais' : 'Estoque'}</h2>
           <span className="badge">{total} saldo{total === 1 ? '' : 's'}</span>
         </div>
 
@@ -136,18 +148,20 @@ export function EstoquePage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar produto, SKU, matéria-prima…"
+            placeholder={visao === 'materiais' ? 'Buscar matéria-prima…' : 'Buscar produto, SKU, matéria-prima…'}
             aria-label="Buscar estoque"
           />
-          <select
-            value={tipoFiltro}
-            onChange={(e) => setTipoFiltro(e.target.value)}
-            aria-label="Filtrar tipo"
-          >
-            <option value="">Todos os itens</option>
-            <option value="produto">Produtos</option>
-            <option value="materia">Matérias-primas</option>
-          </select>
+          {visao === 'completo' && (
+            <select
+              value={tipoFiltro}
+              onChange={(e) => setTipoFiltro(e.target.value)}
+              aria-label="Filtrar tipo"
+            >
+              <option value="">Todos os itens</option>
+              <option value="produto">Produtos</option>
+              <option value="materia">Matérias-primas</option>
+            </select>
+          )}
           <label className="filtro-check">
             <input
               type="checkbox"
@@ -237,25 +251,27 @@ export function EstoquePage() {
                 ))}
               </select>
             </label>
-            <label>
-              Item
-              <select
-                value={form.alvo}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    alvo: e.target.value as Alvo,
-                    produtoId: '',
-                    varianteId: '',
-                    materiaId: '',
-                  })
-                }
-              >
-                <option value="variante">Variante de produto</option>
-                <option value="produto">Produto sem grade</option>
-                <option value="materia">Matéria-prima</option>
-              </select>
-            </label>
+            {visao === 'completo' && (
+              <label>
+                Item
+                <select
+                  value={form.alvo}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      alvo: e.target.value as Alvo,
+                      produtoId: '',
+                      varianteId: '',
+                      materiaId: '',
+                    })
+                  }
+                >
+                  <option value="variante">Variante de produto</option>
+                  <option value="produto">Produto sem grade</option>
+                  <option value="materia">Matéria-prima</option>
+                </select>
+              </label>
+            )}
 
             {form.alvo === 'materia' ? (
               <label>
@@ -396,6 +412,139 @@ export function EstoquePage() {
           </section>
         )}
       </div>
+    </main>
+  );
+}
+
+function MovimentacoesMateriais() {
+  const [linhas, setLinhas] = useState<EstoqueMovimento[]>([]);
+  const [pagina, setPagina] = useState(1);
+  const [q, setQ] = useState('');
+  const [qDebounced, setQDebounced] = useState('');
+  const [tipo, setTipo] = useState('');
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+  const porPagina = 10;
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setQDebounced(q);
+      setPagina(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  useEffect(() => {
+    setPagina(1);
+  }, [tipo]);
+
+  const recarregar = useCallback(async () => {
+    try {
+      setCarregando(true);
+      const encontrados: EstoqueMovimento[] = [];
+      let paginaApi = 1;
+      let totalPaginas = 1;
+      do {
+        const lista = await listarMovimentosEstoque({
+          q: qDebounced || undefined,
+          tipo: tipo || undefined,
+          pagina: paginaApi,
+          por_pagina: 100,
+        });
+        totalPaginas = lista.total_paginas;
+        encontrados.push(...lista.data.filter((movimento) => movimento.materia_prima_id != null));
+        paginaApi += 1;
+      } while (paginaApi <= totalPaginas && paginaApi <= 10);
+      setLinhas(encontrados);
+      setErro(null);
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }, [qDebounced, tipo]);
+
+  useEffect(() => {
+    void recarregar();
+  }, [recarregar]);
+
+  const totalPaginas = Math.max(1, Math.ceil(linhas.length / porPagina));
+  const paginaAtual = Math.min(pagina, totalPaginas);
+  const visiveis = linhas.slice((paginaAtual - 1) * porPagina, paginaAtual * porPagina);
+
+  return (
+    <main className="app__main app__main--estoque">
+      <section className="card card--wide">
+        <div className="card__head">
+          <h2>Movimentações</h2>
+          <span className="badge">
+            {linhas.length} movimento{linhas.length === 1 ? '' : 's'}
+          </span>
+        </div>
+        <div className="filtros filtros--estoque">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar matéria-prima ou motivo…"
+            aria-label="Buscar movimentações"
+          />
+          <select value={tipo} onChange={(e) => setTipo(e.target.value)} aria-label="Filtrar tipo de movimento">
+            <option value="">Todos os tipos</option>
+            {TIPOS_MOVIMENTO.map((item) => (
+              <option key={item} value={item}>{TIPO_MOVIMENTO_LABEL[item]}</option>
+            ))}
+          </select>
+        </div>
+        {erro && <p className="erro">{erro}</p>}
+        {carregando ? (
+          <p className="vazio">Carregando…</p>
+        ) : visiveis.length === 0 ? (
+          <p className="vazio">Nenhuma movimentação de matéria-prima.</p>
+        ) : (
+          <table className="tabela">
+            <thead>
+              <tr>
+                <th>Quando</th>
+                <th>Item</th>
+                <th>Tipo</th>
+                <th>Qtd.</th>
+                <th>Saldo</th>
+                <th>Motivo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visiveis.map((movimento) => (
+                <tr key={movimento.id}>
+                  <td>{movimento.criado_em?.replace('T', ' ').slice(0, 16)}</td>
+                  <td>
+                    {movimento.nome ?? 'Matéria-prima'}
+                    {movimento.codigo ? <div className="dica">{movimento.codigo}</div> : null}
+                  </td>
+                  <td>{TIPO_MOVIMENTO_LABEL[movimento.tipo]}</td>
+                  <td>{movimento.quantidade}</td>
+                  <td>{movimento.saldo_anterior} → {movimento.saldo_posterior}</td>
+                  <td>{movimento.motivo ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div className="paginacao">
+          <span>Página {paginaAtual} de {totalPaginas}</span>
+          <div>
+            <button type="button" disabled={paginaAtual <= 1} onClick={() => setPagina((p) => p - 1)}>
+              Anterior
+            </button>
+            <button
+              type="button"
+              disabled={paginaAtual >= totalPaginas}
+              onClick={() => setPagina((p) => p + 1)}
+            >
+              Próxima
+            </button>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }

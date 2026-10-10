@@ -89,6 +89,33 @@ body {
   color: white;
 }
 
+.modulo-compras-estoque {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.abas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.abas__item {
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  font-weight: 600;
+}
+
+.abas__item--ativa {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
 .shell__overlay {
   display: none;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ClientesPage } from './ClientesPage';
-import { ComprasPage } from './ComprasPage';
+import { ComprasEstoquePage } from './ComprasEstoquePage';
 import { DashboardPage } from './DashboardPage';
 import { EtapasPage } from './EtapasPage';
 import { EstoquePage } from './EstoquePage';
@@ -54,7 +54,7 @@ const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'expedicao', label: 'Expedição', modulo: 'expedicao' },
   { id: 'ordens', label: 'Ordens de Produção', modulo: 'ordens' },
   { id: 'etapas', label: 'Produção/Etapas', modulo: 'etapas' },
-  { id: 'compras', label: 'Compras', modulo: ['compras', 'fornecedores'] },
+  { id: 'compras', label: 'Compras e Estoque', modulo: ['compras', 'fornecedores'] },
   { id: 'financeiro', label: 'Financeiro', modulo: 'financeiro' },
   { id: 'relatorios', label: 'Relatórios', modulo: 'relatorios' },
   { id: 'equipe', label: 'Equipe', modulo: 'equipe' },
@@ -99,8 +99,8 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
     sub: 'Fluxo Corte → Embalagem',
   },
   compras: {
-    titulo: 'Compras',
-    sub: 'Compras e fornecedores',
+    titulo: 'Compras e Estoque',
+    sub: 'Compras, fornecedores e estoque de materiais',
   },
   financeiro: {
     titulo: 'Financeiro',
@@ -301,7 +301,7 @@ function AppAutenticado({
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
               {paginaAtual === 'ordens' && <OrdensPage sessao={sessao} />}
               {paginaAtual === 'etapas' && <EtapasPage />}
-              {paginaAtual === 'compras' && <ComprasPage />}
+              {paginaAtual === 'compras' && <ComprasEstoquePage permissoes={sessao.permissoes} />}
               {paginaAtual === 'financeiro' && <FinanceiroPage />}
               {paginaAtual === 'relatorios' && <RelatoriosPage />}
               {paginaAtual === 'equipe' && podeEquipe && <EquipePage sessao={sessao} />}
