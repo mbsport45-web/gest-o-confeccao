@@ -497,6 +497,7 @@ export function createDatabase(location: string) {
 
   aplicarDocumentosImportados(db);
   aplicarColunaEmpresaId(db);
+  aplicarCamposFornecedor(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -561,6 +562,9 @@ function aplicarDocumentosImportados(db: AppDatabase) {
   if (!colunaExiste(db, 'documentos_importados', 'conteudo_hash')) {
     db.exec('ALTER TABLE documentos_importados ADD COLUMN conteudo_hash TEXT');
   }
+  if (!colunaExiste(db, 'documentos_importados', 'cpf')) {
+    db.exec('ALTER TABLE documentos_importados ADD COLUMN cpf TEXT');
+  }
   if (tabelaExiste(db, 'pedidos_compra') && !colunaExiste(db, 'pedidos_compra', 'documento_importado_id')) {
     db.exec('ALTER TABLE pedidos_compra ADD COLUMN documento_importado_id INTEGER');
   }
@@ -570,6 +574,25 @@ function aplicarDocumentosImportados(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS documentos_importados_hash
       ON documentos_importados (empresa_id, conteudo_hash);
   `);
+}
+
+function aplicarCamposFornecedor(db: AppDatabase) {
+  if (!tabelaExiste(db, 'fornecedores')) return;
+  const colunas = [
+    'tipo_pessoa TEXT',
+    'nome_fantasia TEXT',
+    'inscricao_estadual TEXT',
+    'whatsapp TEXT',
+    'numero TEXT',
+    'complemento TEXT',
+    'bairro TEXT',
+  ];
+  for (const definicao of colunas) {
+    const nome = definicao.split(' ')[0];
+    if (!colunaExiste(db, 'fornecedores', nome)) {
+      db.exec(`ALTER TABLE fornecedores ADD COLUMN ${definicao}`);
+    }
+  }
 }
 
 function aplicarColunaEmpresaId(db: AppDatabase) {

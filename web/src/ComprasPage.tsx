@@ -22,6 +22,8 @@ import {
   type Produto,
   type TipoDocumento,
 } from './api';
+import { FornecedorImportacao } from './FornecedorImportacao';
+import type { PayloadFornecedorImportacao } from './fornecedorImportacao';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -78,6 +80,7 @@ export function ComprasPage() {
   const [arrastandoPdf, setArrastandoPdf] = useState(false);
   const [leitura, setLeitura] = useState<DocumentoProcessado | null>(null);
   const [fornecedorDoc, setFornecedorDoc] = useState('');
+  const [avisoFornecedor, setAvisoFornecedor] = useState<string | null>(null);
 
   const opcoes: OpcaoCompra[] = [
     ...materias.map((materia) => ({
@@ -234,6 +237,7 @@ export function ComprasPage() {
     setTipoDocumento('nota_fiscal');
     setLeitura(null);
     setFornecedorDoc('');
+    setAvisoFornecedor(null);
     setArrastandoPdf(false);
     setModo('importar');
     setErro(null);
@@ -270,6 +274,7 @@ export function ComprasPage() {
       });
       setLeitura(documento);
       setFornecedorDoc(documento.fornecedor ? String(documento.fornecedor.id) : '');
+      setAvisoFornecedor(null);
     } catch (err) {
       setErro((err as Error).message);
     } finally {
@@ -283,6 +288,49 @@ export function ComprasPage() {
       const itens = atual.itens.map((item, i) => (i === indice ? { ...item, ...patch } : item));
       return { ...atual, itens };
     });
+  }
+
+  function vincularFornecedorImportado(fornecedor: Fornecedor, jaExistia: boolean) {
+    setFornecedores((atual) => {
+      if (atual.some((item) => item.id === fornecedor.id)) return atual;
+      return [...atual, fornecedor].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    });
+    setFornecedorDoc(String(fornecedor.id));
+    setForm((atual) => ({ ...atual, fornecedor_id: String(fornecedor.id) }));
+    setLeitura((atual) => (
+      atual ? { ...atual, fornecedor: { id: fornecedor.id, nome: fornecedor.nome } } : atual
+    ));
+    setAvisoFornecedor(
+      jaExistia
+        ? 'Fornecedor já cadastrado com este CPF/CNPJ. O cadastro existente foi vinculado a esta importação.'
+        : null,
+    );
+    setErro(null);
+  }
+
+  async function salvarFornecedorDaImportacao(dados: PayloadFornecedorImportacao) {
+    const digitos = (dados.cpf_cnpj ?? '').replace(/\D/g, '');
+    const local = digitos
+      ? fornecedores.find((fornecedor) => (fornecedor.cpf_cnpj ?? '').replace(/\D/g, '') === digitos)
+      : undefined;
+    if (local) {
+      vincularFornecedorImportado(local, true);
+      return;
+    }
+    try {
+      setSalvando(true);
+      const criado = await criarFornecedor(dados);
+      vincularFornecedorImportado(criado, false);
+    } catch (err) {
+      const duplicado = (err as Error & { fornecedor?: Fornecedor }).fornecedor;
+      if (duplicado) {
+        vincularFornecedorImportado(duplicado, true);
+        return;
+      }
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
   }
 
   function itemVinculado(item: ItemDocumento): boolean {
@@ -498,6 +546,7 @@ export function ComprasPage() {
                 <div><dt>Número</dt><dd>{leitura.numero || '—'}</dd></div>
                 <div><dt>Emitente</dt><dd>{leitura.emitente || '—'}</dd></div>
                 <div><dt>CNPJ</dt><dd>{leitura.cnpj || '—'}</dd></div>
+                {leitura.cpf && <div><dt>CPF</dt><dd>{leitura.cpf}</dd></div>}
                 <div><dt>Data</dt><dd>{leitura.data_emissao ? leitura.data_emissao.split('-').reverse().join('/') : '—'}</dd></div>
                 <div><dt>Total</dt><dd>{leitura.total == null ? '—' : moeda.format(leitura.total)}</dd></div>
               </dl>
@@ -518,6 +567,14 @@ export function ComprasPage() {
                   ))}
                 </select>
               </label>
+              <FornecedorImportacao
+                key={leitura.id}
+                leitura={leitura}
+                selecionado={Boolean(fornecedorDoc)}
+                salvando={salvando}
+                aviso={avisoFornecedor}
+                onCadastrar={salvarFornecedorDaImportacao}
+              />
               {leitura.itens.length > 0 && (
                 <table className="tabela tabela--compacta">
                   <thead>
@@ -574,7 +631,7 @@ export function ComprasPage() {
               <div className="documento-acoes">
                 <button
                   type="button"
-                  disabled={salvando || leitura.ja_importado}
+                  disabled={salvando || leitura.ja_importado || !fornecedorDoc}
                   onClick={() => void confirmarEntradaDoDocumento()}
                 >
                   {salvando ? 'Confirmando…' : 'Confirmar entrada no estoque'}

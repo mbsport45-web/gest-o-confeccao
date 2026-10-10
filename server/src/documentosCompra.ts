@@ -43,6 +43,7 @@ type ChaveDocumento = {
   tipo: string;
   numero: string | null;
   cnpj: string | null;
+  cpf: string | null;
 };
 
 export function hashDoPdf(pdf: Buffer): string {
@@ -66,9 +67,26 @@ export function entradaExistente(
             d.conteudo_hash = @conteudo_hash
             OR (
               @numero IS NOT NULL
+              AND @cnpj IS NOT NULL
               AND d.numero = @numero
               AND d.tipo = @tipo
-              AND ifnull(d.cnpj, '') = ifnull(@cnpj, '')
+              AND ifnull(d.cnpj, '') = @cnpj
+            )
+            OR (
+              @numero IS NOT NULL
+              AND @cpf IS NOT NULL
+              AND d.numero = @numero
+              AND d.tipo = @tipo
+              AND ifnull(d.cpf, '') = @cpf
+            )
+            OR (
+              @numero IS NOT NULL
+              AND @cnpj IS NULL
+              AND @cpf IS NULL
+              AND d.numero = @numero
+              AND d.tipo = @tipo
+              AND d.cnpj IS NULL
+              AND d.cpf IS NULL
             )
           )
         ORDER BY c.id DESC
@@ -80,6 +98,7 @@ export function entradaExistente(
       numero: chave.numero,
       tipo: chave.tipo,
       cnpj: chave.cnpj,
+      cpf: chave.cpf,
     }) as CompraExistente | undefined;
   return row ?? null;
 }
@@ -99,10 +118,10 @@ export async function processarDocumentoCompra(
   const info = db
     .prepare(
       `INSERT INTO documentos_importados (
-         empresa_id, usuario_id, tipo, nome_arquivo, numero, emitente, cnpj,
+         empresa_id, usuario_id, tipo, nome_arquivo, numero, emitente, cnpj, cpf,
          data_emissao, total, conteudo_hash, itens_json, avisos_json, texto
        ) VALUES (
-         @empresa_id, @usuario_id, @tipo, @nome_arquivo, @numero, @emitente, @cnpj,
+         @empresa_id, @usuario_id, @tipo, @nome_arquivo, @numero, @emitente, @cnpj, @cpf,
          @data_emissao, @total, @conteudo_hash, @itens_json, @avisos_json, @texto
        )`,
     )
@@ -114,6 +133,7 @@ export async function processarDocumentoCompra(
       numero: leitura.numero,
       emitente: leitura.emitente,
       cnpj: leitura.cnpj,
+      cpf: leitura.cpf,
       data_emissao: leitura.data_emissao,
       total: leitura.total,
       conteudo_hash: conteudoHash,
@@ -126,6 +146,7 @@ export async function processarDocumentoCompra(
     tipo: entrada.tipo,
     numero: leitura.numero,
     cnpj: leitura.cnpj,
+    cpf: leitura.cpf,
   });
   if (compraExistente) {
     leitura.avisos.push('Este documento já foi importado.');
@@ -261,9 +282,15 @@ function acharFornecedor(
   const fornecedores = db
     .prepare(`SELECT id, nome, cpf_cnpj FROM fornecedores WHERE empresa_id = ? AND status = 'ativo'`)
     .all(empresaId) as Array<{ id: number; nome: string; cpf_cnpj: string | null }>;
-  if (leitura.cnpj) {
-    const peloCnpj = fornecedores.find((fornecedor) => apenasDigitos(fornecedor.cpf_cnpj ?? '') === leitura.cnpj);
-    if (peloCnpj) return { id: peloCnpj.id, nome: peloCnpj.nome };
+  const documentos = [leitura.cnpj, leitura.cpf].filter((documento): documento is string => Boolean(documento));
+  if (documentos.length > 0) {
+    for (const documento of documentos) {
+      const peloDocumento = fornecedores.find(
+        (fornecedor) => apenasDigitos(fornecedor.cpf_cnpj ?? '') === documento,
+      );
+      if (peloDocumento) return { id: peloDocumento.id, nome: peloDocumento.nome };
+    }
+    return null;
   }
   if (leitura.emitente) {
     const alvo = normalizar(leitura.emitente);

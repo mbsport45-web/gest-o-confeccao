@@ -1148,13 +1148,23 @@ export interface Fornecedor {
   id: number;
   codigo: string | null;
   nome: string;
+  tipo_pessoa?: 'juridica' | 'fisica' | null;
+  nome_fantasia?: string | null;
   cpf_cnpj: string | null;
+  inscricao_estadual?: string | null;
   contato: string | null;
   telefone: string | null;
+  whatsapp?: string | null;
   email: string | null;
+  endereco?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
   cidade: string | null;
   estado: string | null;
+  cep?: string | null;
   condicao_pagamento: string | null;
+  observacoes?: string | null;
   status: 'ativo' | 'inativo';
 }
 
@@ -1219,18 +1229,37 @@ export async function listarFornecedores(
 
 export async function criarFornecedor(dados: {
   nome: string;
+  tipo_pessoa?: 'juridica' | 'fisica';
+  nome_fantasia?: string;
   cpf_cnpj?: string;
+  inscricao_estadual?: string;
   contato?: string;
   telefone?: string;
+  whatsapp?: string;
+  email?: string;
+  endereco?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
   cidade?: string;
   estado?: string;
+  cep?: string;
   condicao_pagamento?: string;
+  observacoes?: string;
 }): Promise<Fornecedor> {
   const res = await apiFetch('/api/fornecedores', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
   });
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({}));
+    const erro = new Error(body?.erro ?? 'Fornecedor já cadastrado (código ou CPF/CNPJ)') as Error & {
+      fornecedor?: Fornecedor;
+    };
+    if (body?.fornecedor?.id) erro.fornecedor = body.fornecedor as Fornecedor;
+    throw erro;
+  }
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1281,6 +1310,21 @@ export interface DocumentoProcessado {
   numero: string | null;
   emitente: string | null;
   cnpj: string | null;
+  cpf?: string | null;
+  tipo_pessoa?: 'juridica' | 'fisica' | null;
+  nome_fantasia?: string | null;
+  inscricao_estadual?: string | null;
+  telefone?: string | null;
+  whatsapp?: string | null;
+  email?: string | null;
+  cep?: string | null;
+  endereco?: string | null;
+  numero_endereco?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  estado?: string | null;
+  observacoes?: string | null;
   data_emissao: string | null;
   total: number | null;
   avisos: string[];

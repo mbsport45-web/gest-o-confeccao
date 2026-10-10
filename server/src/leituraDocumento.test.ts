@@ -60,6 +60,81 @@ describe('leitura de documento', () => {
     });
   });
 
+  it('preenche só os dados rotulados e não inventa número nem UF', () => {
+    const leitura = interpretarDocumento(
+      [
+        'NF-e 4500',
+        'Fornecedor: Tecidos Sul Ltda',
+        'Nome fantasia: Sul Tecidos',
+        'CNPJ: 11.444.777/0001-61',
+        'Inscrição Estadual: 012345678',
+        'Telefone: (81) 3333-4444',
+        'WhatsApp: (81) 98888-7777',
+        'E-mail: contato@fiacao.com.br',
+        'CEP: 50050-110',
+        'Endereço: Rua das Flores, 100',
+        'Número: 250',
+        'Complemento: Sala 3',
+        'Bairro: Boa Vista',
+        'Cidade: Recife',
+        'Estado: Pernambuco',
+        'Observações: Entregar na portaria',
+        'Malha Compra 2 KG 10,00 20,00',
+        'Valor total da nota 20,00',
+      ].join('\n'),
+      'nota_fiscal',
+    );
+    expect(leitura).toMatchObject({
+      numero: '4500',
+      emitente: 'Tecidos Sul Ltda',
+      cnpj: '11444777000161',
+      cpf: null,
+      tipo_pessoa: 'juridica',
+      nome_fantasia: 'Sul Tecidos',
+      inscricao_estadual: '012345678',
+      telefone: '8133334444',
+      whatsapp: '81988887777',
+      email: 'contato@fiacao.com.br',
+      cep: '50050110',
+      endereco: 'Rua das Flores, 100',
+      numero_endereco: '250',
+      complemento: 'Sala 3',
+      bairro: 'Boa Vista',
+      cidade: 'Recife',
+      estado: 'PE',
+      observacoes: 'Entregar na portaria',
+    });
+  });
+
+  it('lê CPF de pessoa física sem tratar o CNPJ como CPF', () => {
+    const leitura = interpretarDocumento(
+      [
+        'Pedido de compra: PC-77',
+        'Fornecedor: Ana Costa',
+        'CPF: 529.982.247-25',
+        'Cidade: Olinda',
+      ].join('\n'),
+      'pedido_compra',
+    );
+    expect(leitura.cpf).toBe('52998224725');
+    expect(leitura.cnpj).toBeNull();
+    expect(leitura.tipo_pessoa).toBe('fisica');
+    expect(leitura.estado).toBeNull();
+    expect(leitura.numero_endereco).toBeNull();
+    expect(leitura.avisos).not.toContain('O CNPJ do emitente não foi identificado.');
+  });
+
+  it('não usa o número da nota como número do endereço', () => {
+    const leitura = interpretarDocumento(
+      ['Nota Fiscal nº 77', 'Número da nota: 77', 'Fornecedor: Sem Endereco'].join('\n'),
+      'nota_fiscal',
+    );
+    expect(leitura.numero).toBe('77');
+    expect(leitura.numero_endereco).toBeNull();
+    expect(leitura.cidade).toBeNull();
+    expect(leitura.telefone).toBeNull();
+  });
+
   it('aceita outro documento e avisa quando não há itens', () => {
     const leitura = interpretarDocumento('Recibo avulso sem tabela', 'outro');
     expect(leitura.numero).toBeNull();

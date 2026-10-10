@@ -430,11 +430,18 @@ export function createComprasRouter(db: AppDatabase): Router {
     if (data.documento_importado_id) {
       const documento = db
         .prepare(
-          `SELECT id, conteudo_hash, tipo, numero, cnpj
+          `SELECT id, conteudo_hash, tipo, numero, cnpj, cpf
              FROM documentos_importados WHERE id = ? AND empresa_id = ?`,
         )
         .get(data.documento_importado_id, empresaId) as
-        | { id: number; conteudo_hash: string | null; tipo: string; numero: string | null; cnpj: string | null }
+        | {
+            id: number;
+            conteudo_hash: string | null;
+            tipo: string;
+            numero: string | null;
+            cnpj: string | null;
+            cpf: string | null;
+          }
         | undefined;
       if (!documento) return res.status(404).json({ erro: 'Documento não encontrado' });
       const existente = entradaExistente(db, empresaId, {
@@ -442,6 +449,7 @@ export function createComprasRouter(db: AppDatabase): Router {
         tipo: documento.tipo,
         numero: documento.numero,
         cnpj: documento.cnpj,
+        cpf: documento.cpf,
       });
       if (existente) {
         return res.status(409).json({

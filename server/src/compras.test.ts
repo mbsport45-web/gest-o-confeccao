@@ -365,4 +365,204 @@ describe('API de compras', () => {
     });
     expect(cruzado.status).toBe(404);
   });
+
+  it('cadastra o fornecedor da importação, evita duplicidade e reutiliza o cadastro', async () => {
+    const materia = await criarMateria();
+    const { api: outra } = await autenticarNovaEmpresa(app);
+    const alheio = await outra.post('/api/fornecedores').send({
+      tipo_pessoa: 'juridica',
+      nome: 'Tecidos de outra empresa',
+      cpf_cnpj: CNPJ,
+    });
+    expect(alheio.status).toBe(201);
+
+    const linhas = [
+      'NF-e 4500',
+      'Fornecedor: Tecidos Sul Ltda',
+      'Nome fantasia: Sul Tecidos',
+      'CNPJ: 11.444.777/0001-61',
+      'Inscricao Estadual: 012345678',
+      'Telefone: (81) 3333-4444',
+      'WhatsApp: (81) 98888-7777',
+      'E-mail: contato@fiacao.com.br',
+      'CEP: 50050-110',
+      'Endereco: Rua das Flores, 100',
+      'Numero: 250',
+      'Complemento: Sala 3',
+      'Bairro: Boa Vista',
+      'Cidade: Recife',
+      'Estado: PE',
+      '06/10/2026',
+      'Observacoes: Entregar na portaria',
+      'Malha Compra 2 KG 10,00 20,00',
+      'Valor total da nota 20,00',
+    ];
+    const pdf = pdfComTexto(linhas);
+    const lido = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota-sul.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(lido.status).toBe(201);
+    expect(lido.body.fornecedor).toBeNull();
+    expect(lido.body.cpf).toBeNull();
+    expect(lido.body).toMatchObject({
+      emitente: 'Tecidos Sul Ltda',
+      cnpj: CNPJ,
+      tipo_pessoa: 'juridica',
+      nome_fantasia: 'Sul Tecidos',
+      telefone: '8133334444',
+      endereco: 'Rua das Flores, 100',
+      numero_endereco: '250',
+      cidade: 'Recife',
+      estado: 'PE',
+    });
+    expect((await api.get('/api/fornecedores')).body.total).toBe(0);
+    expect((await api.get('/api/compras')).body.total).toBe(0);
+
+    const editado = {
+      tipo_pessoa: 'juridica',
+      nome: 'Tecidos Sul Ltda',
+      nome_fantasia: 'Sul Revisada',
+      cpf_cnpj: lido.body.cnpj,
+      inscricao_estadual: lido.body.inscricao_estadual,
+      telefone: '81999998888',
+      whatsapp: lido.body.whatsapp,
+      email: lido.body.email,
+      cep: lido.body.cep,
+      endereco: lido.body.endereco,
+      numero: lido.body.numero_endereco,
+      complemento: lido.body.complemento,
+      bairro: lido.body.bairro,
+      cidade: lido.body.cidade,
+      estado: lido.body.estado,
+      observacoes: 'Conferido na importação',
+    };
+    const criado = await api.post('/api/fornecedores').send(editado);
+    expect(criado.status).toBe(201);
+    expect(criado.body).toMatchObject({
+      nome: 'Tecidos Sul Ltda',
+      nome_fantasia: 'Sul Revisada',
+      cpf_cnpj: CNPJ,
+      telefone: '81999998888',
+      whatsapp: '81988887777',
+      numero: '250',
+      endereco: 'Rua das Flores, 100',
+      cidade: 'Recife',
+      estado: 'PE',
+      observacoes: 'Conferido na importação',
+    });
+    expect((await api.get('/api/compras')).body.total).toBe(0);
+
+    const repetido = await api.post('/api/fornecedores').send({
+      ...editado,
+      nome: 'Outro nome que não pode gravar',
+      telefone: '8130000000',
+    });
+    expect(repetido.status).toBe(409);
+    expect(repetido.body.fornecedor.id).toBe(criado.body.id);
+    expect(repetido.body.fornecedor.nome).toBe('Tecidos Sul Ltda');
+    expect(repetido.body.fornecedor.telefone).toBe('81999998888');
+    expect((await api.get('/api/fornecedores')).body.total).toBe(1);
+    expect((await outra.get('/api/fornecedores')).body.total).toBe(1);
+    expect((await outra.get(`/api/fornecedores/${criado.body.id}`)).status).toBe(404);
+
+    const pessoa = await api.post('/api/fornecedores').send({
+      tipo_pessoa: 'juridica',
+      nome: 'Documento errado',
+      cpf_cnpj: '52998224725',
+    });
+    expect(pessoa.status).toBe(400);
+
+    const entrada = await api.post('/api/compras').send({
+      fornecedor_id: criado.body.id,
+      data_emissao: lido.body.data_emissao,
+      documento_importado_id: lido.body.id,
+      confirmar: true,
+      itens: [
+        {
+          materia_prima_id: materia.id,
+          quantidade: 2,
+          custo_unitario: 10,
+          unidade: 'KG',
+        },
+      ],
+    });
+    expect(entrada.status).toBe(201);
+    expect(entrada.body.fornecedor_id).toBe(criado.body.id);
+    expect(entrada.body.status).toBe('recebida');
+    expect((await api.get('/api/compras')).body.total).toBe(1);
+
+    const outraNota = pdfComTexto([
+      'NF-e 4501',
+      ...linhas.slice(1),
+      'Referencia interna diferente',
+    ]);
+    const reutilizado = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota-sul-2.pdf',
+      conteudo_base64: outraNota.toString('base64'),
+    });
+    expect(reutilizado.status).toBe(201);
+    expect(reutilizado.body.numero).toBe('4501');
+    expect(reutilizado.body.fornecedor).toEqual({ id: criado.body.id, nome: 'Tecidos Sul Ltda' });
+    expect(reutilizado.body.ja_importado).toBe(false);
+
+    const copia = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota-sul-copia.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(copia.body.ja_importado).toBe(true);
+    const bloqueada = await api.post('/api/compras').send({
+      fornecedor_id: criado.body.id,
+      documento_importado_id: copia.body.id,
+      confirmar: true,
+      itens: [{ materia_prima_id: materia.id, quantidade: 1, custo_unitario: 1 }],
+    });
+    expect(bloqueada.status).toBe(409);
+    expect((await api.get('/api/compras')).body.total).toBe(1);
+
+    const pdfCpf = pdfComTexto([
+      'Pedido de compra: PC-77',
+      'Fornecedor: Ana Costa',
+      'CPF: 529.982.247-25',
+      'Cidade: Olinda',
+      'Malha Compra 1 KG 10,00',
+    ]);
+    const lidoCpf = await api.post('/api/compras/documentos').send({
+      tipo: 'pedido_compra',
+      nome_arquivo: 'pedido-ana.pdf',
+      conteudo_base64: pdfCpf.toString('base64'),
+    });
+    expect(lidoCpf.status).toBe(201);
+    expect(lidoCpf.body.fornecedor).toBeNull();
+    expect(lidoCpf.body.cpf).toBe('52998224725');
+    expect(lidoCpf.body.tipo_pessoa).toBe('fisica');
+    const ana = await api.post('/api/fornecedores').send({
+      tipo_pessoa: 'fisica',
+      nome: 'Ana Costa',
+      cpf_cnpj: '52998224725',
+      cidade: 'Olinda',
+    });
+    expect(ana.status).toBe(201);
+    const pdfCpf2 = pdfComTexto([
+      'Pedido de compra: PC-78',
+      'Fornecedor: Ana Costa',
+      'CPF: 529.982.247-25',
+      'Malha Compra 1 KG 10,00',
+    ]);
+    const deNovoCpf = await api.post('/api/compras/documentos').send({
+      tipo: 'pedido_compra',
+      nome_arquivo: 'pedido-ana-2.pdf',
+      conteudo_base64: pdfCpf2.toString('base64'),
+    });
+    expect(deNovoCpf.body.fornecedor).toEqual({ id: ana.body.id, nome: 'Ana Costa' });
+    const cruzado = await outra.post('/api/compras/documentos').send({
+      tipo: 'pedido_compra',
+      nome_arquivo: 'pedido-ana.pdf',
+      conteudo_base64: pdfCpf.toString('base64'),
+    });
+    expect(cruzado.body.fornecedor).toBeNull();
+  });
 });
