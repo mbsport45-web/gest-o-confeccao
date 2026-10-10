@@ -1188,6 +1188,10 @@ export interface PedidoCompra {
   forma_pagamento: string | null;
   condicao_pagamento: string | null;
   vencimento: string | null;
+  documento_importado_id?: number | null;
+  documento_nome?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
   fornecedor?: string;
   itens?: CompraItem[];
 }
@@ -1255,6 +1259,51 @@ export async function listarCompras(
   return res.json();
 }
 
+export type TipoDocumento = 'nota_fiscal' | 'pedido_compra' | 'outro';
+
+export interface ItemDocumento {
+  descricao: string;
+  quantidade: number | null;
+  unidade: string | null;
+  valor_unitario: number | null;
+  total: number | null;
+  materia_prima_id: number | null;
+  produto_id: number | null;
+  tecido_cor_id: number | null;
+  nome_cadastro: string | null;
+  aviso: string | null;
+}
+
+export interface DocumentoProcessado {
+  id: number;
+  tipo: TipoDocumento;
+  nome_arquivo: string;
+  numero: string | null;
+  emitente: string | null;
+  cnpj: string | null;
+  data_emissao: string | null;
+  total: number | null;
+  avisos: string[];
+  fornecedor: { id: number; nome: string } | null;
+  itens: ItemDocumento[];
+  ja_importado: boolean;
+  compra_existente: { id: number; codigo: string | null } | null;
+}
+
+export async function processarDocumento(dados: {
+  tipo: TipoDocumento;
+  nome_arquivo: string;
+  conteudo_base64: string;
+}): Promise<DocumentoProcessado> {
+  const res = await apiFetch('/api/compras/documentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function obterCompra(id: number): Promise<PedidoCompra> {
   const res = await apiFetch(`/api/compras/${id}`);
   if (!res.ok) return parseError(res);
@@ -1272,6 +1321,8 @@ export type CompraPayload = {
   forma_pagamento?: string;
   condicao_pagamento?: string;
   vencimento?: string;
+  documento_importado_id?: number;
+  confirmar?: boolean;
   itens?: Array<{
     materia_prima_id?: number;
     produto_id?: number;

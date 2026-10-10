@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
-import { autenticar, type TestApi } from './httpTest.js';
+import { autenticar, autenticarNovaEmpresa, type TestApi } from './httpTest.js';
+import { pdfComTexto } from './pdfTexto.js';
 
 const CNPJ = '11444777000161';
 
 describe('API de compras', () => {
   let db: AppDatabase;
+  let app: ReturnType<typeof createApp>;
   let api: TestApi;
 
   beforeEach(async () => {
     db = createDatabase(':memory:');
-    api = await autenticar(createApp(db));
+    app = createApp(db);
+    api = await autenticar(app);
   });
 
   afterEach(() => {
@@ -234,5 +237,132 @@ describe('API de compras', () => {
     expect(fluxo.status).toBe(201);
     const estoque = await api.get('/api/estoque');
     expect(estoque.status).toBe(200);
+  });
+
+  it('lê o PDF, só lança itens reconhecidos depois da confirmação e recusa o mesmo documento', async () => {
+    const fornecedor = await criarFornecedor();
+    const materia = await criarMateria();
+    const produto = await api.post('/api/produtos').send({
+      nome: 'Botao plastico',
+      unidade: 'UN',
+      cores: [],
+      tamanhos: [],
+    });
+    expect(produto.status).toBe(201);
+    const pdf = pdfComTexto([
+      'NF-e 8891',
+      'Fornecedor: Fiacao Norte',
+      'CNPJ: 11.444.777/0001-61',
+      '06/10/2026',
+      'Malha Compra 200 KG 20,00 4000,00',
+      'Botao plastico 8 UN 0,50 4,00',
+      'Ziper nylon 4 UN 1,50 6,00',
+      'Valor total da nota 4010,00',
+    ]);
+    const res = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      tipo: 'nota_fiscal',
+      numero: '8891',
+      cnpj: '11444777000161',
+      data_emissao: '2026-10-06',
+      total: 4010,
+      fornecedor: { id: fornecedor.id, nome: 'Fiação Norte' },
+      ja_importado: false,
+    });
+    const malha = res.body.itens.find((item: { descricao: string }) => item.descricao === 'Malha Compra');
+    const botao = res.body.itens.find((item: { descricao: string }) => item.descricao === 'Botao plastico');
+    const ziper = res.body.itens.find((item: { descricao: string }) => item.descricao === 'Ziper nylon');
+    expect(malha).toMatchObject({ materia_prima_id: materia.id, produto_id: null, quantidade: 200, unidade: 'KG' });
+    expect(botao).toMatchObject({ materia_prima_id: null, produto_id: produto.body.id });
+    expect(ziper.materia_prima_id).toBeNull();
+    expect(ziper.produto_id).toBeNull();
+    expect((await api.get('/api/compras')).body.total).toBe(0);
+    expect((await api.get('/api/estoque/movimentos')).body.total).toBe(0);
+    const materiasAntes = (await api.get('/api/materias-primas')).body.total;
+
+    const entrada = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      data_emissao: res.body.data_emissao,
+      documento_importado_id: res.body.id,
+      confirmar: true,
+      observacoes: 'Itens sem cadastro: Ziper nylon.',
+      itens: [
+        {
+          materia_prima_id: malha.materia_prima_id,
+          quantidade: malha.quantidade,
+          custo_unitario: malha.valor_unitario,
+          unidade: 'KG',
+        },
+        {
+          produto_id: botao.produto_id,
+          quantidade: botao.quantidade,
+          custo_unitario: botao.valor_unitario,
+          unidade: 'UN',
+        },
+      ],
+    });
+    expect(entrada.status).toBe(201);
+    expect(entrada.body.status).toBe('recebida');
+    expect(entrada.body.documento_importado_id).toBe(res.body.id);
+    expect(entrada.body.documento_nome).toBe('nota.pdf');
+    expect(entrada.body.itens).toHaveLength(2);
+    expect(entrada.body.itens.every((item: { quantidade_recebida: number; quantidade: number }) => item.quantidade_recebida === item.quantidade)).toBe(true);
+    expect((await api.get('/api/materias-primas')).body.total).toBe(materiasAntes);
+    expect((await api.get('/api/estoque/movimentos')).body.total).toBe(2);
+
+    const deNovo = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota-copia.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(deNovo.status).toBe(201);
+    expect(deNovo.body.ja_importado).toBe(true);
+    const repetida = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      documento_importado_id: deNovo.body.id,
+      confirmar: true,
+      itens: [
+        {
+          materia_prima_id: materia.id,
+          quantidade: 1,
+          custo_unitario: 1,
+        },
+      ],
+    });
+    expect(repetida.status).toBe(409);
+    expect((await api.get('/api/compras')).body.total).toBe(1);
+    expect((await api.get('/api/estoque/movimentos')).body.total).toBe(2);
+
+    const invalido = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nota.txt',
+      conteudo_base64: Buffer.from('nao e pdf').toString('base64'),
+    });
+    expect(invalido.status).toBe(400);
+
+    const { api: outra } = await autenticarNovaEmpresa(app);
+    const alheio = await outra.post('/api/compras/documentos').send({
+      tipo: 'pedido_compra',
+      nome_arquivo: 'pedido.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(alheio.status).toBe(201);
+    expect(alheio.body.fornecedor).toBeNull();
+    expect(alheio.body.itens.find((item: { descricao: string }) => item.descricao === 'Malha Compra').materia_prima_id).toBeNull();
+    const guardado = db
+      .prepare('SELECT empresa_id FROM documentos_importados WHERE id = ?')
+      .get(res.body.id) as { empresa_id: number };
+    expect(guardado.empresa_id).toBe(1);
+    const cruzado = await outra.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      documento_importado_id: res.body.id,
+      itens: [{ materia_prima_id: materia.id, quantidade: 1, custo_unitario: 1 }],
+    });
+    expect(cruzado.status).toBe(404);
   });
 });
