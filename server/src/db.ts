@@ -495,7 +495,9 @@ export function createDatabase(location: string) {
     `INSERT OR IGNORE INTO empresas (id, nome, status) VALUES (1, 'Empresa 1', 'ativa')`,
   ).run();
 
+  aplicarDocumentosImportados(db);
   aplicarColunaEmpresaId(db);
+  aplicarCamposFornecedor(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
@@ -517,6 +519,7 @@ const TABELAS_TENANT = [
   'fornecedores',
   'pedidos_compra',
   'pedido_compra_itens',
+  'documentos_importados',
   'financeiro_lancamentos',
   'pedidos',
   'pedido_itens',
@@ -529,6 +532,67 @@ function tabelaExiste(db: AppDatabase, nome: string): boolean {
     .prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`)
     .get(nome) as { ok: number } | undefined;
   return Boolean(row);
+}
+
+function colunaExiste(db: AppDatabase, tabela: string, coluna: string): boolean {
+  const cols = db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[];
+  return cols.some((col) => col.name === coluna);
+}
+
+function aplicarDocumentosImportados(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS documentos_importados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      usuario_id INTEGER,
+      tipo TEXT NOT NULL,
+      nome_arquivo TEXT NOT NULL,
+      numero TEXT,
+      emitente TEXT,
+      cnpj TEXT,
+      data_emissao TEXT,
+      total REAL,
+      conteudo_hash TEXT,
+      itens_json TEXT NOT NULL DEFAULT '[]',
+      avisos_json TEXT NOT NULL DEFAULT '[]',
+      texto TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  if (!colunaExiste(db, 'documentos_importados', 'conteudo_hash')) {
+    db.exec('ALTER TABLE documentos_importados ADD COLUMN conteudo_hash TEXT');
+  }
+  if (!colunaExiste(db, 'documentos_importados', 'cpf')) {
+    db.exec('ALTER TABLE documentos_importados ADD COLUMN cpf TEXT');
+  }
+  if (tabelaExiste(db, 'pedidos_compra') && !colunaExiste(db, 'pedidos_compra', 'documento_importado_id')) {
+    db.exec('ALTER TABLE pedidos_compra ADD COLUMN documento_importado_id INTEGER');
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS documentos_importados_empresa
+      ON documentos_importados (empresa_id, criado_em);
+    CREATE INDEX IF NOT EXISTS documentos_importados_hash
+      ON documentos_importados (empresa_id, conteudo_hash);
+  `);
+}
+
+function aplicarCamposFornecedor(db: AppDatabase) {
+  if (!tabelaExiste(db, 'fornecedores')) return;
+  const colunas = [
+    'tipo_pessoa TEXT',
+    'nome_fantasia TEXT',
+    'inscricao_estadual TEXT',
+    'whatsapp TEXT',
+    'numero TEXT',
+    'complemento TEXT',
+    'bairro TEXT',
+  ];
+  for (const definicao of colunas) {
+    const nome = definicao.split(' ')[0];
+    if (!colunaExiste(db, 'fornecedores', nome)) {
+      db.exec(`ALTER TABLE fornecedores ADD COLUMN ${definicao}`);
+    }
+  }
 }
 
 function aplicarColunaEmpresaId(db: AppDatabase) {

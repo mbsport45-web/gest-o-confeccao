@@ -1148,13 +1148,23 @@ export interface Fornecedor {
   id: number;
   codigo: string | null;
   nome: string;
+  tipo_pessoa?: 'juridica' | 'fisica' | null;
+  nome_fantasia?: string | null;
   cpf_cnpj: string | null;
+  inscricao_estadual?: string | null;
   contato: string | null;
   telefone: string | null;
+  whatsapp?: string | null;
   email: string | null;
+  endereco?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
   cidade: string | null;
   estado: string | null;
+  cep?: string | null;
   condicao_pagamento: string | null;
+  observacoes?: string | null;
   status: 'ativo' | 'inativo';
 }
 
@@ -1188,6 +1198,10 @@ export interface PedidoCompra {
   forma_pagamento: string | null;
   condicao_pagamento: string | null;
   vencimento: string | null;
+  documento_importado_id?: number | null;
+  documento_nome?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
   fornecedor?: string;
   itens?: CompraItem[];
 }
@@ -1215,18 +1229,37 @@ export async function listarFornecedores(
 
 export async function criarFornecedor(dados: {
   nome: string;
+  tipo_pessoa?: 'juridica' | 'fisica';
+  nome_fantasia?: string;
   cpf_cnpj?: string;
+  inscricao_estadual?: string;
   contato?: string;
   telefone?: string;
+  whatsapp?: string;
+  email?: string;
+  endereco?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
   cidade?: string;
   estado?: string;
+  cep?: string;
   condicao_pagamento?: string;
+  observacoes?: string;
 }): Promise<Fornecedor> {
   const res = await apiFetch('/api/fornecedores', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
   });
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({}));
+    const erro = new Error(body?.erro ?? 'Fornecedor já cadastrado (código ou CPF/CNPJ)') as Error & {
+      fornecedor?: Fornecedor;
+    };
+    if (body?.fornecedor?.id) erro.fornecedor = body.fornecedor as Fornecedor;
+    throw erro;
+  }
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1255,6 +1288,66 @@ export async function listarCompras(
   return res.json();
 }
 
+export type TipoDocumento = 'nota_fiscal' | 'pedido_compra' | 'outro';
+
+export interface ItemDocumento {
+  descricao: string;
+  quantidade: number | null;
+  unidade: string | null;
+  valor_unitario: number | null;
+  total: number | null;
+  materia_prima_id: number | null;
+  produto_id: number | null;
+  tecido_cor_id: number | null;
+  nome_cadastro: string | null;
+  aviso: string | null;
+}
+
+export interface DocumentoProcessado {
+  id: number;
+  tipo: TipoDocumento;
+  nome_arquivo: string;
+  numero: string | null;
+  emitente: string | null;
+  cnpj: string | null;
+  cpf?: string | null;
+  tipo_pessoa?: 'juridica' | 'fisica' | null;
+  nome_fantasia?: string | null;
+  inscricao_estadual?: string | null;
+  telefone?: string | null;
+  whatsapp?: string | null;
+  email?: string | null;
+  cep?: string | null;
+  endereco?: string | null;
+  numero_endereco?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  estado?: string | null;
+  observacoes?: string | null;
+  data_emissao: string | null;
+  total: number | null;
+  avisos: string[];
+  fornecedor: { id: number; nome: string } | null;
+  itens: ItemDocumento[];
+  ja_importado: boolean;
+  compra_existente: { id: number; codigo: string | null } | null;
+}
+
+export async function processarDocumento(dados: {
+  tipo: TipoDocumento;
+  nome_arquivo: string;
+  conteudo_base64: string;
+}): Promise<DocumentoProcessado> {
+  const res = await apiFetch('/api/compras/documentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function obterCompra(id: number): Promise<PedidoCompra> {
   const res = await apiFetch(`/api/compras/${id}`);
   if (!res.ok) return parseError(res);
@@ -1272,6 +1365,8 @@ export type CompraPayload = {
   forma_pagamento?: string;
   condicao_pagamento?: string;
   vencimento?: string;
+  documento_importado_id?: number;
+  confirmar?: boolean;
   itens?: Array<{
     materia_prima_id?: number;
     produto_id?: number;

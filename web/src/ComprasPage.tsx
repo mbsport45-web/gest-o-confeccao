@@ -8,19 +8,39 @@ import {
   listarCompras,
   listarFornecedores,
   listarMateriasPrimas,
+  listarProdutos,
   obterCompra,
+  processarDocumento,
   receberCompra,
   removerCompra,
   type CompraItem,
+  type DocumentoProcessado,
   type Fornecedor,
+  type ItemDocumento,
   type MateriaPrima,
   type PedidoCompra,
+  type Produto,
+  type TipoDocumento,
 } from './api';
+import { FornecedorImportacao } from './FornecedorImportacao';
+import type { PayloadFornecedorImportacao } from './fornecedorImportacao';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
-type Modo = 'criar' | 'detalhe' | 'fornecedor' | null;
+type Modo = 'criar' | 'detalhe' | 'fornecedor' | 'importar' | null;
 type ItemForm = { materia_prima_id: string; quantidade: number; custo_unitario: number };
+type OpcaoCompra = {
+  id: number;
+  nome: string;
+  unidade: string;
+  tipo: 'materia' | 'produto';
+};
+
+const TIPOS_DOCUMENTO: Array<{ id: TipoDocumento; label: string }> = [
+  { id: 'nota_fiscal', label: 'Nota Fiscal' },
+  { id: 'pedido_compra', label: 'Pedido de Compra' },
+  { id: 'outro', label: 'Outro' },
+];
 
 const FORM_VAZIO = {
   fornecedor_id: '',
@@ -53,7 +73,31 @@ export function ComprasPage() {
   const [salvando, setSalvando] = useState(false);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [materias, setMaterias] = useState<MateriaPrima[]>([]);
+  const [produtos, setProdutos] = useState<Produto[]>([]);
   const [novoForn, setNovoForn] = useState({ nome: '', cidade: '', estado: 'SP' });
+  const [arquivoPdf, setArquivoPdf] = useState<File | null>(null);
+  const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento>('nota_fiscal');
+  const [arrastandoPdf, setArrastandoPdf] = useState(false);
+  const [leitura, setLeitura] = useState<DocumentoProcessado | null>(null);
+  const [fornecedorDoc, setFornecedorDoc] = useState('');
+  const [avisoFornecedor, setAvisoFornecedor] = useState<string | null>(null);
+
+  const opcoes: OpcaoCompra[] = [
+    ...materias.map((materia) => ({
+      id: materia.id,
+      nome: materia.nome,
+      unidade: materia.unidade,
+      tipo: 'materia' as const,
+    })),
+    ...produtos
+      .filter((produto) => produto.variantes.length === 0)
+      .map((produto) => ({
+        id: produto.id,
+        nome: produto.nome,
+        unidade: produto.unidade,
+        tipo: 'produto' as const,
+      })),
+  ];
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -70,6 +114,7 @@ export function ComprasPage() {
   useEffect(() => {
     listarFornecedores({ por_pagina: 100 }).then((l) => setFornecedores(l.data)).catch(() => undefined);
     listarMateriasPrimas({ por_pagina: 100 }).then((l) => setMaterias(l.data)).catch(() => undefined);
+    listarProdutos({ por_pagina: 100, status: 'ativo' }).then((l) => setProdutos(l.data)).catch(() => undefined);
   }, []);
 
   const recarregar = useCallback(async () => {
@@ -187,6 +232,174 @@ export function ComprasPage() {
     }
   }
 
+  function abrirImportar() {
+    setArquivoPdf(null);
+    setTipoDocumento('nota_fiscal');
+    setLeitura(null);
+    setFornecedorDoc('');
+    setAvisoFornecedor(null);
+    setArrastandoPdf(false);
+    setModo('importar');
+    setErro(null);
+  }
+
+  function aceitarPdf(arquivo: File | null) {
+    if (!arquivo) return;
+    const pdf = arquivo.type === 'application/pdf' || arquivo.name.toLowerCase().endsWith('.pdf');
+    if (!pdf) {
+      setErro('Envie um arquivo PDF');
+      return;
+    }
+    setErro(null);
+    setArquivoPdf(arquivo);
+    setLeitura(null);
+  }
+
+  async function processarPdf() {
+    if (!arquivoPdf) {
+      setErro('Selecione o PDF');
+      return;
+    }
+    try {
+      setSalvando(true);
+      setErro(null);
+      const conteudo = await arquivoPdf.arrayBuffer();
+      const bytes = new Uint8Array(conteudo);
+      let binario = '';
+      for (const byte of bytes) binario += String.fromCharCode(byte);
+      const documento = await processarDocumento({
+        tipo: tipoDocumento,
+        nome_arquivo: arquivoPdf.name,
+        conteudo_base64: btoa(binario),
+      });
+      setLeitura(documento);
+      setFornecedorDoc(documento.fornecedor ? String(documento.fornecedor.id) : '');
+      setAvisoFornecedor(null);
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  function atualizarItemLido(indice: number, patch: Partial<ItemDocumento>) {
+    setLeitura((atual) => {
+      if (!atual) return atual;
+      const itens = atual.itens.map((item, i) => (i === indice ? { ...item, ...patch } : item));
+      return { ...atual, itens };
+    });
+  }
+
+  function vincularFornecedorImportado(fornecedor: Fornecedor, jaExistia: boolean) {
+    setFornecedores((atual) => {
+      if (atual.some((item) => item.id === fornecedor.id)) return atual;
+      return [...atual, fornecedor].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    });
+    setFornecedorDoc(String(fornecedor.id));
+    setForm((atual) => ({ ...atual, fornecedor_id: String(fornecedor.id) }));
+    setLeitura((atual) => (
+      atual ? { ...atual, fornecedor: { id: fornecedor.id, nome: fornecedor.nome } } : atual
+    ));
+    setAvisoFornecedor(
+      jaExistia
+        ? 'Fornecedor já cadastrado com este CPF/CNPJ. O cadastro existente foi vinculado a esta importação.'
+        : null,
+    );
+    setErro(null);
+  }
+
+  async function salvarFornecedorDaImportacao(dados: PayloadFornecedorImportacao) {
+    const digitos = (dados.cpf_cnpj ?? '').replace(/\D/g, '');
+    const local = digitos
+      ? fornecedores.find((fornecedor) => (fornecedor.cpf_cnpj ?? '').replace(/\D/g, '') === digitos)
+      : undefined;
+    if (local) {
+      vincularFornecedorImportado(local, true);
+      return;
+    }
+    try {
+      setSalvando(true);
+      const criado = await criarFornecedor(dados);
+      vincularFornecedorImportado(criado, false);
+    } catch (err) {
+      const duplicado = (err as Error & { fornecedor?: Fornecedor }).fornecedor;
+      if (duplicado) {
+        vincularFornecedorImportado(duplicado, true);
+        return;
+      }
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  function itemVinculado(item: ItemDocumento): boolean {
+    return item.materia_prima_id != null || item.produto_id != null;
+  }
+
+  async function confirmarEntradaDoDocumento() {
+    if (!leitura) return;
+    if (leitura.ja_importado) {
+      setErro('Este documento já foi importado');
+      return;
+    }
+    const reconhecidos = leitura.itens.filter(itemVinculado);
+    const pendentes = leitura.itens.filter((item) => !itemVinculado(item));
+    if (!fornecedorDoc) {
+      setErro('Selecione o fornecedor da compra');
+      return;
+    }
+    if (reconhecidos.length === 0) {
+      setErro('Vincule os itens ao cadastro antes de confirmar a entrada no estoque');
+      return;
+    }
+    const itens = reconhecidos
+      .filter((item) => item.quantidade && item.quantidade > 0)
+      .map((item) => ({
+        materia_prima_id: item.produto_id ? undefined : item.materia_prima_id ?? undefined,
+        produto_id: item.produto_id ?? undefined,
+        quantidade: item.quantidade ?? 0,
+        custo_unitario: item.valor_unitario ?? 0,
+        unidade: opcoes.find((opcao) => (
+          item.produto_id
+            ? opcao.tipo === 'produto' && opcao.id === item.produto_id
+            : opcao.tipo === 'materia' && opcao.id === item.materia_prima_id
+        ))?.unidade,
+      }));
+    if (itens.length === 0) {
+      setErro('Nenhum item reconhecido com quantidade para entrar no estoque');
+      return;
+    }
+    const observacoes = [
+      `Importado de ${leitura.nome_arquivo}.`,
+      leitura.numero ? `Documento ${leitura.numero}.` : '',
+      pendentes.length > 0
+        ? `Itens sem cadastro: ${pendentes.map((item) => item.descricao).join('; ')}.`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    try {
+      setSalvando(true);
+      const compra = await criarCompra({
+        fornecedor_id: Number(fornecedorDoc),
+        data_emissao: leitura.data_emissao ?? undefined,
+        documento_importado_id: leitura.id,
+        observacoes,
+        confirmar: true,
+        itens,
+      });
+      setModo(null);
+      setErro(null);
+      await recarregar();
+      await abrirDetalhe(compra.id);
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   return (
     <main className="app__main app__main--compras">
       <section className="card card--wide">
@@ -196,6 +409,9 @@ export function ComprasPage() {
             <span className="badge">
               {total} compra{total === 1 ? '' : 's'}
             </span>
+            <button type="button" className="btn-secundario" onClick={abrirImportar}>
+              Importar PDF
+            </button>
             <button type="button" className="btn-secundario" onClick={() => { setForm(FORM_VAZIO); setModo('criar'); }}>
               Nova compra
             </button>
@@ -268,6 +484,163 @@ export function ComprasPage() {
           </div>
         </div>
       </section>
+
+      {modo === 'importar' && (
+        <section className="card">
+          <div className="card__head">
+            <h2>Importar documento</h2>
+            <button type="button" className="btn-fechar" onClick={() => setModo(null)}>×</button>
+          </div>
+          {erro && <p className="erro">{erro}</p>}
+          <div
+            className={`importar-pdf${arrastandoPdf ? ' importar-pdf--ativo' : ''}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setArrastandoPdf(true);
+            }}
+            onDragLeave={() => setArrastandoPdf(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setArrastandoPdf(false);
+              aceitarPdf(e.dataTransfer.files[0] ?? null);
+            }}
+          >
+            Arraste o PDF aqui
+            {arquivoPdf && <span className="dica">{arquivoPdf.name}</span>}
+          </div>
+          <p className="importar-ou">ou</p>
+          <div className="importar-arquivo">
+            <span id="pdf-compra-rotulo">Selecionar arquivo</span>
+            <input
+              id="pdf-compra"
+              aria-labelledby="pdf-compra-rotulo"
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={(e) => {
+                aceitarPdf(e.target.files?.[0] ?? null);
+              }}
+            />
+          </div>
+          <fieldset className="importar-tipo">
+            <legend>Tipo</legend>
+            {TIPOS_DOCUMENTO.map((tipo) => (
+              <label key={tipo.id}>
+                <input
+                  type="radio"
+                  name="tipo-documento"
+                  checked={tipoDocumento === tipo.id}
+                  onChange={() => setTipoDocumento(tipo.id)}
+                />
+                {tipo.label}
+              </label>
+            ))}
+          </fieldset>
+          <button type="button" disabled={salvando || !arquivoPdf} onClick={() => void processarPdf()}>
+            {salvando ? 'Processando…' : 'Processar documento'}
+          </button>
+          {leitura && (
+            <div className="importar-leitura">
+              <h3>Conferência</h3>
+              <dl className="detalhe">
+                <div><dt>Arquivo</dt><dd>{leitura.nome_arquivo}</dd></div>
+                <div><dt>Número</dt><dd>{leitura.numero || '—'}</dd></div>
+                <div><dt>Emitente</dt><dd>{leitura.emitente || '—'}</dd></div>
+                <div><dt>CNPJ</dt><dd>{leitura.cnpj || '—'}</dd></div>
+                {leitura.cpf && <div><dt>CPF</dt><dd>{leitura.cpf}</dd></div>}
+                <div><dt>Data</dt><dd>{leitura.data_emissao ? leitura.data_emissao.split('-').reverse().join('/') : '—'}</dd></div>
+                <div><dt>Total</dt><dd>{leitura.total == null ? '—' : moeda.format(leitura.total)}</dd></div>
+              </dl>
+              <p className="dica">
+                {leitura.itens.filter(itemVinculado).length} reconhecido(s),{' '}
+                {leitura.itens.filter((item) => !itemVinculado(item)).length} sem cadastro.
+                Itens sem cadastro não entram na compra nem no estoque.
+              </p>
+              {leitura.avisos.map((aviso) => (
+                <p key={aviso} className="dica">{aviso}</p>
+              ))}
+              <label>
+                Fornecedor
+                <select value={fornecedorDoc} onChange={(e) => setFornecedorDoc(e.target.value)}>
+                  <option value="">Selecione</option>
+                  {fornecedores.map((fornecedor) => (
+                    <option key={fornecedor.id} value={fornecedor.id}>{fornecedor.nome}</option>
+                  ))}
+                </select>
+              </label>
+              <FornecedorImportacao
+                key={leitura.id}
+                leitura={leitura}
+                selecionado={Boolean(fornecedorDoc)}
+                salvando={salvando}
+                aviso={avisoFornecedor}
+                onCadastrar={salvarFornecedorDaImportacao}
+              />
+              {leitura.itens.length > 0 && (
+                <table className="tabela tabela--compacta">
+                  <thead>
+                    <tr>
+                      <th>Item do documento</th>
+                      <th>Qtd.</th>
+                      <th>Cadastro</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leitura.itens.map((item, indice) => {
+                      const valorCadastro = item.produto_id
+                        ? `produto:${item.produto_id}`
+                        : item.materia_prima_id
+                          ? `materia:${item.materia_prima_id}`
+                          : '';
+                      return (
+                        <tr key={`${item.descricao}-${indice}`}>
+                          <td>
+                            {item.descricao}
+                            {item.aviso && <div className="dica">{item.aviso}</div>}
+                          </td>
+                          <td>{item.quantidade ?? '—'} {item.unidade ?? ''}</td>
+                          <td>
+                            <select
+                              aria-label={`Cadastro de ${item.descricao}`}
+                              value={valorCadastro}
+                              onChange={(e) => {
+                                const [tipo, idTexto] = e.target.value.split(':');
+                                const id = idTexto ? Number(idTexto) : null;
+                                const opcao = opcoes.find((atual) => atual.tipo === tipo && atual.id === id);
+                                atualizarItemLido(indice, {
+                                  materia_prima_id: tipo === 'materia' ? id : null,
+                                  produto_id: tipo === 'produto' ? id : null,
+                                  nome_cadastro: opcao?.nome ?? null,
+                                  aviso: null,
+                                });
+                              }}
+                            >
+                              <option value="">Não lançar</option>
+                              {opcoes.map((opcao) => (
+                                <option key={`${opcao.tipo}-${opcao.id}`} value={`${opcao.tipo}:${opcao.id}`}>
+                                  {opcao.tipo === 'produto' ? `${opcao.nome} (produto)` : opcao.nome}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              <div className="documento-acoes">
+                <button
+                  type="button"
+                  disabled={salvando || leitura.ja_importado || !fornecedorDoc}
+                  onClick={() => void confirmarEntradaDoDocumento()}
+                >
+                  {salvando ? 'Confirmando…' : 'Confirmar entrada no estoque'}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {modo === 'criar' && (
         <section className="card">
@@ -373,6 +746,15 @@ export function ComprasPage() {
           </div>
           <dl className="detalhe">
             <div><dt>Fornecedor</dt><dd>{detalhe.fornecedor}</dd></div>
+            {detalhe.documento_nome && (
+              <div>
+                <dt>Documento</dt>
+                <dd>
+                  {detalhe.documento_nome}
+                  {detalhe.documento_numero ? ` · ${detalhe.documento_numero}` : ''}
+                </dd>
+              </div>
+            )}
             <div><dt>Status</dt><dd>{STATUS_COMPRA_LABEL[detalhe.status]}</dd></div>
             <div><dt>Subtotal</dt><dd>{moeda.format(detalhe.subtotal)}</dd></div>
             <div><dt>Desconto</dt><dd>{moeda.format(detalhe.desconto)}</dd></div>
