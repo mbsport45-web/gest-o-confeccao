@@ -53,7 +53,15 @@ const FORM_VAZIO = {
   itens: [{ materia_prima_id: '', quantidade: 1, custo_unitario: 0 }] as ItemForm[],
 };
 
-export function ComprasPage() {
+type VisaoCompras = 'compras' | 'importar' | 'fornecedores';
+
+export function ComprasPage({
+  visao = 'compras',
+  onIrImportar,
+}: {
+  visao?: VisaoCompras;
+  onIrImportar?: () => void;
+} = {}) {
   const [compras, setCompras] = useState<PedidoCompra[]>([]);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -223,7 +231,7 @@ export function ComprasPage() {
       setFornecedores((atual) => [...atual, criado].sort((a, b) => a.nome.localeCompare(b.nome)));
       setForm((f) => ({ ...f, fornecedor_id: String(criado.id) }));
       setNovoForn({ nome: '', cidade: '', estado: 'SP' });
-      setModo('criar');
+      setModo(visao === 'fornecedores' ? null : 'criar');
       setErro(null);
     } catch (err) {
       setErro((err as Error).message);
@@ -231,6 +239,18 @@ export function ComprasPage() {
       setSalvando(false);
     }
   }
+
+  useEffect(() => {
+    if (visao !== 'importar') return;
+    setArquivoPdf(null);
+    setTipoDocumento('nota_fiscal');
+    setLeitura(null);
+    setFornecedorDoc('');
+    setAvisoFornecedor(null);
+    setArrastandoPdf(false);
+    setModo('importar');
+    setErro(null);
+  }, [visao]);
 
   function abrirImportar() {
     setArquivoPdf(null);
@@ -400,8 +420,25 @@ export function ComprasPage() {
     }
   }
 
+  function fecharImportacao() {
+    if (visao === 'importar') {
+      setArquivoPdf(null);
+      setTipoDocumento('nota_fiscal');
+      setLeitura(null);
+      setFornecedorDoc('');
+      setAvisoFornecedor(null);
+      setArrastandoPdf(false);
+      setDetalhe(null);
+      setModo('importar');
+      setErro(null);
+      return;
+    }
+    setModo(null);
+  }
+
   return (
     <main className="app__main app__main--compras">
+      {visao === 'compras' && (
       <section className="card card--wide">
         <div className="card__head">
           <h2>Compras</h2>
@@ -409,7 +446,11 @@ export function ComprasPage() {
             <span className="badge">
               {total} compra{total === 1 ? '' : 's'}
             </span>
-            <button type="button" className="btn-secundario" onClick={abrirImportar}>
+            <button
+              type="button"
+              className="btn-secundario"
+              onClick={() => (onIrImportar ? onIrImportar() : abrirImportar())}
+            >
               Importar PDF
             </button>
             <button type="button" className="btn-secundario" onClick={() => { setForm(FORM_VAZIO); setModo('criar'); }}>
@@ -484,12 +525,56 @@ export function ComprasPage() {
           </div>
         </div>
       </section>
+      )}
 
-      {modo === 'importar' && (
+      {visao === 'fornecedores' && (
+        <section className="card card--wide">
+          <div className="card__head">
+            <h2>Fornecedores</h2>
+            <div className="card__head-acoes">
+              <span className="badge">
+                {fornecedores.length} fornecedor{fornecedores.length === 1 ? '' : 'es'}
+              </span>
+              <button type="button" className="btn-secundario" onClick={() => setModo('fornecedor')}>
+                Novo fornecedor
+              </button>
+            </div>
+          </div>
+          {erro && <p className="erro">{erro}</p>}
+          {fornecedores.length === 0 ? (
+            <p className="vazio">Nenhum fornecedor cadastrado.</p>
+          ) : (
+            <table className="tabela">
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>CPF/CNPJ</th>
+                  <th>Telefone</th>
+                  <th>Cidade</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fornecedores.map((fornecedor) => (
+                  <tr key={fornecedor.id}>
+                    <td>{fornecedor.nome}</td>
+                    <td>{fornecedor.cpf_cnpj || '—'}</td>
+                    <td>{fornecedor.telefone || '—'}</td>
+                    <td>{fornecedor.cidade || '—'}</td>
+                    <td>{fornecedor.estado || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
+      {modo === 'importar' && visao !== 'fornecedores' && (
         <section className="card">
           <div className="card__head">
             <h2>Importar documento</h2>
-            <button type="button" className="btn-fechar" onClick={() => setModo(null)}>×</button>
+            <button type="button" className="btn-fechar" onClick={fecharImportacao}>×</button>
           </div>
           {erro && <p className="erro">{erro}</p>}
           <div
@@ -642,7 +727,7 @@ export function ComprasPage() {
         </section>
       )}
 
-      {modo === 'criar' && (
+      {visao === 'compras' && modo === 'criar' && (
         <section className="card">
           <div className="card__head">
             <h2>Nova compra</h2>
@@ -728,7 +813,7 @@ export function ComprasPage() {
         <section className="card">
           <div className="card__head">
             <h2>Novo fornecedor</h2>
-            <button type="button" className="btn-fechar" onClick={() => setModo('criar')}>×</button>
+            <button type="button" className="btn-fechar" onClick={() => setModo(visao === 'fornecedores' ? null : 'criar')}>×</button>
           </div>
           <form className="form" onSubmit={(e) => void handleFornecedor(e)}>
             <label>Nome<input required value={novoForn.nome} onChange={(e) => setNovoForn({ ...novoForn, nome: e.target.value })} /></label>
@@ -742,7 +827,7 @@ export function ComprasPage() {
         <section className="card">
           <div className="card__head">
             <h2>{detalhe.codigo}</h2>
-            <button type="button" className="btn-fechar" onClick={() => setModo(null)}>×</button>
+            <button type="button" className="btn-fechar" onClick={fecharImportacao}>×</button>
           </div>
           <dl className="detalhe">
             <div><dt>Fornecedor</dt><dd>{detalhe.fornecedor}</dd></div>
