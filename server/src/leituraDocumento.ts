@@ -462,6 +462,10 @@ function primeiroCnpj(texto: string): string | null {
 
 function numeroDoDocumento(texto: string, tipo: TipoDocumento): string | null {
   if (tipo === 'nota_fiscal' || tipo === 'outro') {
+    const danfe =
+      texto.match(/(\d{3}\.\d{3}\.\d{3})\s*N(?!\d)/i) ??
+      texto.match(/\bN[º°o]\s*[:.]?\s*(\d{3}\.\d{3}\.\d{3})\b/i);
+    if (danfe) return danfe[1];
     const nota =
       texto.match(/NF[- ]?e\b[^\d]{0,24}(\d{1,9})/i) ??
       texto.match(/N[úu]mero(?:\s+da\s+nota)?\s*[:.]?\s*(\d{1,9})/i) ??
@@ -524,15 +528,63 @@ function totalDoTexto(texto: string): number | null {
 }
 
 function itensDoTexto(texto: string): ItemLido[] {
+  const linhas = texto.split('\n').map((linha) => linha.trim());
   const itens: ItemLido[] = [];
-  for (const linhaBruta of texto.split('\n')) {
-    const linha = linhaBruta.trim();
+  for (let indice = 0; indice < linhas.length; indice += 1) {
+    const linha = linhas[indice];
     if (!linha || linha.length < 3) continue;
     const porBarra = itemPorBarra(linha);
-    const item = porBarra ?? itemPorColunas(linha);
-    if (item) itens.push(item);
+    const porColunas = porBarra ? null : itemPorColunas(linha);
+    const danfe = porBarra || porColunas ? null : itemDanfe(linha);
+    const item = porBarra ?? porColunas ?? danfe;
+    if (!item) continue;
+    if (danfe) {
+      const extra = continuacaoDeDescricao(linhas[indice + 1] ?? '');
+      if (extra) {
+        item.descricao = `${item.descricao} ${extra}`.replace(/\s+/g, ' ').trim();
+        indice += 1;
+      }
+      if (item.descricao.length < 2) continue;
+    }
+    itens.push(item);
   }
   return itens;
+}
+
+function itemDanfe(linha: string): ItemLido | null {
+  const match = linha.match(
+    /^(\d{2})\s+(\d{4})\s+(KG|METRO|METROS|M|MT|UN|PC|PÇ|PEÇA|PECA)\s+(\d{1,3}(?:\.\d{3})+,\d+|\d+,\d+)\s+(\d{1,3}(?:\.\d{3})+,\d+|\d+,\d+)\s+(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})\b(.*)$/i,
+  );
+  if (!match) return null;
+  const quantidade = numeroBrasileiro(match[4]);
+  const valor = numeroBrasileiro(match[5]);
+  const total = numeroBrasileiro(match[6]);
+  if (quantidade == null || quantidade <= 0) return null;
+  const descricao = descricaoAposNumeros(match[7]);
+  if (!descricao) return null;
+  return {
+    descricao,
+    quantidade,
+    unidade: unidadeCanonico(match[3]),
+    valor_unitario: valor,
+    total: total ?? (valor != null ? Math.round(quantidade * valor * 100) / 100 : null),
+  };
+}
+
+function descricaoAposNumeros(resto: string): string {
+  const texto = resto.match(/[A-Za-zÀ-ÿ].*$/)?.[0] ?? '';
+  return texto.replace(/\s+/g, ' ').trim();
+}
+
+function continuacaoDeDescricao(linha: string): string | null {
+  if (!linha || linha.length < 3 || itemDanfe(linha) || itemPorColunas(linha)) return null;
+  if (/^(?:resolu|nr\s+fci|dados\s+adicionais|informa|consulta|pedido\s+-|cliente\s+-)/i.test(linha)) {
+    return null;
+  }
+  if (/^[0-9A-Z][0-9A-Z./-]{4,}$/.test(linha)) return null;
+  if (/c\.i\s+\d/i.test(linha)) return null;
+  if (!/[A-Za-zÀ-ÿ]{3,}/.test(linha)) return null;
+  return linha.replace(/\s+/g, ' ').trim();
 }
 
 function itemPorBarra(linha: string): ItemLido | null {

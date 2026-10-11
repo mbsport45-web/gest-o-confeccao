@@ -295,6 +295,62 @@ describe('leitura de documento', () => {
     expect(leitura.inscricao_estadual).toBeNull();
   });
 
+  it('lê os produtos da DANFE e ignora destinatário, fatura e texto fiscal', () => {
+    const leitura = interpretarDocumento(
+      [
+        'NF-e',
+        'SÉRIE : 1',
+        '000.063.237Nº:',
+        '255456883 08.755.180/0001-23',
+        'RECEBEMOS DE WILLRICH MALHAS MATRIZ OS PRODUTOS/SERVIÇOS CONSTANTES NA NOTA FISCAL INDICADA AO LADO',
+        'R GUSTAVO RICHARD, 58',
+        'CENTRO II',
+        'BRUSQUE',
+        'SC',
+        'CEP: 88354010',
+        'TELEFONE: 4733516593',
+        'DESTINATÁRIO',
+        'MB SPORT LTDA',
+        'Cidade: Sao Paulo',
+        'Número Data Vcto Valor',
+        '001 27/09/2026 9.858,90',
+        '00 6101 KG 1.018,6500 34,000000 34.634,10 34.634,10 1.385,36 4,0060041032 0,00 0,003 0,00DRY FIT TELA 95 % POLIESTER , 5 %',
+        'ELASTANO - 10534-PRETO',
+        'Resolucao do Senado Federal Nr 13/2012.',
+        'Nr FCI001EC74C-C254-4729-85AD-AE8',
+        '03A0580050300',
+        '00 6101 KG 141,2200 34,000000 4.801,48 4.801,48 192,06 4,0060041032 0,00 0,003 0,00DRY FIT TELA 95 % POLIESTER , 5 %',
+        'ELASTANO - 00636-CINZA CHUMBO',
+        'DADOS ADICIONAIS',
+      ].join('\n'),
+      'nota_fiscal',
+    );
+    expect(leitura.numero).toBe('000.063.237');
+    expect(leitura.emitente).toBe('WILLRICH MALHAS MATRIZ');
+    expect(leitura.cnpj).toBe('08755180000123');
+    expect(leitura.nome_fantasia).toBeNull();
+    expect(leitura.cidade).toBe('BRUSQUE');
+    expect(leitura.estado).toBe('SC');
+    expect(leitura.itens).toEqual([
+      {
+        descricao: 'DRY FIT TELA 95 % POLIESTER , 5 % ELASTANO - 10534-PRETO',
+        quantidade: 1018.65,
+        unidade: 'KG',
+        valor_unitario: 34,
+        total: 34634.1,
+      },
+      {
+        descricao: 'DRY FIT TELA 95 % POLIESTER , 5 % ELASTANO - 00636-CINZA CHUMBO',
+        quantidade: 141.22,
+        unidade: 'KG',
+        valor_unitario: 34,
+        total: 4801.48,
+      },
+    ]);
+    expect(leitura.total).toBe(39435.58);
+    expect(leitura.avisos).not.toContain('Nenhum item foi identificado. Confira o documento antes de lançar a compra.');
+  });
+
   it('aceita outro documento e avisa quando não há itens', () => {
     const leitura = interpretarDocumento('Recibo avulso sem tabela', 'outro');
     expect(leitura.numero).toBeNull();

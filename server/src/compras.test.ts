@@ -565,4 +565,128 @@ describe('API de compras', () => {
     });
     expect(cruzado.body.fornecedor).toBeNull();
   });
+
+  it('importa itens da DANFE, confirma o estoque uma vez e recusa a segunda entrada', async () => {
+    const pdf = pdfComTexto([
+      '000.063.237Nº:',
+      '255456883 08.755.180/0001-23',
+      'RECEBEMOS DE WILLRICH MALHAS MATRIZ OS PRODUTOS DA NOTA',
+      'R GUSTAVO RICHARD, 58',
+      'CENTRO II',
+      'BRUSQUE',
+      'SC',
+      'CEP: 88354010',
+      'TELEFONE: 4733516593',
+      'DESTINATARIO',
+      'Cidade: Sao Paulo',
+      '00 6101 KG 10,5000 34,000000 357,00 DRY FIT TELA PRETO',
+      'ELASTANO - 10534-PRETO',
+    ]);
+    const lido = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'danfe-willrich.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(lido.status).toBe(201);
+    expect(lido.body).toMatchObject({
+      numero: '000.063.237',
+      emitente: 'WILLRICH MALHAS MATRIZ',
+      cnpj: '08755180000123',
+      inscricao_estadual: '255456883',
+      telefone: '4733516593',
+      cep: '88354010',
+      endereco: 'R GUSTAVO RICHARD',
+      numero_endereco: '58',
+      bairro: 'CENTRO II',
+      cidade: 'BRUSQUE',
+      estado: 'SC',
+      nome_fantasia: null,
+      fornecedor: null,
+      ja_importado: false,
+    });
+    expect(lido.body.itens).toEqual([
+      expect.objectContaining({
+        descricao: 'DRY FIT TELA PRETO ELASTANO - 10534-PRETO',
+        quantidade: 10.5,
+        unidade: 'KG',
+        valor_unitario: 34,
+        total: 357,
+        materia_prima_id: null,
+      }),
+    ]);
+    expect((await api.get('/api/compras')).body.total).toBe(0);
+    expect((await api.get('/api/fornecedores')).body.total).toBe(0);
+    expect((await api.get('/api/estoque/movimentos')).body.total).toBe(0);
+
+    const fornecedor = await api.post('/api/fornecedores').send({
+      tipo_pessoa: 'juridica',
+      nome: lido.body.emitente,
+      cpf_cnpj: lido.body.cnpj,
+      inscricao_estadual: lido.body.inscricao_estadual,
+      telefone: lido.body.telefone,
+      cep: lido.body.cep,
+      endereco: lido.body.endereco,
+      numero: lido.body.numero_endereco,
+      bairro: lido.body.bairro,
+      cidade: lido.body.cidade,
+      estado: lido.body.estado,
+    });
+    expect(fornecedor.status).toBe(201);
+    const repetido = await api.post('/api/fornecedores').send({
+      tipo_pessoa: 'juridica',
+      nome: 'Outra grafia',
+      cpf_cnpj: lido.body.cnpj,
+    });
+    expect(repetido.status).toBe(409);
+
+    const materia = await api.post('/api/materias-primas').send({
+      nome: 'DRY FIT TELA PRETO',
+      tipo: 'tecido',
+      unidade: 'KG',
+      custo: 34,
+    });
+    expect(materia.status).toBe(201);
+    const entrada = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.body.id,
+      documento_importado_id: lido.body.id,
+      confirmar: true,
+      itens: [
+        {
+          materia_prima_id: materia.body.id,
+          quantidade: lido.body.itens[0].quantidade,
+          custo_unitario: lido.body.itens[0].valor_unitario,
+          unidade: 'KG',
+        },
+      ],
+    });
+    expect(entrada.status).toBe(201);
+    expect(entrada.body.status).toBe('recebida');
+    expect(entrada.body.itens[0].quantidade_recebida).toBe(10.5);
+    expect((await api.get('/api/estoque/movimentos')).body.total).toBe(1);
+
+    const deNovo = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'danfe-willrich-copia.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(deNovo.status).toBe(201);
+    expect(deNovo.body.ja_importado).toBe(true);
+    expect(deNovo.body.fornecedor).toEqual({ id: fornecedor.body.id, nome: 'WILLRICH MALHAS MATRIZ' });
+    const segunda = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.body.id,
+      documento_importado_id: deNovo.body.id,
+      confirmar: true,
+      itens: [
+        {
+          materia_prima_id: materia.body.id,
+          quantidade: 10.5,
+          custo_unitario: 34,
+          unidade: 'KG',
+        },
+      ],
+    });
+    expect(segunda.status).toBe(409);
+    expect((await api.get('/api/compras')).body.total).toBe(1);
+    expect((await api.get('/api/estoque/movimentos')).body.total).toBe(1);
+  });
 });
