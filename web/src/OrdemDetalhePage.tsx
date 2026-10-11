@@ -14,6 +14,7 @@ import {
   type StatusEtapa,
   type TipoEtapa,
 } from './api';
+import { GradeResumo } from './GradeOrdem';
 
 type Props = {
   ordemId: number;
@@ -228,6 +229,15 @@ export function OrdemDetalhePage({ ordemId, onVoltar }: Props) {
         <div className="barra barra--grande" aria-label={`Progresso ${progressoGeral}%`}>
           <span style={{ width: `${progressoGeral}%` }} />
         </div>
+        {(ordem.grade?.length ?? 0) > 0 && (
+          <>
+            <h3 className="subtitulo">Grade planejada</h3>
+            <GradeResumo celulas={ordem.grade ?? []} />
+          </>
+        )}
+        {ordem.ordem_corte && (
+          <p className="dica">Ordem de corte {ordem.ordem_corte.codigo}</p>
+        )}
       </section>
 
       <section className="card">

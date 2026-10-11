@@ -69,6 +69,46 @@ export interface OrdemProducao {
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  grade?: CelulaGrade[];
+  referencia?: string | null;
+  ordem_corte?: Pick<OrdemCorte, 'id' | 'codigo' | 'quantidade' | 'grade'> | null;
+}
+
+export interface CelulaGrade {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
+export interface CorCadastro {
+  id: number | null;
+  nome: string;
+  ja_existia?: boolean;
+}
+
+export interface TamanhoCadastro {
+  id: number;
+  nome: string;
+  ordem: number;
+  ja_existia?: boolean;
+}
+
+export interface OrdemCorte {
+  id: number;
+  codigo: string;
+  ordem_id: number;
+  cliente: string;
+  produto: string;
+  quantidade: number;
+  prioridade: string | null;
+  data_prevista: string | null;
+  responsavel: string | null;
+  observacoes: string | null;
+  cliente_id: number | null;
+  produto_id: number | null;
+  criado_em: string;
+  grade: CelulaGrade[];
+  criada?: boolean;
 }
 
 export interface NovaOrdem {
@@ -86,6 +126,7 @@ export interface NovaOrdem {
   observacoes?: string;
   responsavel?: string;
   requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
+  grade?: CelulaGrade[];
 }
 
 export interface ListaOrdens {
@@ -178,6 +219,50 @@ export async function atualizarStatus(
 export async function removerOrdem(id: number): Promise<void> {
   const res = await apiFetch(`/api/ordens/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function listarCores(busca = ''): Promise<CorCadastro[]> {
+  const params = new URLSearchParams();
+  if (busca.trim()) params.set('q', busca.trim());
+  const res = await apiFetch(`/api/ordens/cores?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarCor(nome: string): Promise<CorCadastro> {
+  const res = await apiFetch('/api/ordens/cores', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarTamanhos(): Promise<TamanhoCadastro[]> {
+  const res = await apiFetch('/api/ordens/tamanhos');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarTamanho(nome: string): Promise<TamanhoCadastro> {
+  const res = await apiFetch('/api/ordens/tamanhos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarOrdemCorte(ordemId: number): Promise<OrdemCorte> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
 }
 
 export const STATUS_PEDIDO = [

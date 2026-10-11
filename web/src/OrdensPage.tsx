@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   PRIORIDADE_OP_LABEL,
   PRIORIDADES_OP,
@@ -6,23 +6,39 @@ import {
   STATUS_VALIDOS,
   atualizarOrdem,
   atualizarStatus,
+  criarCor,
   criarOrdem,
+  criarOrdemCorte,
+  criarTamanho,
   listarClientes,
+  listarCores,
   listarMateriasPrimas,
   listarOrdensPaginado,
   listarProdutos,
+  listarTamanhos,
   obterFichaTecnica,
   obterOrdem,
   removerOrdem,
+  type AssinaturaEmpresa,
   type Cliente,
+  type CorCadastro,
   type MateriaPrima,
   type OrdemProducao,
   type PrioridadeOp,
   type Produto,
   type Status,
-  type AssinaturaEmpresa,
+  type TamanhoCadastro,
 } from './api';
 import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
+import { GradeOrdem, GradeResumo } from './GradeOrdem';
+import {
+  TAMANHOS_PADRAO,
+  celulasDaGrade,
+  gradeDaOrdem,
+  gradeVazia,
+  mensagemGrade,
+  type GradeValor,
+} from './gradeOrdem';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 
@@ -31,7 +47,6 @@ type ReqLinha = { materia_prima_id: string; quantidade: number };
 const FORM_VAZIO = {
   clienteId: '',
   produtoId: '',
-  varianteId: '',
   quantidade: 1,
   prioridade: 'normal' as PrioridadeOp,
   data_prevista: '',
@@ -78,6 +93,11 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [materias, setMaterias] = useState<MateriaPrima[]>([]);
+  const [catalogoCores, setCatalogoCores] = useState<CorCadastro[]>([]);
+  const [catalogoTamanhos, setCatalogoTamanhos] = useState<TamanhoCadastro[]>([]);
+  const [grade, setGrade] = useState<GradeValor>(gradeVazia());
+  const [criandoCorte, setCriandoCorte] = useState(false);
+  const produtoGradeRef = useRef<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -100,6 +120,12 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       .catch(() => undefined);
     listarMateriasPrimas({ por_pagina: 100, status: 'ativo' })
       .then((lista) => setMaterias(lista.data))
+      .catch(() => undefined);
+    listarCores()
+      .then(setCatalogoCores)
+      .catch(() => undefined);
+    listarTamanhos()
+      .then(setCatalogoTamanhos)
       .catch(() => undefined);
   }, []);
 
@@ -133,15 +159,20 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     [produtos, form.produtoId],
   );
 
+  const tamanhosIniciais = useMemo(() => {
+    const padrao = catalogoTamanhos
+      .filter((tamanho) => (TAMANHOS_PADRAO as readonly string[]).includes(tamanho.nome))
+      .map((tamanho) => tamanho.nome);
+    return padrao.length ? padrao : [...TAMANHOS_PADRAO];
+  }, [catalogoTamanhos]);
+
   useEffect(() => {
     if (modo !== 'criar' || !form.produtoId) return;
     const produtoId = Number(form.produtoId);
-    const varianteId = form.varianteId ? Number(form.varianteId) : undefined;
-    obterFichaTecnica(produtoId, varianteId)
+    obterFichaTecnica(produtoId)
       .then((ficha) => {
         setForm((atual) => {
           if (String(atual.produtoId) !== String(produtoId)) return atual;
-          if ((atual.varianteId || '') !== (varianteId ? String(varianteId) : '')) return atual;
           if (atual.requisitos.length) return atual;
           return {
             ...atual,
@@ -153,11 +184,25 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
         });
       })
       .catch(() => undefined);
-  }, [modo, form.produtoId, form.varianteId]);
+  }, [modo, form.produtoId]);
+
+  useEffect(() => {
+    if (modo !== 'criar') return;
+    if (produtoGradeRef.current === form.produtoId) return;
+    produtoGradeRef.current = form.produtoId;
+    if (!form.produtoId) return;
+    const produto = produtos.find((item) => String(item.id) === form.produtoId);
+    setGrade((atual) => ({
+      ...gradeVazia(atual.tamanhos.length ? atual.tamanhos : tamanhosIniciais),
+      cores: produto?.cores ?? [],
+    }));
+  }, [modo, form.produtoId, produtos, tamanhosIniciais]);
 
   function abrirCriar() {
     if (!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')) return;
     setForm(FORM_VAZIO);
+    produtoGradeRef.current = null;
+    setGrade(gradeVazia(tamanhosIniciais));
     setEditandoId(null);
     setDetalhe(null);
     setModo('criar');
@@ -176,7 +221,6 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     setForm({
       clienteId: ordem.cliente_id ? String(ordem.cliente_id) : '',
       produtoId: ordem.produto_id ? String(ordem.produto_id) : '',
-      varianteId: ordem.variante_id ? String(ordem.variante_id) : '',
       quantidade: ordem.quantidade,
       prioridade: ordem.prioridade || 'normal',
       data_prevista: ordem.data_prevista ? ordem.data_prevista.slice(0, 10) : '',
@@ -187,6 +231,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
         quantidade: r.quantidade_unitaria ?? r.quantidade ?? 1,
       })),
     });
+    setGrade(gradeDaOrdem(ordem.grade, tamanhosIniciais));
     setEditandoId(id);
     setDetalhe(null);
     setModo('editar');
@@ -195,7 +240,6 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   function payloadDoForm() {
     const cliente = clientes.find((c) => String(c.id) === form.clienteId);
     const produto = produtos.find((p) => String(p.id) === form.produtoId);
-    const variante = produto?.variantes.find((v) => String(v.id) === form.varianteId);
     const requisitos = form.requisitos
       .filter((r) => r.materia_prima_id)
       .map((r) => ({
@@ -205,21 +249,25 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     return {
       cliente: cliente?.nome ?? '',
       produto: produto?.nome ?? '',
-      tamanho: variante?.tamanho ?? (produto && produto.variantes.length === 0 ? 'U' : ''),
       quantidade: Number(form.quantidade),
       cliente_id: form.clienteId ? Number(form.clienteId) : undefined,
       produto_id: form.produtoId ? Number(form.produtoId) : undefined,
-      variante_id: form.varianteId ? Number(form.varianteId) : undefined,
       prioridade: form.prioridade,
       data_prevista: form.data_prevista || undefined,
       responsavel: form.responsavel,
       observacoes: form.observacoes,
       requisitos,
+      grade: celulasDaGrade(grade),
     };
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const avisoGrade = mensagemGrade(grade, Number(form.quantidade));
+    if (avisoGrade) {
+      setErro(avisoGrade);
+      return;
+    }
     try {
       setSalvando(true);
       const dados = payloadDoForm();
@@ -229,6 +277,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
         await criarOrdem({ ...dados, status: 'planejada' });
       }
       setForm(FORM_VAZIO);
+      setGrade(gradeVazia(tamanhosIniciais));
       setModo(null);
       setEditandoId(null);
       setErro(null);
@@ -247,6 +296,20 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       await recarregar();
     } catch (err) {
       setErro((err as Error).message);
+    }
+  }
+
+  async function handleCriarCorte() {
+    if (!detalhe) return;
+    try {
+      setCriandoCorte(true);
+      await criarOrdemCorte(detalhe.id);
+      setDetalhe(await obterOrdem(detalhe.id));
+      setErro(null);
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setCriandoCorte(false);
     }
   }
 
@@ -415,7 +478,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       </section>
 
       {modo === 'criar' || modo === 'editar' ? (
-        <section className="card">
+        <section className="card card--grade">
           <div className="card__head">
             <h2>{modo === 'editar' ? 'Editar OP' : 'Nova ordem de produção'}</h2>
             <button type="button" className="btn-fechar" onClick={() => setModo(null)}>
@@ -443,9 +506,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               <select
                 required
                 value={form.produtoId}
-                onChange={(e) =>
-                  setForm({ ...form, produtoId: e.target.value, varianteId: '', requisitos: [] })
-                }
+                onChange={(e) => setForm({ ...form, produtoId: e.target.value, requisitos: [] })}
               >
                 <option value="">Selecione</option>
                 {produtos.map((p) => (
@@ -456,25 +517,30 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
                 ))}
               </select>
             </label>
-            {produtoSel && produtoSel.variantes.length > 0 && (
-              <label>
-                Variante
-                <select
-                  required
-                  value={form.varianteId}
-                  onChange={(e) =>
-                    setForm({ ...form, varianteId: e.target.value, requisitos: [] })
-                  }
-                >
-                  <option value="">Selecione</option>
-                  {produtoSel.variantes.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.sku} — {v.cor} / {v.tamanho}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <label>
+              Referência
+              <input readOnly value={produtoSel?.sku ?? ''} placeholder="SKU do produto selecionado" />
+            </label>
+            <GradeOrdem
+              grade={grade}
+              quantidadeOrdem={Number(form.quantidade) || 0}
+              catalogoCores={catalogoCores}
+              catalogoTamanhos={catalogoTamanhos}
+              onChange={setGrade}
+              onBuscarCores={(busca) => {
+                listarCores(busca).then(setCatalogoCores).catch(() => undefined);
+              }}
+              onCadastrarCor={async (nome) => {
+                const salva = await criarCor(nome);
+                setCatalogoCores(await listarCores());
+                return salva.nome;
+              }}
+              onCadastrarTamanho={async (nome) => {
+                const salvo = await criarTamanho(nome);
+                setCatalogoTamanhos(await listarTamanhos());
+                return salvo.nome;
+              }}
+            />
             <div className="form__row">
               <label>
                 Quantidade
@@ -584,13 +650,13 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               Adicionar material
             </button>
 
-            <button type="submit" disabled={salvando}>
+            <button type="submit" disabled={salvando || Boolean(mensagemGrade(grade, Number(form.quantidade) || 0))}>
               {salvando ? 'Salvando…' : modo === 'editar' ? 'Salvar alterações' : 'Criar OP'}
             </button>
           </form>
         </section>
       ) : detalhe ? (
-        <section className="card">
+        <section className="card card--grade">
           <div className="card__head">
             <h2>{detalhe.codigo ?? `OP ${detalhe.id}`}</h2>
             <button type="button" className="btn-fechar" onClick={() => setDetalhe(null)}>
@@ -605,7 +671,8 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
             <div>
               <dt>Produto</dt>
               <dd>
-                {detalhe.produto} · {detalhe.tamanho}
+                {detalhe.produto}
+                {detalhe.referencia ? ` · ${detalhe.referencia}` : ''}
               </dd>
             </div>
             <div>
@@ -647,6 +714,21 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               ))}
             </select>
           </label>
+          <h3 className="subtitulo">Grade planejada</h3>
+          <GradeResumo celulas={detalhe.grade ?? []} />
+          <h3 className="subtitulo">Ordem de corte</h3>
+          {detalhe.ordem_corte ? (
+            <>
+              <p className="dica">
+                {detalhe.ordem_corte.codigo} · {detalhe.ordem_corte.quantidade} peças
+              </p>
+              <GradeResumo celulas={detalhe.ordem_corte.grade} />
+            </>
+          ) : (
+            <button type="button" disabled={criandoCorte} onClick={() => void handleCriarCorte()}>
+              {criandoCorte ? 'Criando…' : 'Criar ordem de corte'}
+            </button>
+          )}
           <h3 className="subtitulo">Materiais da OP</h3>
           {!detalhe.requisitos?.length ? (
             <p className="dica">Sem BOM vinculado a este produto/variante.</p>

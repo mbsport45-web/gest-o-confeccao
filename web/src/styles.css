@@ -630,6 +630,49 @@ button {
   font-size: 0.82rem;
 }
 
+.card--grade {
+  grid-column: 1 / -1;
+}
+
+.grade-op {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin: 0.4rem 0 0.8rem;
+}
+
+.grade-op__cores,
+.grade-op__tamanhos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.grade-op__cores label,
+.grade-op__tamanhos label {
+  flex: 1 1 12rem;
+}
+
+.grade-op__sugestoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.grade-op__rolagem {
+  overflow-x: auto;
+}
+
+.grade-op th button,
+.grade-op .tabela th button {
+  margin-left: 0.35rem;
+}
+
+.grade-total {
+  font-weight: 650;
+}
+
 .tabela--compacta input {
   width: 100%;
   background: var(--surface-2);
