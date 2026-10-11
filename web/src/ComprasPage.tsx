@@ -630,8 +630,25 @@ export function ComprasPage({
                 <div><dt>Arquivo</dt><dd>{leitura.nome_arquivo}</dd></div>
                 <div><dt>Número</dt><dd>{leitura.numero || '—'}</dd></div>
                 <div><dt>Emitente</dt><dd>{leitura.emitente || '—'}</dd></div>
+                {leitura.tipo_pessoa && (
+                  <div><dt>Tipo de pessoa</dt><dd>{leitura.tipo_pessoa === 'fisica' ? 'Física' : 'Jurídica'}</dd></div>
+                )}
+                {leitura.nome_fantasia && <div><dt>Nome fantasia</dt><dd>{leitura.nome_fantasia}</dd></div>}
                 <div><dt>CNPJ</dt><dd>{leitura.cnpj || '—'}</dd></div>
                 {leitura.cpf && <div><dt>CPF</dt><dd>{leitura.cpf}</dd></div>}
+                {leitura.inscricao_estadual && <div><dt>Inscrição estadual</dt><dd>{leitura.inscricao_estadual}</dd></div>}
+                {leitura.telefone && <div><dt>Telefone</dt><dd>{leitura.telefone}</dd></div>}
+                {leitura.email && <div><dt>E-mail</dt><dd>{leitura.email}</dd></div>}
+                {leitura.cep && <div><dt>CEP</dt><dd>{leitura.cep}</dd></div>}
+                {(leitura.endereco || leitura.numero_endereco || leitura.complemento) && (
+                  <div>
+                    <dt>Endereço</dt>
+                    <dd>{[leitura.endereco, leitura.numero_endereco, leitura.complemento].filter(Boolean).join(', ')}</dd>
+                  </div>
+                )}
+                {leitura.bairro && <div><dt>Bairro</dt><dd>{leitura.bairro}</dd></div>}
+                {leitura.cidade && <div><dt>Cidade</dt><dd>{leitura.cidade}</dd></div>}
+                {leitura.estado && <div><dt>UF</dt><dd>{leitura.estado}</dd></div>}
                 <div><dt>Data</dt><dd>{leitura.data_emissao ? leitura.data_emissao.split('-').reverse().join('/') : '—'}</dd></div>
                 <div><dt>Total</dt><dd>{leitura.total == null ? '—' : moeda.format(leitura.total)}</dd></div>
               </dl>
@@ -643,6 +660,12 @@ export function ComprasPage({
               {leitura.avisos.map((aviso) => (
                 <p key={aviso} className="dica">{aviso}</p>
               ))}
+              {leitura.texto && (
+                <details className="texto-extraido">
+                  <summary>Texto extraído do PDF</summary>
+                  <pre>{leitura.texto}</pre>
+                </details>
+              )}
               <label>
                 Fornecedor
                 <select value={fornecedorDoc} onChange={(e) => setFornecedorDoc(e.target.value)}>

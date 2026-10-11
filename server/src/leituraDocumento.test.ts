@@ -135,6 +135,166 @@ describe('leitura de documento', () => {
     expect(leitura.telefone).toBeNull();
   });
 
+  it('lê o emitente da DANFE quando rótulos e valores estão em linhas diferentes', () => {
+    const leitura = interpretarDocumento(
+      [
+        'INSCRIÇÃO ESTADUAL INSCRIÇÃO ESTADUAL SUB. TRIBUTARIA CNPJ',
+        '255456883 08.755.180/0001-23',
+        'WILLRICH MALHAS MATRIZ DANFE',
+        'RECEBEMOS DE WILLRICH MALHAS MATRIZ OS PRODUTOS/SERVIÇOS CONSTANTES NA NOTA FISCAL INDICADA AO LADO',
+        'R GUSTAVO RICHARD, 58',
+        'CENTRO II',
+        'BRUSQUE',
+        'SC',
+        'CEP: 88354010',
+        'TELEFONE: 4733516593',
+        'DESTINATÁRIO',
+        'MB SPORT LTDA',
+        'Nome fantasia: Cliente Fantasia',
+        'CNPJ: 11.444.777/0001-61',
+        'Inscrição Estadual: 999999999',
+        'E-mail: cliente@exemplo.com',
+        'Endereço: Rua do Cliente, 9',
+        'Bairro: Santana',
+        'Cidade: Sao Paulo',
+        'UF: SP',
+        'CEP: 02227-000',
+        'Telefone: (11) 3946-8205',
+      ].join('\n'),
+      'nota_fiscal',
+    );
+    expect(leitura).toMatchObject({
+      emitente: 'WILLRICH MALHAS MATRIZ',
+      nome_fantasia: null,
+      cnpj: '08755180000123',
+      cpf: null,
+      tipo_pessoa: 'juridica',
+      inscricao_estadual: '255456883',
+      telefone: '4733516593',
+      whatsapp: null,
+      email: null,
+      cep: '88354010',
+      endereco: 'R GUSTAVO RICHARD',
+      numero_endereco: '58',
+      complemento: null,
+      bairro: 'CENTRO II',
+      cidade: 'BRUSQUE',
+      estado: 'SC',
+    });
+  });
+
+  it('lê o nome do emitente na linha que termina com DANFE', () => {
+    const leitura = interpretarDocumento(
+      ['MALHAS EXEMPLO DANFE', '255456883 11.444.777/0001-61'].join('\n'),
+      'nota_fiscal',
+    );
+    expect(leitura.emitente).toBe('MALHAS EXEMPLO');
+    expect(leitura.cnpj).toBe('11444777000161');
+    expect(leitura.inscricao_estadual).toBe('255456883');
+    expect(leitura.nome_fantasia).toBeNull();
+    expect(leitura.endereco).toBeNull();
+    expect(leitura.cidade).toBeNull();
+  });
+
+  it('lê rótulos e valores em linhas separadas e separa logradouro, número e complemento', () => {
+    const leitura = interpretarDocumento(
+      [
+        'Razão Social',
+        'Beta Malhas Ltda',
+        'Nome fantasia',
+        'Beta',
+        'CNPJ',
+        '11.444.777/0001-61',
+        'Inscrição Estadual',
+        '123456789',
+        'Telefone',
+        '(81) 3333-4444',
+        'E-mail',
+        'beta@malhas.com.br',
+        'CEP',
+        '50050-110',
+        'Endereço',
+        'Rua das Flores, 100, Sala 2',
+        'Bairro',
+        'Boa Vista',
+        'Cidade',
+        'Recife',
+        'UF',
+        'PE',
+      ].join('\n'),
+      'nota_fiscal',
+    );
+    expect(leitura).toMatchObject({
+      emitente: 'Beta Malhas Ltda',
+      nome_fantasia: 'Beta',
+      cnpj: '11444777000161',
+      tipo_pessoa: 'juridica',
+      inscricao_estadual: '123456789',
+      telefone: '8133334444',
+      email: 'beta@malhas.com.br',
+      cep: '50050110',
+      endereco: 'Rua das Flores',
+      numero_endereco: '100',
+      complemento: 'Sala 2',
+      bairro: 'Boa Vista',
+      cidade: 'Recife',
+      estado: 'PE',
+    });
+  });
+
+  it('separa o número do endereço quando ele vem na mesma linha do logradouro', () => {
+    const leitura = interpretarDocumento(
+      [
+        'Fornecedor: Alfa Ltda',
+        'CNPJ: 11.444.777/0001-61',
+        'Endereço: Rua das Flores, 100, Sala 2',
+      ].join('\n'),
+      'nota_fiscal',
+    );
+    expect(leitura.endereco).toBe('Rua das Flores');
+    expect(leitura.numero_endereco).toBe('100');
+    expect(leitura.complemento).toBe('Sala 2');
+    expect(leitura.nome_fantasia).toBeNull();
+    expect(leitura.bairro).toBeNull();
+    expect(leitura.cidade).toBeNull();
+    expect(leitura.estado).toBeNull();
+  });
+
+  it('deixa vazio o que a nota não informa e não copia a razão social para o nome fantasia', () => {
+    const leitura = interpretarDocumento(
+      ['Fornecedor: Sem Contato Ltda', 'CNPJ: 11.444.777/0001-61'].join('\n'),
+      'nota_fiscal',
+    );
+    expect(leitura.emitente).toBe('Sem Contato Ltda');
+    expect(leitura.tipo_pessoa).toBe('juridica');
+    expect(leitura).toMatchObject({
+      nome_fantasia: null,
+      inscricao_estadual: null,
+      telefone: null,
+      whatsapp: null,
+      email: null,
+      cep: null,
+      endereco: null,
+      numero_endereco: null,
+      complemento: null,
+      bairro: null,
+      cidade: null,
+      estado: null,
+    });
+  });
+
+  it('lê CPF na linha seguinte e classifica pessoa física', () => {
+    const leitura = interpretarDocumento(
+      ['Fornecedor', 'Ana Costa', 'CPF', '529.982.247-25'].join('\n'),
+      'pedido_compra',
+    );
+    expect(leitura.emitente).toBe('Ana Costa');
+    expect(leitura.cpf).toBe('52998224725');
+    expect(leitura.cnpj).toBeNull();
+    expect(leitura.tipo_pessoa).toBe('fisica');
+    expect(leitura.inscricao_estadual).toBeNull();
+  });
+
   it('aceita outro documento e avisa quando não há itens', () => {
     const leitura = interpretarDocumento('Recibo avulso sem tabela', 'outro');
     expect(leitura.numero).toBeNull();

@@ -778,6 +778,13 @@ a.btn-secundario {
   width: 100%;
 }
 
+.texto-extraido pre {
+  white-space: pre-wrap;
+  max-height: 16rem;
+  overflow: auto;
+  font-size: 0.85rem;
+}
+
 .documento-acoes {
   display: flex;
   flex-wrap: wrap;
