@@ -63,6 +63,21 @@ function texto(valor: string | null | undefined): string {
   return valor?.trim() ?? '';
 }
 
+export function preencherFormularioSemSobrescrever(
+  atual: FormFornecedorImportacao,
+  leitura: Parameters<typeof formularioFornecedorDaLeitura>[0],
+  editados: ReadonlySet<keyof FormFornecedorImportacao>,
+): FormFornecedorImportacao {
+  const vindo = formularioFornecedorDaLeitura(leitura);
+  const proximo = { ...atual };
+  (Object.keys(vindo) as Array<keyof FormFornecedorImportacao>).forEach((campo) => {
+    if (editados.has(campo) || atual[campo].trim() || !vindo[campo]) return;
+    if (campo === 'tipo_pessoa') proximo.tipo_pessoa = vindo.tipo_pessoa;
+    else proximo[campo] = vindo[campo];
+  });
+  return proximo;
+}
+
 export function formularioFornecedorDaLeitura(
   leitura: Pick<
     DocumentoProcessado,

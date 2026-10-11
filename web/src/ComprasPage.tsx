@@ -5,6 +5,7 @@ import {
   atualizarCompra,
   criarCompra,
   criarFornecedor,
+  criarMateriaPrima,
   listarCompras,
   listarFornecedores,
   listarMateriasPrimas,
@@ -35,6 +36,32 @@ type OpcaoCompra = {
   unidade: string;
   tipo: 'materia' | 'produto';
 };
+
+function familiaUnidade(valor: string | null | undefined): string | null {
+  const unidade = (valor ?? '').trim().toUpperCase();
+  if (!unidade) return null;
+  if (unidade === 'KG') return 'KG';
+  if (unidade === 'METRO' || unidade === 'METROS' || unidade === 'M' || unidade === 'MT') return 'METRO';
+  if (unidade === 'UN' || unidade === 'PC' || unidade === 'PÇ' || unidade === 'PEÇA' || unidade === 'PECA') return 'UN';
+  return unidade;
+}
+
+function unidadeParaCadastro(valor: string | null | undefined): string {
+  const familia = familiaUnidade(valor);
+  if (familia === 'KG') return 'KG';
+  if (familia === 'METRO') return 'MT';
+  if (familia === 'UN') return 'UN';
+  return 'UN';
+}
+
+function avisoDeUnidade(documento: string | null, cadastro: string | null | undefined): string | null {
+  const lida = familiaUnidade(documento);
+  const cadastrada = familiaUnidade(cadastro);
+  if (lida && cadastrada && lida !== cadastrada) {
+    return `A unidade do documento (${lida}) difere da cadastrada (${cadastrada})`;
+  }
+  return null;
+}
 
 const TIPOS_DOCUMENTO: Array<{ id: TipoDocumento; label: string }> = [
   { id: 'nota_fiscal', label: 'Nota Fiscal' },
@@ -88,6 +115,8 @@ export function ComprasPage({
   const [arrastandoPdf, setArrastandoPdf] = useState(false);
   const [leitura, setLeitura] = useState<DocumentoProcessado | null>(null);
   const [fornecedorDoc, setFornecedorDoc] = useState('');
+  const [fornecedorEscolhido, setFornecedorEscolhido] = useState(false);
+  const [materiaNova, setMateriaNova] = useState<{ indice: number; nome: string } | null>(null);
   const [avisoFornecedor, setAvisoFornecedor] = useState<string | null>(null);
 
   const opcoes: OpcaoCompra[] = [
@@ -246,6 +275,8 @@ export function ComprasPage({
     setTipoDocumento('nota_fiscal');
     setLeitura(null);
     setFornecedorDoc('');
+    setFornecedorEscolhido(false);
+    setMateriaNova(null);
     setAvisoFornecedor(null);
     setArrastandoPdf(false);
     setModo('importar');
@@ -257,6 +288,8 @@ export function ComprasPage({
     setTipoDocumento('nota_fiscal');
     setLeitura(null);
     setFornecedorDoc('');
+    setFornecedorEscolhido(false);
+    setMateriaNova(null);
     setAvisoFornecedor(null);
     setArrastandoPdf(false);
     setModo('importar');
@@ -294,6 +327,8 @@ export function ComprasPage({
       });
       setLeitura(documento);
       setFornecedorDoc(documento.fornecedor ? String(documento.fornecedor.id) : '');
+      setFornecedorEscolhido(false);
+      setMateriaNova(null);
       setAvisoFornecedor(null);
     } catch (err) {
       setErro((err as Error).message);
@@ -301,6 +336,16 @@ export function ComprasPage({
       setSalvando(false);
     }
   }
+
+  useEffect(() => {
+    if (!leitura || fornecedorDoc || fornecedorEscolhido) return;
+    const digitos = (leitura.cnpj || leitura.cpf || '').replace(/\D/g, '');
+    if (!digitos) return;
+    const local = fornecedores.find(
+      (fornecedor) => (fornecedor.cpf_cnpj ?? '').replace(/\D/g, '') === digitos,
+    );
+    if (local) setFornecedorDoc(String(local.id));
+  }, [leitura, fornecedores, fornecedorDoc, fornecedorEscolhido]);
 
   function atualizarItemLido(indice: number, patch: Partial<ItemDocumento>) {
     setLeitura((atual) => {
@@ -357,23 +402,68 @@ export function ComprasPage({
     return item.materia_prima_id != null || item.produto_id != null;
   }
 
+  function opcaoDoItem(item: ItemDocumento): OpcaoCompra | undefined {
+    return opcoes.find((opcao) => (
+      item.produto_id
+        ? opcao.tipo === 'produto' && opcao.id === item.produto_id
+        : opcao.tipo === 'materia' && opcao.id === item.materia_prima_id
+    ));
+  }
+
+  function vinculoValido(item: ItemDocumento): boolean {
+    if (!itemVinculado(item)) return false;
+    return avisoDeUnidade(item.unidade, opcaoDoItem(item)?.unidade) == null;
+  }
+
+  async function cadastrarMateriaDoItem(indice: number) {
+    const item = leitura?.itens[indice];
+    const nome = materiaNova?.indice === indice ? materiaNova.nome.trim() : item?.descricao.trim();
+    if (!item || !nome) return;
+    const familia = familiaUnidade(item.unidade);
+    try {
+      setSalvando(true);
+      const criada = await criarMateriaPrima({
+        nome: nome.slice(0, 200),
+        tipo: familia === 'KG' || familia === 'METRO' ? 'tecido' : 'outro',
+        unidade: unidadeParaCadastro(item.unidade),
+        custo: item.valor_unitario ?? 0,
+      });
+      setMaterias((atual) => [...atual, criada].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')));
+      atualizarItemLido(indice, {
+        materia_prima_id: criada.id,
+        produto_id: null,
+        nome_cadastro: criada.nome,
+        aviso: null,
+      });
+      setMateriaNova(null);
+      setErro(null);
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   async function confirmarEntradaDoDocumento() {
     if (!leitura) return;
     if (leitura.ja_importado) {
       setErro('Este documento já foi importado');
       return;
     }
-    const reconhecidos = leitura.itens.filter(itemVinculado);
-    const pendentes = leitura.itens.filter((item) => !itemVinculado(item));
+    const pendentes = leitura.itens.filter((item) => !vinculoValido(item));
     if (!fornecedorDoc) {
       setErro('Selecione o fornecedor da compra');
       return;
     }
-    if (reconhecidos.length === 0) {
+    if (leitura.itens.length === 0) {
+      setErro('Nenhum item foi identificado. Confira o documento antes de lançar a compra.');
+      return;
+    }
+    if (pendentes.length > 0) {
       setErro('Vincule os itens ao cadastro antes de confirmar a entrada no estoque');
       return;
     }
-    const itens = reconhecidos
+    const itens = leitura.itens
       .filter((item) => item.quantidade && item.quantidade > 0)
       .map((item) => ({
         materia_prima_id: item.produto_id ? undefined : item.materia_prima_id ?? undefined,
@@ -393,9 +483,6 @@ export function ComprasPage({
     const observacoes = [
       `Importado de ${leitura.nome_arquivo}.`,
       leitura.numero ? `Documento ${leitura.numero}.` : '',
-      pendentes.length > 0
-        ? `Itens sem cadastro: ${pendentes.map((item) => item.descricao).join('; ')}.`
-        : '',
     ]
       .filter(Boolean)
       .join(' ');
@@ -653,9 +740,9 @@ export function ComprasPage({
                 <div><dt>Total</dt><dd>{leitura.total == null ? '—' : moeda.format(leitura.total)}</dd></div>
               </dl>
               <p className="dica">
-                {leitura.itens.filter(itemVinculado).length} reconhecido(s),{' '}
-                {leitura.itens.filter((item) => !itemVinculado(item)).length} sem cadastro.
-                Itens sem cadastro não entram na compra nem no estoque.
+                {leitura.itens.filter(vinculoValido).length} vinculado(s),{' '}
+                {leitura.itens.filter((item) => !vinculoValido(item)).length} sem vínculo válido.
+                A entrada só confirma quando todos os itens estiverem vinculados na unidade do cadastro.
               </p>
               {leitura.avisos.map((aviso) => (
                 <p key={aviso} className="dica">{aviso}</p>
@@ -668,7 +755,13 @@ export function ComprasPage({
               )}
               <label>
                 Fornecedor
-                <select value={fornecedorDoc} onChange={(e) => setFornecedorDoc(e.target.value)}>
+                <select
+                  value={fornecedorDoc}
+                  onChange={(e) => {
+                    setFornecedorEscolhido(true);
+                    setFornecedorDoc(e.target.value);
+                  }}
+                >
                   <option value="">Selecione</option>
                   {fornecedores.map((fornecedor) => (
                     <option key={fornecedor.id} value={fornecedor.id}>{fornecedor.nome}</option>
@@ -689,6 +782,8 @@ export function ComprasPage({
                     <tr>
                       <th>Item do documento</th>
                       <th>Qtd.</th>
+                      <th>Unidade</th>
+                      <th>Valor</th>
                       <th>Cadastro</th>
                     </tr>
                   </thead>
@@ -705,7 +800,9 @@ export function ComprasPage({
                             {item.descricao}
                             {item.aviso && <div className="dica">{item.aviso}</div>}
                           </td>
-                          <td>{item.quantidade ?? '—'} {item.unidade ?? ''}</td>
+                          <td>{item.quantidade ?? '—'}</td>
+                          <td>{item.unidade ?? '—'}</td>
+                          <td>{item.valor_unitario == null ? '—' : moeda.format(item.valor_unitario)}</td>
                           <td>
                             <select
                               aria-label={`Cadastro de ${item.descricao}`}
@@ -718,17 +815,41 @@ export function ComprasPage({
                                   materia_prima_id: tipo === 'materia' ? id : null,
                                   produto_id: tipo === 'produto' ? id : null,
                                   nome_cadastro: opcao?.nome ?? null,
-                                  aviso: null,
+                                  aviso: opcao ? avisoDeUnidade(item.unidade, opcao.unidade) : null,
                                 });
                               }}
                             >
-                              <option value="">Não lançar</option>
+                              <option value="">Selecione</option>
                               {opcoes.map((opcao) => (
                                 <option key={`${opcao.tipo}-${opcao.id}`} value={`${opcao.tipo}:${opcao.id}`}>
-                                  {opcao.tipo === 'produto' ? `${opcao.nome} (produto)` : opcao.nome}
+                                  {opcao.tipo === 'produto' ? `${opcao.nome} (produto)` : `${opcao.nome} (${familiaUnidade(opcao.unidade) ?? opcao.unidade})`}
                                 </option>
                               ))}
                             </select>
+                            {materiaNova?.indice === indice ? (
+                              <div className="item-novo">
+                                <label>
+                                  Nova matéria-prima
+                                  <input
+                                    value={materiaNova.nome}
+                                    onChange={(e) => setMateriaNova({ indice, nome: e.target.value })}
+                                  />
+                                </label>
+                                <p className="dica">Unidade de controle: {familiaUnidade(item.unidade) ?? item.unidade ?? '—'}</p>
+                                <button type="button" disabled={salvando || !materiaNova.nome.trim()} onClick={() => void cadastrarMateriaDoItem(indice)}>
+                                  Salvar matéria-prima
+                                </button>
+                                <button type="button" className="btn-secundario" onClick={() => setMateriaNova(null)}>Cancelar</button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn-secundario"
+                                onClick={() => setMateriaNova({ indice, nome: item.descricao })}
+                              >
+                                Cadastrar matéria-prima
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );

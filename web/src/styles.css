@@ -778,6 +778,13 @@ a.btn-secundario {
   width: 100%;
 }
 
+.item-novo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
 .texto-extraido pre {
   white-space: pre-wrap;
   max-height: 16rem;
