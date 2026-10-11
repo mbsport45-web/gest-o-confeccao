@@ -874,6 +874,191 @@ export async function removerMateriaPrima(id: number): Promise<void> {
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
+export const CATEGORIAS_AVIAMENTO = [
+  'cadarco',
+  'saquinho',
+  'tag',
+  'etiqueta_tamanho',
+  'adesivo',
+] as const;
+export type CategoriaAviamento = (typeof CATEGORIAS_AVIAMENTO)[number];
+
+export const CATEGORIA_AVIAMENTO_LABEL: Record<CategoriaAviamento, string> = {
+  cadarco: 'Cadarço',
+  saquinho: 'Saquinho de embalagem',
+  tag: 'Tag',
+  etiqueta_tamanho: 'Etiqueta de tamanho',
+  adesivo: 'Adesivo',
+};
+
+export const UNIDADES_AVIAMENTO = ['UN', 'PC', 'MT', 'KG', 'ROLO', 'CX', 'PAR'] as const;
+
+export interface AviamentoVariante {
+  id: number;
+  aviamento_id: number;
+  cor: string | null;
+  tamanho: string | null;
+  status: StatusMateria;
+  saldo_id: number | null;
+  quantidade: number;
+  abaixo_minimo: boolean;
+}
+
+export interface Aviamento {
+  id: number;
+  codigo: string | null;
+  categoria: CategoriaAviamento;
+  nome: string;
+  modelo: string | null;
+  marca: string | null;
+  unidade: string;
+  consumo_por_peca: number | null;
+  estoque_minimo: number;
+  status: StatusMateria;
+  observacoes: string | null;
+  criado_em: string;
+  atualizado_em: string;
+  variantes: AviamentoVariante[];
+}
+
+export interface AviamentoMovimento {
+  id: number;
+  variante_id: number;
+  tipo: 'entrada' | 'saida' | 'ajuste';
+  quantidade: number;
+  saldo_anterior: number;
+  saldo_posterior: number;
+  motivo: string | null;
+  observacoes: string | null;
+  criado_em: string;
+  cor?: string | null;
+  tamanho?: string | null;
+  nome?: string;
+  categoria?: CategoriaAviamento;
+  unidade?: string;
+}
+
+export type AviamentoPayload = {
+  codigo?: string;
+  categoria: CategoriaAviamento;
+  nome: string;
+  modelo?: string;
+  marca?: string;
+  unidade?: string;
+  consumo_por_peca?: number | null;
+  estoque_minimo?: number;
+  status?: StatusMateria;
+  observacoes?: string;
+  variantes?: Array<{ cor?: string; tamanho?: string; status?: StatusMateria }>;
+};
+
+export async function listarAviamentos(
+  filtros: { q?: string; status?: StatusMateria | ''; categoria?: string; pagina?: number; por_pagina?: number } = {},
+): Promise<ListaPadrao<Aviamento>> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.status) params.set('status', filtros.status);
+  if (filtros.categoria) params.set('categoria', filtros.categoria);
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await apiFetch(`/api/aviamentos?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterAviamento(id: number): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarAviamento(dados: AviamentoPayload): Promise<Aviamento> {
+  const res = await apiFetch('/api/aviamentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarAviamento(
+  id: number,
+  dados: Partial<Omit<AviamentoPayload, 'variantes'>>,
+): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarStatusAviamento(id: number, status: StatusMateria): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function adicionarVarianteAviamento(
+  id: number,
+  dados: { cor?: string; tamanho?: string },
+): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}/variantes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarVarianteAviamento(
+  id: number,
+  varianteId: number,
+  dados: { cor?: string | null; tamanho?: string | null },
+): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}/variantes/${varianteId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarMovimentosAviamento(id: number): Promise<{ data: AviamentoMovimento[] }> {
+  const res = await apiFetch(`/api/aviamentos/${id}/movimentos`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerAviamento(id: number): Promise<void> {
+  const res = await apiFetch(`/api/aviamentos/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function registrarMovimentoAviamento(dados: {
+  variante_id: number;
+  tipo: 'entrada' | 'saida' | 'ajuste';
+  quantidade: number;
+  motivo?: string;
+  observacoes?: string;
+}): Promise<AviamentoMovimento> {
+  const res = await apiFetch('/api/aviamentos/movimentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export const TIPOS_MOVIMENTO = ['entrada', 'saida', 'ajuste'] as const;
 export type TipoMovimento = (typeof TIPOS_MOVIMENTO)[number];
 
@@ -1174,6 +1359,7 @@ export interface CompraItem {
   materia_prima_id: number | null;
   produto_id: number | null;
   variante_id: number | null;
+  aviamento_variante_id?: number | null;
   quantidade: number;
   quantidade_recebida: number;
   custo_unitario: number;
@@ -1298,6 +1484,7 @@ export interface ItemDocumento {
   total: number | null;
   materia_prima_id: number | null;
   produto_id: number | null;
+  aviamento_variante_id?: number | null;
   tecido_cor_id: number | null;
   nome_cadastro: string | null;
   aviso: string | null;
@@ -1372,6 +1559,7 @@ export type CompraPayload = {
     materia_prima_id?: number;
     produto_id?: number;
     variante_id?: number;
+    aviamento_variante_id?: number;
     quantidade: number;
     custo_unitario: number;
     unidade?: string;

@@ -13,6 +13,7 @@ import { textoDoPdf } from './pdfTexto.js';
 export type ItemSugerido = ItemLido & {
   materia_prima_id: number | null;
   produto_id: number | null;
+  aviamento_variante_id: number | null;
   tecido_cor_id: number | null;
   nome_cadastro: string | null;
   aviso: string | null;
@@ -36,6 +37,10 @@ type Cadastro = {
   nome: string;
   unidade: string;
   tipo: string;
+  modelo: string | null;
+  marca: string | null;
+  cor: string | null;
+  tamanho: string | null;
   cores: Array<{ id: number; nome: string; status: string }>;
 };
 
@@ -185,9 +190,29 @@ function listarCadastros(db: AppDatabase, empresaId: number): Cadastro[] {
         WHERE p.empresa_id = ? AND p.status = 'ativo'`,
     )
     .all(empresaId) as Array<{ id: number; nome: string; unidade: string; variantes: number }>;
+  const aviamentos = db
+    .prepare(
+      `SELECT v.id, a.nome, a.unidade, a.modelo, a.marca, v.cor, v.tamanho
+         FROM aviamento_variantes v
+         JOIN aviamentos a ON a.id = v.aviamento_id
+        WHERE a.empresa_id = ? AND a.status = 'ativo' AND v.status = 'ativo'`,
+    )
+    .all(empresaId) as Array<{
+    id: number;
+    nome: string;
+    unidade: string;
+    modelo: string | null;
+    marca: string | null;
+    cor: string | null;
+    tamanho: string | null;
+  }>;
   return [
     ...materias.map((materia) => ({
       ...materia,
+      modelo: null,
+      marca: null,
+      cor: null,
+      tamanho: null,
       cores: cores
         .filter((cor) => cor.tecido_id === materia.id)
         .map((cor) => ({ id: cor.id, nome: cor.nome, status: cor.status })),
@@ -199,15 +224,30 @@ function listarCadastros(db: AppDatabase, empresaId: number): Cadastro[] {
         nome: produto.nome,
         unidade: produto.unidade,
         tipo: 'produto',
+        modelo: null,
+        marca: null,
+        cor: null,
+        tamanho: null,
         cores: [],
       })),
+    ...aviamentos.map((aviamento) => ({
+      id: aviamento.id,
+      nome: aviamento.nome,
+      unidade: aviamento.unidade,
+      tipo: 'aviamento',
+      modelo: aviamento.modelo,
+      marca: aviamento.marca,
+      cor: aviamento.cor,
+      tamanho: aviamento.tamanho,
+      cores: [],
+    })),
   ];
 }
 
 function sugerirItem(item: ItemLido, cadastros: Cadastro[]): ItemSugerido {
   const descricao = normalizar(item.descricao);
   const materias = cadastros
-    .filter((atual) => atual.tipo !== 'produto')
+    .filter((atual) => atual.tipo !== 'produto' && atual.tipo !== 'aviamento')
     .sort((a, b) => b.nome.length - a.nome.length);
   const cadastro = materias.find((atual) => descricao.includes(normalizar(atual.nome)));
   if (!cadastro) {
@@ -216,19 +256,36 @@ function sugerirItem(item: ItemLido, cadastros: Cadastro[]): ItemSugerido {
       .sort((a, b) => b.nome.length - a.nome.length)
       .find((atual) => descricao.includes(normalizar(atual.nome)));
     if (!produto) {
+      const aviamento = cadastros
+        .filter((atual) => atual.tipo === 'aviamento')
+        .sort((a, b) => b.nome.length - a.nome.length)
+        .find((atual) => combinaAviamento(descricao, atual));
+      if (!aviamento) {
+        return {
+          ...item,
+          materia_prima_id: null,
+          produto_id: null,
+          aviamento_variante_id: null,
+          tecido_cor_id: null,
+          nome_cadastro: null,
+          aviso: 'Item não encontrado no cadastro',
+        };
+      }
       return {
         ...item,
         materia_prima_id: null,
         produto_id: null,
+        aviamento_variante_id: aviamento.id,
         tecido_cor_id: null,
-        nome_cadastro: null,
-        aviso: 'Item não encontrado no cadastro',
+        nome_cadastro: aviamento.nome,
+        aviso: avisoDeUnidade(item.unidade, aviamento.unidade),
       };
     }
     return {
       ...item,
       materia_prima_id: null,
       produto_id: produto.id,
+      aviamento_variante_id: null,
       tecido_cor_id: null,
       nome_cadastro: produto.nome,
       aviso: avisoDeUnidade(item.unidade, produto.unidade),
@@ -250,6 +307,7 @@ function sugerirItem(item: ItemLido, cadastros: Cadastro[]): ItemSugerido {
         ...item,
         materia_prima_id: null,
         produto_id: null,
+        aviamento_variante_id: null,
         tecido_cor_id: null,
         nome_cadastro: cadastro.nome,
         aviso: 'Selecione a cor do tecido',
@@ -261,10 +319,23 @@ function sugerirItem(item: ItemLido, cadastros: Cadastro[]): ItemSugerido {
     ...item,
     materia_prima_id: cadastro.id,
     produto_id: null,
+    aviamento_variante_id: null,
     tecido_cor_id: corId,
     nome_cadastro: cadastro.nome,
     aviso,
   };
+}
+
+function combinaAviamento(descricao: string, cadastro: Cadastro): boolean {
+  const nome = normalizar(cadastro.nome);
+  if (nome.length < 3 || !descricao.includes(nome)) return false;
+  const modelo = normalizar(cadastro.modelo ?? '');
+  const marca = normalizar(cadastro.marca ?? '');
+  if (modelo.length >= 2 && !descricao.includes(modelo)) return false;
+  if (marca.length >= 2 && !descricao.includes(marca)) return false;
+  if (cadastro.cor && !temPalavra(descricao, normalizar(cadastro.cor))) return false;
+  if (cadastro.tamanho && !temPalavra(descricao, normalizar(cadastro.tamanho))) return false;
+  return true;
 }
 
 function avisoDeUnidade(unidadeItem: string | null, unidadeCadastro: string | null): string | null {

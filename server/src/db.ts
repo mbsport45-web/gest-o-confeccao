@@ -496,6 +496,7 @@ export function createDatabase(location: string) {
   ).run();
 
   aplicarDocumentosImportados(db);
+  aplicarAviamentos(db);
   aplicarColunaEmpresaId(db);
   aplicarCamposFornecedor(db);
   aplicarSchemaEquipe(db);
@@ -510,6 +511,10 @@ const TABELAS_TENANT = [
   'produtos',
   'produto_variantes',
   'materias_primas',
+  'aviamentos',
+  'aviamento_variantes',
+  'aviamento_saldos',
+  'aviamento_movimentos',
   'estoque_saldos',
   'estoque_movimentos',
   'produto_bom_itens',
@@ -573,6 +578,89 @@ function aplicarDocumentosImportados(db: AppDatabase) {
       ON documentos_importados (empresa_id, criado_em);
     CREATE INDEX IF NOT EXISTS documentos_importados_hash
       ON documentos_importados (empresa_id, conteudo_hash);
+  `);
+}
+
+function aplicarAviamentos(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS aviamentos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      codigo TEXT,
+      categoria TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      modelo TEXT,
+      marca TEXT,
+      unidade TEXT NOT NULL DEFAULT 'UN',
+      consumo_por_peca REAL,
+      estoque_minimo REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'ativo',
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS aviamento_variantes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      aviamento_id INTEGER NOT NULL REFERENCES aviamentos(id),
+      cor TEXT,
+      tamanho TEXT,
+      status TEXT NOT NULL DEFAULT 'ativo',
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS aviamento_saldos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      variante_id INTEGER NOT NULL REFERENCES aviamento_variantes(id),
+      quantidade REAL NOT NULL DEFAULT 0,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS aviamento_movimentos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      saldo_id INTEGER NOT NULL REFERENCES aviamento_saldos(id),
+      variante_id INTEGER NOT NULL REFERENCES aviamento_variantes(id),
+      tipo TEXT NOT NULL,
+      quantidade REAL NOT NULL,
+      saldo_anterior REAL NOT NULL,
+      saldo_posterior REAL NOT NULL,
+      motivo TEXT,
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  if (tabelaExiste(db, 'pedido_compra_itens') && !colunaExiste(db, 'pedido_compra_itens', 'aviamento_variante_id')) {
+    db.exec(
+      'ALTER TABLE pedido_compra_itens ADD COLUMN aviamento_variante_id INTEGER REFERENCES aviamento_variantes(id)',
+    );
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS aviamentos_codigo_unique
+      ON aviamentos (empresa_id, codigo)
+      WHERE codigo IS NOT NULL AND codigo != '';
+
+    CREATE UNIQUE INDEX IF NOT EXISTS aviamento_variantes_chave
+      ON aviamento_variantes (
+        aviamento_id,
+        lower(ifnull(cor, '')),
+        lower(ifnull(tamanho, ''))
+      );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS aviamento_saldos_variante
+      ON aviamento_saldos (variante_id);
+
+    CREATE INDEX IF NOT EXISTS aviamentos_empresa ON aviamentos (empresa_id);
+    CREATE INDEX IF NOT EXISTS aviamento_variantes_empresa ON aviamento_variantes (empresa_id, aviamento_id);
+    CREATE INDEX IF NOT EXISTS aviamento_saldos_empresa ON aviamento_saldos (empresa_id);
+    CREATE INDEX IF NOT EXISTS aviamento_movimentos_variante
+      ON aviamento_movimentos (empresa_id, variante_id, id);
   `);
 }
 

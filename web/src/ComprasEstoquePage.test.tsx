@@ -69,6 +69,6 @@ describe('abas de Compras e Estoque', () => {
     expect(app).toContain("label: 'Ordens de Produção'");
     expect(app).toContain("label: 'Produção/Etapas'");
     expect(app).toContain('<EstoquePage />');
-    expect(app).toContain('<MateriasPrimasPage');
+    expect(app).toContain('<MateriasPage');
   });
 });

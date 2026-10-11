@@ -5,6 +5,7 @@ import { createOrdensRouter } from './ordens.js';
 import { createClientesRouter } from './clientes.js';
 import { createProdutosRouter } from './produtos.js';
 import { createMateriasPrimasRouter } from './materiasPrimas.js';
+import { createAviamentosRouter } from './aviamentos.js';
 import { createEstoqueRouter } from './estoque.js';
 import { createEtapasRouter } from './etapas.js';
 import { createFornecedoresRouter } from './fornecedores.js';
@@ -94,6 +95,7 @@ export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
   app.use('/api/clientes', createClientesRouter(db));
   app.use('/api/produtos', createProdutosRouter(db));
   app.use('/api/materias-primas', createMateriasPrimasRouter(db));
+  app.use('/api/aviamentos', createAviamentosRouter(db));
   app.use('/api/estoque', createEstoqueRouter(db));
   app.use('/api/pedidos', createPedidosRouter(db));
   app.use('/api/expedicao', createExpedicaoRouter(db));

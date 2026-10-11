@@ -5,7 +5,7 @@ import { DashboardPage } from './DashboardPage';
 import { EtapasPage } from './EtapasPage';
 import { EstoquePage } from './EstoquePage';
 import { FinanceiroPage } from './FinanceiroPage';
-import { MateriasPrimasPage } from './MateriasPrimasPage';
+import { MateriasPage } from './MateriasPage';
 import { OrdemDetalhePage } from './OrdemDetalhePage';
 import { OrdensPage } from './OrdensPage';
 import { PedidosPage } from './PedidosPage';
@@ -75,8 +75,8 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
     sub: 'Cadastro de produtos e variantes',
   },
   materiais: {
-    titulo: 'Materiais',
-    sub: 'Cadastro de matérias-primas',
+    titulo: 'Matérias',
+    sub: 'Tecidos no estoque de matérias-primas e aviamentos em cadastro separado',
   },
   estoque: {
     titulo: 'Estoque',
@@ -295,7 +295,7 @@ function AppAutenticado({
               )}
               {paginaAtual === 'clientes' && <ClientesPage sessao={sessao} />}
               {paginaAtual === 'produtos' && <ProdutosPage sessao={sessao} />}
-              {paginaAtual === 'materiais' && <MateriasPrimasPage sessao={sessao} />}
+              {paginaAtual === 'materiais' && <MateriasPage sessao={sessao} />}
               {paginaAtual === 'estoque' && <EstoquePage />}
               {paginaAtual === 'pedidos' && <PedidosPage sessao={sessao} onAbrirOp={abrirOp} />}
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
