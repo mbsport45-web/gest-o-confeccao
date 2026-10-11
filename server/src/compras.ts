@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { registrarMovimentoAviamento } from './aviamentos.js';
 import { registrarMovimentoEstoque } from './estoque.js';
 import { arredondarDinheiro, sincronizarContaPagarCompra } from './financeiro.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
@@ -22,6 +23,7 @@ export interface CompraItem {
   materia_prima_id: number | null;
   produto_id: number | null;
   variante_id: number | null;
+  aviamento_variante_id: number | null;
   quantidade: number;
   quantidade_recebida: number;
   custo_unitario: number;
@@ -71,16 +73,22 @@ const itemSchema = z
     materia_prima_id: z.number().int().positive().optional(),
     produto_id: z.number().int().positive().optional(),
     variante_id: z.number().int().positive().optional(),
+    aviamento_variante_id: z.number().int().positive().optional(),
     quantidade: z.number().positive('quantidade deve ser maior que zero'),
     custo_unitario: z.number().min(0, 'custo não pode ser negativo'),
     unidade: textoOpcional,
   })
   .refine(
     (item) => {
-      const refs = [item.materia_prima_id, item.produto_id, item.variante_id].filter(Boolean);
+      const refs = [
+        item.materia_prima_id,
+        item.produto_id,
+        item.variante_id,
+        item.aviamento_variante_id,
+      ].filter(Boolean);
       return refs.length === 1;
     },
-    { message: 'Informe exatamente um de materia_prima_id, produto_id ou variante_id' },
+    { message: 'Informe exatamente um de materia_prima_id, produto_id, variante_id ou aviamento_variante_id' },
   );
 
 const compraBaseSchema = z.object({
@@ -142,10 +150,12 @@ const ITEM_SELECT = `
   SELECT
     i.*,
     CASE
+      WHEN i.aviamento_variante_id IS NOT NULL THEN trim(a.nome || ' ' || ifnull(av.cor, '') || ' ' || ifnull(av.tamanho, ''))
       WHEN i.materia_prima_id IS NOT NULL THEN m.nome
       ELSE p.nome
     END AS nome,
     CASE
+      WHEN i.aviamento_variante_id IS NOT NULL THEN a.codigo
       WHEN i.materia_prima_id IS NOT NULL THEN m.codigo
       WHEN i.variante_id IS NOT NULL THEN v.sku
       ELSE p.sku
@@ -154,6 +164,8 @@ const ITEM_SELECT = `
   LEFT JOIN materias_primas m ON m.id = i.materia_prima_id
   LEFT JOIN produtos p ON p.id = i.produto_id
   LEFT JOIN produto_variantes v ON v.id = i.variante_id
+  LEFT JOIN aviamento_variantes av ON av.id = i.aviamento_variante_id
+  LEFT JOIN aviamentos a ON a.id = av.aviamento_id
 `;
 
 function hoje(): string {
@@ -203,6 +215,17 @@ export function createComprasRouter(db: AppDatabase): Router {
   }
 
   function validarItemAlvo(item: z.infer<typeof itemSchema>, empresaId: number): string | null {
+    if (item.aviamento_variante_id) {
+      const variante = db
+        .prepare(
+          `SELECT v.id
+             FROM aviamento_variantes v
+             JOIN aviamentos a ON a.id = v.aviamento_id
+            WHERE v.id = ? AND v.empresa_id = ? AND a.empresa_id = ?`,
+        )
+        .get(item.aviamento_variante_id, empresaId, empresaId);
+      return variante ? null : 'Variante de aviamento não encontrada';
+    }
     if (item.materia_prima_id) {
       const m = db
         .prepare('SELECT id FROM materias_primas WHERE id = ? AND empresa_id = ?')
@@ -249,10 +272,10 @@ export function createComprasRouter(db: AppDatabase): Router {
     const info = db
       .prepare(
         `INSERT INTO pedido_compra_itens (
-           empresa_id, compra_id, materia_prima_id, produto_id, variante_id,
+           empresa_id, compra_id, materia_prima_id, produto_id, variante_id, aviamento_variante_id,
            quantidade, quantidade_recebida, custo_unitario, total, unidade
          ) VALUES (
-           @empresa_id, @compra_id, @materia_prima_id, @produto_id, @variante_id,
+           @empresa_id, @compra_id, @materia_prima_id, @produto_id, @variante_id, @aviamento_variante_id,
            @quantidade, 0, @custo_unitario, @total, @unidade
          )`,
       )
@@ -262,6 +285,7 @@ export function createComprasRouter(db: AppDatabase): Router {
         materia_prima_id: item.materia_prima_id ?? null,
         produto_id: produtoId,
         variante_id: item.variante_id ?? null,
+        aviamento_variante_id: item.aviamento_variante_id ?? null,
         quantidade: item.quantidade,
         custo_unitario: item.custo_unitario,
         total,
@@ -288,15 +312,25 @@ export function createComprasRouter(db: AppDatabase): Router {
       const documento = compra.documento_nome
         ? `Documento ${compra.documento_numero ?? ''} (${compra.documento_nome})`.replace(/\s+/g, ' ').trim()
         : '';
-      const mov = registrarMovimentoEstoque(db, compra.empresa_id, {
-        tipo: 'entrada',
-        quantidade: pedido.quantidade,
-        materia_prima_id: item.materia_prima_id ?? undefined,
-        produto_id: item.variante_id ? undefined : item.produto_id ?? undefined,
-        variante_id: item.variante_id ?? undefined,
-        motivo: `Compra ${compra.codigo ?? compra.id}`,
-        observacoes: [`Recebimento item ${item.id}`, documento].filter(Boolean).join('. '),
-      });
+      const motivo = `Compra ${compra.codigo ?? compra.id}`;
+      const observacoes = [`Recebimento item ${item.id}`, documento].filter(Boolean).join('. ');
+      const mov = item.aviamento_variante_id
+        ? registrarMovimentoAviamento(db, compra.empresa_id, {
+            tipo: 'entrada',
+            quantidade: pedido.quantidade,
+            variante_id: item.aviamento_variante_id,
+            motivo,
+            observacoes,
+          })
+        : registrarMovimentoEstoque(db, compra.empresa_id, {
+            tipo: 'entrada',
+            quantidade: pedido.quantidade,
+            materia_prima_id: item.materia_prima_id ?? undefined,
+            produto_id: item.variante_id ? undefined : item.produto_id ?? undefined,
+            variante_id: item.variante_id ?? undefined,
+            motivo,
+            observacoes,
+          });
       if (!mov.ok) {
         throw Object.assign(new Error(mov.erro), { status: mov.status });
       }

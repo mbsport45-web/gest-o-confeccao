@@ -6,6 +6,7 @@ import {
   criarCompra,
   criarFornecedor,
   criarMateriaPrima,
+  listarAviamentos,
   listarCompras,
   listarFornecedores,
   listarMateriasPrimas,
@@ -14,6 +15,7 @@ import {
   processarDocumento,
   receberCompra,
   removerCompra,
+  type Aviamento,
   type CompraItem,
   type DocumentoProcessado,
   type Fornecedor,
@@ -34,7 +36,7 @@ type OpcaoCompra = {
   id: number;
   nome: string;
   unidade: string;
-  tipo: 'materia' | 'produto';
+  tipo: 'materia' | 'produto' | 'aviamento';
 };
 
 function familiaUnidade(valor: string | null | undefined): string | null {
@@ -109,6 +111,7 @@ export function ComprasPage({
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [materias, setMaterias] = useState<MateriaPrima[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
+  const [aviamentos, setAviamentos] = useState<Aviamento[]>([]);
   const [novoForn, setNovoForn] = useState({ nome: '', cidade: '', estado: 'SP' });
   const [arquivoPdf, setArquivoPdf] = useState<File | null>(null);
   const [tipoDocumento, setTipoDocumento] = useState<TipoDocumento>('nota_fiscal');
@@ -134,6 +137,18 @@ export function ComprasPage({
         unidade: produto.unidade,
         tipo: 'produto' as const,
       })),
+    ...aviamentos.flatMap((aviamento) =>
+      aviamento.variantes
+        .filter((variante) => variante.status === 'ativo' && aviamento.status === 'ativo')
+        .map((variante) => ({
+          id: variante.id,
+          nome: [aviamento.nome, aviamento.modelo, aviamento.marca, variante.cor, variante.tamanho]
+            .filter(Boolean)
+            .join(' · '),
+          unidade: aviamento.unidade,
+          tipo: 'aviamento' as const,
+        })),
+    ),
   ];
 
   useEffect(() => {
@@ -152,6 +167,7 @@ export function ComprasPage({
     listarFornecedores({ por_pagina: 100 }).then((l) => setFornecedores(l.data)).catch(() => undefined);
     listarMateriasPrimas({ por_pagina: 100 }).then((l) => setMaterias(l.data)).catch(() => undefined);
     listarProdutos({ por_pagina: 100, status: 'ativo' }).then((l) => setProdutos(l.data)).catch(() => undefined);
+    listarAviamentos({ por_pagina: 100, status: 'ativo' }).then((l) => setAviamentos(l.data)).catch(() => undefined);
   }, []);
 
   const recarregar = useCallback(async () => {
@@ -399,15 +415,15 @@ export function ComprasPage({
   }
 
   function itemVinculado(item: ItemDocumento): boolean {
-    return item.materia_prima_id != null || item.produto_id != null;
+    return item.materia_prima_id != null || item.produto_id != null || item.aviamento_variante_id != null;
   }
 
   function opcaoDoItem(item: ItemDocumento): OpcaoCompra | undefined {
-    return opcoes.find((opcao) => (
-      item.produto_id
-        ? opcao.tipo === 'produto' && opcao.id === item.produto_id
-        : opcao.tipo === 'materia' && opcao.id === item.materia_prima_id
-    ));
+    return opcoes.find((opcao) => {
+      if (item.aviamento_variante_id) return opcao.tipo === 'aviamento' && opcao.id === item.aviamento_variante_id;
+      if (item.produto_id) return opcao.tipo === 'produto' && opcao.id === item.produto_id;
+      return opcao.tipo === 'materia' && opcao.id === item.materia_prima_id;
+    });
   }
 
   function vinculoValido(item: ItemDocumento): boolean {
@@ -432,6 +448,7 @@ export function ComprasPage({
       atualizarItemLido(indice, {
         materia_prima_id: criada.id,
         produto_id: null,
+        aviamento_variante_id: null,
         nome_cadastro: criada.nome,
         aviso: null,
       });
@@ -466,15 +483,12 @@ export function ComprasPage({
     const itens = leitura.itens
       .filter((item) => item.quantidade && item.quantidade > 0)
       .map((item) => ({
-        materia_prima_id: item.produto_id ? undefined : item.materia_prima_id ?? undefined,
-        produto_id: item.produto_id ?? undefined,
+        materia_prima_id: item.produto_id || item.aviamento_variante_id ? undefined : item.materia_prima_id ?? undefined,
+        produto_id: item.aviamento_variante_id ? undefined : item.produto_id ?? undefined,
+        aviamento_variante_id: item.aviamento_variante_id ?? undefined,
         quantidade: item.quantidade ?? 0,
         custo_unitario: item.valor_unitario ?? 0,
-        unidade: opcoes.find((opcao) => (
-          item.produto_id
-            ? opcao.tipo === 'produto' && opcao.id === item.produto_id
-            : opcao.tipo === 'materia' && opcao.id === item.materia_prima_id
-        ))?.unidade,
+        unidade: opcaoDoItem(item)?.unidade,
       }));
     if (itens.length === 0) {
       setErro('Nenhum item reconhecido com quantidade para entrar no estoque');
@@ -789,11 +803,13 @@ export function ComprasPage({
                   </thead>
                   <tbody>
                     {leitura.itens.map((item, indice) => {
-                      const valorCadastro = item.produto_id
-                        ? `produto:${item.produto_id}`
-                        : item.materia_prima_id
-                          ? `materia:${item.materia_prima_id}`
-                          : '';
+                      const valorCadastro = item.aviamento_variante_id
+                        ? `aviamento:${item.aviamento_variante_id}`
+                        : item.produto_id
+                          ? `produto:${item.produto_id}`
+                          : item.materia_prima_id
+                            ? `materia:${item.materia_prima_id}`
+                            : '';
                       return (
                         <tr key={`${item.descricao}-${indice}`}>
                           <td>
@@ -814,6 +830,7 @@ export function ComprasPage({
                                 atualizarItemLido(indice, {
                                   materia_prima_id: tipo === 'materia' ? id : null,
                                   produto_id: tipo === 'produto' ? id : null,
+                                  aviamento_variante_id: tipo === 'aviamento' ? id : null,
                                   nome_cadastro: opcao?.nome ?? null,
                                   aviso: opcao ? avisoDeUnidade(item.unidade, opcao.unidade) : null,
                                 });
@@ -822,7 +839,11 @@ export function ComprasPage({
                               <option value="">Selecione</option>
                               {opcoes.map((opcao) => (
                                 <option key={`${opcao.tipo}-${opcao.id}`} value={`${opcao.tipo}:${opcao.id}`}>
-                                  {opcao.tipo === 'produto' ? `${opcao.nome} (produto)` : `${opcao.nome} (${familiaUnidade(opcao.unidade) ?? opcao.unidade})`}
+                                  {opcao.tipo === 'produto'
+                                    ? `${opcao.nome} (produto)`
+                                    : opcao.tipo === 'aviamento'
+                                      ? `${opcao.nome} (aviamento)`
+                                      : `${opcao.nome} (${familiaUnidade(opcao.unidade) ?? opcao.unidade})`}
                                 </option>
                               ))}
                             </select>
