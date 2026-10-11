@@ -23,6 +23,7 @@ export type CompraExistente = { id: number; codigo: string | null };
 export type DocumentoProcessado = LeituraDocumento & {
   id: number;
   nome_arquivo: string;
+  texto: string;
   conteudo_hash: string;
   fornecedor: { id: number; nome: string } | null;
   itens: ItemSugerido[];
@@ -155,6 +156,7 @@ export async function processarDocumentoCompra(
     ...leitura,
     id: Number(info.lastInsertRowid),
     nome_arquivo: entrada.nomeArquivo,
+    texto: texto.slice(0, 20000),
     conteudo_hash: conteudoHash,
     fornecedor,
     itens,

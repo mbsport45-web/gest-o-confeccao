@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { UFS_BRASIL, type DocumentoProcessado } from './api';
 import {
   dadosParaCadastro,
   formularioFornecedorDaLeitura,
+  preencherFormularioSemSobrescrever,
   type FormFornecedorImportacao,
   type PayloadFornecedorImportacao,
 } from './fornecedorImportacao';
@@ -18,7 +19,16 @@ type Props = {
 export function FornecedorImportacao({ leitura, selecionado, salvando, aviso, onCadastrar }: Props) {
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<FormFornecedorImportacao>(() => formularioFornecedorDaLeitura(leitura));
+  const [editados, setEditados] = useState<ReadonlySet<keyof FormFornecedorImportacao>>(() => new Set());
   const [erroLocal, setErroLocal] = useState<string | null>(null);
+
+  useEffect(() => {
+    setForm((atual) => {
+      const proximo = preencherFormularioSemSobrescrever(atual, leitura, editados);
+      const campos = Object.keys(proximo) as Array<keyof FormFornecedorImportacao>;
+      return campos.every((campo) => proximo[campo] === atual[campo]) ? atual : proximo;
+    });
+  }, [leitura, editados]);
 
   function abrir() {
     setErroLocal(null);
@@ -37,6 +47,11 @@ export function FornecedorImportacao({ leitura, selecionado, salvando, aviso, on
   }
 
   function atualizar(patch: Partial<FormFornecedorImportacao>) {
+    setEditados((atual) => {
+      const proximo = new Set(atual);
+      (Object.keys(patch) as Array<keyof FormFornecedorImportacao>).forEach((campo) => proximo.add(campo));
+      return proximo;
+    });
     setForm((atual) => ({ ...atual, ...patch }));
   }
 

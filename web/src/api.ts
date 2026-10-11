@@ -1325,6 +1325,7 @@ export interface DocumentoProcessado {
   cidade?: string | null;
   estado?: string | null;
   observacoes?: string | null;
+  texto?: string | null;
   data_emissao: string | null;
   total: number | null;
   avisos: string[];

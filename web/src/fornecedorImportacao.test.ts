@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { DocumentoProcessado } from './api';
-import { dadosParaCadastro, formularioFornecedorDaLeitura } from './fornecedorImportacao';
+import {
+  dadosParaCadastro,
+  formularioFornecedorDaLeitura,
+  preencherFormularioSemSobrescrever,
+} from './fornecedorImportacao';
 
 function leitura(parcial: Partial<DocumentoProcessado> = {}): DocumentoProcessado {
   return {
@@ -85,5 +89,40 @@ describe('formulário do fornecedor na importação', () => {
     expect(fisica?.tipo_pessoa).toBe('fisica');
     expect(fisica).not.toHaveProperty('inscricao_estadual');
     expect(fisica).not.toHaveProperty('estado');
+  });
+
+  it('preenche só campos vazios e preserva o que o usuário digitou', () => {
+    const atual = formularioFornecedorDaLeitura(leitura({
+      emitente: '',
+      nome_fantasia: null,
+      telefone: null,
+      endereco: null,
+      numero_endereco: null,
+      cidade: null,
+      estado: null,
+      email: null,
+    }));
+    atual.nome_fantasia = 'Willrich';
+    const preenchido = preencherFormularioSemSobrescrever(
+      atual,
+      leitura({
+        emitente: 'WILLRICH MALHAS MATRIZ',
+        nome_fantasia: 'Fantasia do PDF',
+        telefone: '4733516593',
+        endereco: 'R GUSTAVO RICHARD',
+        numero_endereco: '58',
+        cidade: 'BRUSQUE',
+        estado: 'SC',
+        email: null,
+      }),
+      new Set(['nome_fantasia']),
+    );
+    expect(preenchido.nome).toBe('WILLRICH MALHAS MATRIZ');
+    expect(preenchido.nome_fantasia).toBe('Willrich');
+    expect(preenchido.telefone).toBe('4733516593');
+    expect(preenchido.endereco).toBe('R GUSTAVO RICHARD');
+    expect(preenchido.numero).toBe('58');
+    expect(preenchido.cidade).toBe('BRUSQUE');
+    expect(preenchido.email).toBe('');
   });
 });
