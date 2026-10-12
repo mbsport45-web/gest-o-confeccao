@@ -664,9 +664,26 @@ button {
   overflow-x: auto;
 }
 
+.grade-op .tabela th {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.grade-op__cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.grade-op__cabecalho input {
+  min-width: 4.2rem;
+  width: 5.4rem;
+  text-transform: none;
+}
+
 .grade-op th button,
 .grade-op .tabela th button {
-  margin-left: 0.35rem;
+  margin-left: 0;
 }
 
 .grade-total {

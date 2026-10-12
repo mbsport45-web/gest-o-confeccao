@@ -498,6 +498,48 @@ describe('API de ordens de produção', () => {
     expect(deNovo.body.id).toBe(extra.body.id);
   });
 
+  it('cadastra cor e tamanho novos ao salvar a ordem e reabre a mesma ordem das colunas', async () => {
+    const produto = await api.post('/api/produtos').send({ sku: 'LIVRE-1', nome: 'Peça livre' });
+    const grade = [
+      { cor: 'Verde Musgo', tamanho: '42', quantidade: 4 },
+      { cor: 'Verde Musgo', tamanho: '44', quantidade: 2 },
+    ];
+    const criada = await api.post('/api/ordens').send({
+      cliente: 'Loja Livre',
+      produto_id: produto.body.id,
+      quantidade: 6,
+      status: 'planejada',
+      grade,
+    });
+    expect(criada.status).toBe(201);
+    expect(criada.body.grade).toEqual(grade);
+
+    const cores = await api.get('/api/ordens/cores').query({ q: 'musgo' });
+    expect(cores.body).toEqual([expect.objectContaining({ nome: 'Verde Musgo' })]);
+    const tamanhos = await api.get('/api/ordens/tamanhos');
+    const nomes = tamanhos.body.map((item: { nome: string }) => item.nome);
+    expect(nomes).toContain('42');
+    expect(nomes).toContain('44');
+
+    const repetida = await api.post('/api/ordens').send({
+      cliente: 'Loja Livre',
+      produto_id: produto.body.id,
+      quantidade: 1,
+      status: 'planejada',
+      grade: [{ cor: ' verde musgo ', tamanho: '42', quantidade: 1 }],
+    });
+    expect(repetida.status).toBe(201);
+    const coresDepois = await api.get('/api/ordens/cores').query({ q: 'musgo' });
+    expect(coresDepois.body).toHaveLength(1);
+    const tamanhosDepois = await api.get('/api/ordens/tamanhos');
+    expect(
+      tamanhosDepois.body.filter((item: { nome: string }) => item.nome.toLocaleLowerCase('pt-BR') === '42'),
+    ).toHaveLength(1);
+
+    const reaberta = await api.get(`/api/ordens/${criada.body.id}`);
+    expect(reaberta.body.grade).toEqual(grade);
+  });
+
   it('cria uma ordem de corte com a grade planejada e não duplica', async () => {
     const produto = await api.post('/api/produtos').send({ sku: 'BER-OC', nome: 'Bermuda OC' });
     const grade = gradeBermuda();

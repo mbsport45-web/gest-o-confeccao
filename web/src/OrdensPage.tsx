@@ -6,10 +6,8 @@ import {
   STATUS_VALIDOS,
   atualizarOrdem,
   atualizarStatus,
-  criarCor,
   criarOrdem,
   criarOrdemCorte,
-  criarTamanho,
   listarClientes,
   listarCores,
   listarMateriasPrimas,
@@ -282,6 +280,8 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       setEditandoId(null);
       setErro(null);
       await recarregar();
+      listarCores().then(setCatalogoCores).catch(() => undefined);
+      listarTamanhos().then(setCatalogoTamanhos).catch(() => undefined);
     } catch (err) {
       setErro((err as Error).message);
     } finally {
@@ -529,16 +529,6 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               onChange={setGrade}
               onBuscarCores={(busca) => {
                 listarCores(busca).then(setCatalogoCores).catch(() => undefined);
-              }}
-              onCadastrarCor={async (nome) => {
-                const salva = await criarCor(nome);
-                setCatalogoCores(await listarCores());
-                return salva.nome;
-              }}
-              onCadastrarTamanho={async (nome) => {
-                const salvo = await criarTamanho(nome);
-                setCatalogoTamanhos(await listarTamanhos());
-                return salvo.nome;
               }}
             />
             <div className="form__row">

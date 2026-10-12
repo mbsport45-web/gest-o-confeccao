@@ -6,8 +6,11 @@ import {
   definirQuantidade,
   gradeVazia,
   mensagemGrade,
+  moverTamanho,
   removerCor,
   removerTamanho,
+  renomearCor,
+  renomearTamanho,
   totalCor,
   totalGeral,
   totalTamanho,
@@ -45,5 +48,19 @@ describe('grade da ordem de produção', () => {
     expect(grade.cores).toEqual(['Azul']);
     expect(grade.tamanhos).toEqual(['M', 'G']);
     expect(totalGeral(grade)).toBe(4);
+  });
+
+  it('renomeia cor e tamanho e reorganiza as colunas sem perder quantidades', () => {
+    let grade = adicionarCor(gradeVazia(['P', 'M']), 'Verde musgo');
+    grade = definirQuantidade(grade, 'Verde musgo', 'M', 8);
+    grade = renomearCor(grade, 'Verde musgo', 'Oliva');
+    grade = renomearTamanho(grade, 'M', '42');
+    grade = moverTamanho(grade, '42', -1);
+    expect(grade.cores).toEqual(['Oliva']);
+    expect(grade.tamanhos).toEqual(['42', 'P']);
+    expect(totalCor(grade, 'Oliva')).toBe(8);
+    expect(renomearCor(grade, 'Oliva', 'oliva').cores).toEqual(['oliva']);
+    const repetida = adicionarCor(grade, 'Areia');
+    expect(renomearCor(repetida, 'Areia', 'Oliva')).toBe(repetida);
   });
 });
