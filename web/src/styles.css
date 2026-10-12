@@ -347,6 +347,68 @@ body {
   gap: 0.9rem;
 }
 
+.ficha {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.8rem 1rem;
+  margin: 0;
+}
+
+.ficha div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.ficha dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.ficha dd {
+  margin: 0;
+  font-weight: 650;
+}
+
+.grade-corte {
+  margin: 0.75rem 0 1rem;
+}
+
+.grade-corte .tabela th {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.grade-corte__qtd {
+  display: block;
+  font-weight: 650;
+}
+
+.grade-corte small,
+.corte-tamanhos small {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.corte-tamanhos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.75rem;
+}
+
+.form label.corte-autorizar {
+  flex-direction: row;
+  align-items: center;
+  color: var(--text);
+}
+
+.form label.corte-autorizar input {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 .form__row {
   display: flex;
   gap: 0.75rem;
@@ -628,6 +690,195 @@ button {
   margin: 0;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.card--grade {
+  grid-column: 1 / -1;
+}
+
+.busca-cadastro {
+  position: relative;
+}
+
+.busca-cadastro__lista {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.35rem;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.form .busca-cadastro__opcao {
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+  font-weight: 500;
+  padding: 0.4rem 0.5rem;
+}
+
+.form .busca-cadastro__opcao:hover {
+  background: var(--surface-2);
+}
+
+.busca-cadastro__novo {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.busca-cadastro__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.form .busca-cadastro > .btn-secundario,
+.form .busca-cadastro__lista .btn-secundario,
+.form .busca-cadastro__acoes .btn-secundario {
+  width: fit-content;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.grade-op {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin: 0.4rem 0 0.8rem;
+}
+
+.grade-op__cores,
+.grade-op__tamanhos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.grade-op__cores label,
+.grade-op__tamanhos label {
+  flex: 1 1 12rem;
+}
+
+.grade-op__sugestoes,
+.grade-op__lista {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 14rem;
+  overflow: auto;
+  padding: 0.15rem 0;
+}
+
+.grade-op__opcao {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: fit-content;
+}
+
+.grade-op__opcao small {
+  color: var(--muted);
+}
+
+.grade-op__nova {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.form .grade-op .btn-secundario,
+.form .grade-op__nova .btn-secundario,
+.form.form--cor .btn-secundario,
+.form .cores-acoes .btn-secundario {
+  width: fit-content;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.cor-amostra {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.cores-busca {
+  display: grid;
+  gap: 0.35rem;
+  max-width: 24rem;
+  margin-bottom: 0.9rem;
+}
+
+.cores-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.btn-primario {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.9rem;
+  font-weight: 600;
+}
+
+.grade-op__rolagem {
+  overflow-x: auto;
+}
+
+.grade-op .tabela th {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.grade-op__cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.grade-op__cabecalho input {
+  min-width: 4.2rem;
+  width: 5.4rem;
+  text-transform: none;
+}
+
+.grade-op__cabecalho input.grade-op__nome {
+  min-width: 9.5rem;
+  width: 11rem;
+}
+
+.grade-op th button,
+.grade-op .tabela th button {
+  margin-left: 0;
+}
+
+.grade-total {
+  font-weight: 650;
 }
 
 .tabela--compacta input {

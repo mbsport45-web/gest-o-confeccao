@@ -497,6 +497,8 @@ export function createDatabase(location: string) {
 
   aplicarDocumentosImportados(db);
   aplicarAviamentos(db);
+  aplicarGradeProducao(db);
+  aplicarCorteInfesto(db);
   aplicarColunaEmpresaId(db);
   aplicarCamposFornecedor(db);
   aplicarSchemaEquipe(db);
@@ -519,7 +521,14 @@ const TABELAS_TENANT = [
   'estoque_movimentos',
   'produto_bom_itens',
   'ordens_producao',
+  'ordem_grade',
+  'ordens_corte',
+  'ordem_corte_grade',
+  'cores_cadastro',
+  'tamanhos_cadastro',
   'ordem_requisitos',
+  'cortes_infesto',
+  'corte_infesto_itens',
   'etapas_producao',
   'fornecedores',
   'pedidos_compra',
@@ -661,6 +670,126 @@ function aplicarAviamentos(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS aviamento_saldos_empresa ON aviamento_saldos (empresa_id);
     CREATE INDEX IF NOT EXISTS aviamento_movimentos_variante
       ON aviamento_movimentos (empresa_id, variante_id, id);
+  `);
+}
+
+function aplicarGradeProducao(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cores_cadastro (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      nome TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS tamanhos_cadastro (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      nome TEXT NOT NULL,
+      ordem INTEGER NOT NULL DEFAULT 100,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS ordem_grade (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id) ON DELETE CASCADE,
+      cor TEXT NOT NULL,
+      tamanho TEXT NOT NULL,
+      quantidade INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS ordens_corte (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      codigo TEXT NOT NULL,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id),
+      cliente TEXT NOT NULL,
+      produto TEXT NOT NULL,
+      quantidade INTEGER NOT NULL,
+      prioridade TEXT,
+      data_prevista TEXT,
+      responsavel TEXT,
+      observacoes TEXT,
+      cliente_id INTEGER,
+      produto_id INTEGER,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS ordem_corte_grade (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      cor TEXT NOT NULL,
+      tamanho TEXT NOT NULL,
+      quantidade INTEGER NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS cores_cadastro_nome
+      ON cores_cadastro (empresa_id, lower(nome));
+    CREATE UNIQUE INDEX IF NOT EXISTS tamanhos_cadastro_nome
+      ON tamanhos_cadastro (empresa_id, lower(nome));
+    CREATE INDEX IF NOT EXISTS tamanhos_cadastro_ordem
+      ON tamanhos_cadastro (empresa_id, ordem, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ordem_grade_chave
+      ON ordem_grade (ordem_id, lower(cor), lower(tamanho));
+    CREATE INDEX IF NOT EXISTS ordem_grade_empresa
+      ON ordem_grade (empresa_id, ordem_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ordens_corte_ordem
+      ON ordens_corte (empresa_id, ordem_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ordens_corte_codigo
+      ON ordens_corte (empresa_id, codigo);
+    CREATE UNIQUE INDEX IF NOT EXISTS ordem_corte_grade_chave
+      ON ordem_corte_grade (ordem_corte_id, lower(cor), lower(tamanho));
+  `);
+
+  if (!colunaExiste(db, 'cores_cadastro', 'codigo')) {
+    db.exec('ALTER TABLE cores_cadastro ADD COLUMN codigo TEXT');
+  }
+  if (!colunaExiste(db, 'cores_cadastro', 'hex')) {
+    db.exec('ALTER TABLE cores_cadastro ADD COLUMN hex TEXT');
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cores_cadastro_codigo
+      ON cores_cadastro (empresa_id, lower(codigo))
+      WHERE codigo IS NOT NULL AND codigo != '';
+  `);
+}
+
+function aplicarCorteInfesto(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cortes_infesto (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id),
+      materia_prima_id INTEGER NOT NULL,
+      cor TEXT NOT NULL,
+      quantidade_pecas INTEGER NOT NULL,
+      camadas INTEGER NOT NULL,
+      metragem REAL NOT NULL,
+      peso_real REAL NOT NULL,
+      quantidade_baixada REAL NOT NULL,
+      unidade_baixa TEXT NOT NULL,
+      movimento_id INTEGER,
+      concluido_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS corte_infesto_itens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      corte_infesto_id INTEGER NOT NULL REFERENCES cortes_infesto(id),
+      cor TEXT NOT NULL,
+      tamanho TEXT NOT NULL,
+      quantidade INTEGER NOT NULL
+    );
+
+    DROP INDEX IF EXISTS cortes_infesto_ordem;
+    CREATE INDEX IF NOT EXISTS cortes_infesto_ordem
+      ON cortes_infesto (empresa_id, ordem_id);
+    CREATE INDEX IF NOT EXISTS cortes_infesto_empresa
+      ON cortes_infesto (empresa_id, concluido_em);
+    CREATE INDEX IF NOT EXISTS corte_infesto_itens_corte
+      ON corte_infesto_itens (corte_infesto_id);
   `);
 }
 

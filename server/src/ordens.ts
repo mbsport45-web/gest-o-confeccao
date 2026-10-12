@@ -1,6 +1,28 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import {
+  type CelulaGrade,
+  type OrdemCorte,
+  criarCor,
+  criarOuObterOrdemCorte,
+  criarTamanho,
+  editarCor,
+  excluirCor,
+  gravarGrade,
+  lerGrade,
+  listarCores,
+  listarTamanhos,
+  obterOrdemCorte,
+  resumoTamanhos,
+  validarGrade,
+} from './ordensGrade.js';
+import {
+  concluirCorteInfesto,
+  estornarCortesInfesto,
+  listarCortesInfesto,
+  resumirCorteInfesto,
+} from './corteInfesto.js';
 import { sincronizarStatusPedidoFromOps } from './pedidos.js';
 import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
@@ -48,6 +70,45 @@ const requisitoSchema = z.object({
   quantidade: z.number().positive('quantidade deve ser maior que zero'),
 });
 
+const celulaGradeSchema = z.object({
+  cor: z.string().trim().min(1, 'cor é obrigatória'),
+  tamanho: z.string().trim().min(1, 'tamanho é obrigatório'),
+  quantidade: z.number().int().min(0, 'quantidade da grade não pode ser negativa'),
+});
+
+const nomeCadastroSchema = z.object({
+  nome: z.string().trim().min(1, 'nome é obrigatório').max(80),
+});
+
+const corteInfestoSchema = z.object({
+  materia_prima_id: z.number().int().positive(),
+  cor: z.string().trim().min(1, 'Informe a cor').max(80),
+  camadas: z.number().int().positive('Informe o número de camadas do enfesto'),
+  metragem: z.number().positive('Informe a metragem consumida').optional(),
+  peso_real: z.number().positive('Informe o peso real consumido').optional(),
+  itens: z
+    .array(
+      z.object({
+        tamanho: z.string().trim().min(1).max(40),
+        quantidade: z.number().int().min(0),
+      }),
+    )
+    .min(1),
+  autorizar_excedente: z.boolean().optional(),
+});
+
+const corCadastroSchema = z.object({
+  nome: z.string().trim().min(1, 'nome é obrigatório').max(80),
+  codigo: z.string().trim().max(40).optional().nullable(),
+  hex: z.string().trim().max(20).optional().nullable(),
+});
+
+function responderCadastro(res: Response, e: unknown) {
+  const status = (e as { status?: number }).status;
+  if (!status || status >= 500) throw e;
+  return res.status(status).json({ erro: (e as Error).message });
+}
+
 const criarOrdemSchema = z
   .object({
     cliente: z.string().trim().min(1, 'cliente é obrigatório').optional(),
@@ -76,6 +137,7 @@ const criarOrdemSchema = z
       .transform((v) => (v ? v : undefined)),
     responsavel: textoOpcional,
     requisitos: z.array(requisitoSchema).optional(),
+    grade: z.array(celulaGradeSchema).optional(),
   })
   .refine((d) => Boolean(d.cliente || d.cliente_id), {
     message: 'cliente é obrigatório',
@@ -85,7 +147,7 @@ const criarOrdemSchema = z
     message: 'produto é obrigatório',
     path: ['produto'],
   })
-  .refine((d) => Boolean(d.tamanho || d.variante_id), {
+  .refine((d) => Boolean(d.tamanho || d.variante_id || (d.grade && d.grade.length > 0)), {
     message: 'tamanho é obrigatório',
     path: ['tamanho'],
   });
@@ -126,6 +188,7 @@ const atualizarOrdemSchema = z.object({
     .transform((v) => (v === '' ? null : v))
     .optional(),
   requisitos: z.array(requisitoSchema).optional(),
+  grade: z.array(celulaGradeSchema).optional(),
 });
 
 const fichaSchema = z.object({
@@ -167,6 +230,9 @@ export interface OrdemProducao {
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  grade?: CelulaGrade[];
+  referencia?: string | null;
+  ordem_corte?: Pick<OrdemCorte, 'id' | 'codigo' | 'quantidade' | 'grade'> | null;
 }
 
 function podeTransicionar(
@@ -289,11 +355,24 @@ export function createOrdensRouter(db: AppDatabase): Router {
     }));
   }
 
+  function completarOrdem(ordem: OrdemProducao, comRequisitos = false): OrdemProducao {
+    ordem.grade = lerGrade(db, ordem.empresa_id, ordem.id);
+    const produto = ordem.produto_id
+      ? (getProduto.get(ordem.produto_id, ordem.empresa_id) as { sku: string | null } | undefined)
+      : undefined;
+    ordem.referencia = produto?.sku ?? null;
+    const corte = obterOrdemCorte(db, ordem.empresa_id, ordem.id);
+    ordem.ordem_corte = corte
+      ? { id: corte.id, codigo: corte.codigo, quantidade: corte.quantidade, grade: corte.grade }
+      : null;
+    if (comRequisitos) ordem.requisitos = mapRequisitos(ordem.id);
+    return ordem;
+  }
+
   function mapOrdem(id: number, empresaId: number, comRequisitos = false): OrdemProducao | undefined {
     const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
     if (!ordem) return undefined;
-    if (comRequisitos) ordem.requisitos = mapRequisitos(id);
-    return ordem;
+    return completarOrdem(ordem, comRequisitos);
   }
 
   function carregarBom(produtoId: number, varianteId: number | null, empresaId: number) {
@@ -482,7 +561,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
       movimento_id: number | null;
     }>;
     for (const req of requisitos) {
-      if (!req.movimento_id) continue;
+      if (!req.movimento_id || !(req.quantidade_total > 0)) continue;
       lancarMovimentoMateria(
         req.materia_prima_id,
         'entrada',
@@ -502,12 +581,13 @@ export function createOrdensRouter(db: AppDatabase): Router {
       cliente_id?: number | null;
       produto_id?: number | null;
       variante_id?: number | null;
+      distribuicao?: boolean;
     },
     empresaId: number,
   ) {
     let clienteId = input.cliente_id ?? null;
     let produtoId = input.produto_id ?? null;
-    let varianteId = input.variante_id ?? null;
+    let varianteId = input.distribuicao ? null : (input.variante_id ?? null);
     let clienteNome = input.cliente?.trim() ?? '';
     let produtoNome = input.produto?.trim() ?? '';
     let tamanho = input.tamanho?.trim() ?? '';
@@ -555,7 +635,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         )
         .get(empresaId, produtoNome) as { id: number } | undefined;
       produtoId = p?.id ?? null;
-      if (produtoId && tamanho && !varianteId) {
+      if (produtoId && tamanho && !varianteId && !input.distribuicao) {
         const v = db
           .prepare(
             `SELECT id FROM produto_variantes
@@ -701,21 +781,23 @@ export function createOrdensRouter(db: AppDatabase): Router {
       const ordens = db
         .prepare(`SELECT * ${from} ORDER BY datetime(criado_em) DESC, id DESC`)
         .all(params) as OrdemProducao[];
-      return res.json(ordens);
+      return res.json(ordens.map((ordem) => completarOrdem(ordem)));
     }
 
     const total = (db.prepare(`SELECT COUNT(*) AS n ${from}`).get(params) as { n: number }).n;
-    const data = db
-      .prepare(
-        `SELECT * ${from}
+    const data = (
+      db
+        .prepare(
+          `SELECT * ${from}
          ORDER BY datetime(criado_em) DESC, id DESC
          LIMIT @limit OFFSET @offset`,
-      )
-      .all({
-        ...params,
-        limit: porPagina,
-        offset: (pagina - 1) * porPagina,
-      }) as OrdemProducao[];
+        )
+        .all({
+          ...params,
+          limit: porPagina,
+          offset: (pagina - 1) * porPagina,
+        }) as OrdemProducao[]
+    ).map((ordem) => completarOrdem(ordem));
 
     res.json({
       data,
@@ -724,6 +806,135 @@ export function createOrdensRouter(db: AppDatabase): Router {
       total,
       total_paginas: Math.max(1, Math.ceil(total / porPagina)),
     });
+  });
+
+  router.get('/cores', (req, res) => {
+    const busca = String(req.query.q ?? '');
+    res.json(listarCores(db, empresaDaSessao(req), busca));
+  });
+
+  router.post('/cores', (req, res) => {
+    const parsed = corCadastroSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ erro: 'Informe o nome da cor' });
+    }
+    try {
+      const cor = criarCor(db, empresaDaSessao(req), parsed.data);
+      res.status(cor.ja_existia ? 200 : 201).json(cor);
+    } catch (e) {
+      return responderCadastro(res, e);
+    }
+  });
+
+  router.patch('/cores/:id', (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ erro: 'Cor não encontrada' });
+    }
+    const parsed = corCadastroSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ erro: 'Informe o nome da cor' });
+    }
+    try {
+      res.json(editarCor(db, empresaDaSessao(req), id, parsed.data));
+    } catch (e) {
+      return responderCadastro(res, e);
+    }
+  });
+
+  router.delete('/cores/:id', (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ erro: 'Cor não encontrada' });
+    }
+    try {
+      excluirCor(db, empresaDaSessao(req), id);
+      res.status(204).end();
+    } catch (e) {
+      return responderCadastro(res, e);
+    }
+  });
+
+  router.get('/tamanhos', (req, res) => {
+    res.json(listarTamanhos(db, empresaDaSessao(req)));
+  });
+
+  router.post('/tamanhos', (req, res) => {
+    const parsed = nomeCadastroSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ erro: 'Informe o nome do tamanho' });
+    }
+    const tamanho = criarTamanho(db, empresaDaSessao(req), parsed.data.nome);
+    res.status(tamanho.ja_existia ? 200 : 201).json(tamanho);
+  });
+
+  router.get('/corte-infesto', (req, res) => {
+    res.json(listarCortesInfesto(db, empresaDaSessao(req)));
+  });
+
+  router.get('/:id/corte-infesto', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    res.json(resumirCorteInfesto(db, empresaId, id));
+  });
+
+  router.post('/:id/corte-infesto', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const parsed = corteInfestoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Informe tecido, cor, quantidades por tamanho, camadas e o consumo do tecido',
+      });
+    }
+    try {
+      const aplicar = db.transaction(() => {
+        const antes = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+        if (!antes) {
+          throw Object.assign(new Error('Ordem de produção não encontrada'), { status: 404 });
+        }
+        const corte = concluirCorteInfesto(db, empresaId, id, parsed.data);
+        if (corte.avancou && AINDA_PLANEJADA.has(antes.status)) {
+          const depois = getStmt.get(id, empresaId) as OrdemProducao;
+          const consumo = consumirMateriais(depois);
+          if (!consumo.ok) throw Object.assign(new Error(consumo.erro), { status: consumo.status });
+        }
+        return corte;
+      });
+      const corte = aplicar();
+      sincronizarStatusPedidoFromOps(db, id);
+      const ordem = mapOrdem(id, empresaId, true);
+      res.status(201).json({ ...corte, ordem });
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
+  });
+
+  router.get('/:id/ordem-corte', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const corte = obterOrdemCorte(db, empresaId, id);
+    if (!corte) return res.status(404).json({ erro: 'Ordem de corte não encontrada' });
+    res.json(corte);
+  });
+
+  router.post('/:id/ordem-corte', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    try {
+      const resultado = criarOuObterOrdemCorte(db, empresaId, ordem);
+      res.status(resultado.criada ? 201 : 200).json({ ...resultado.corte, criada: resultado.criada });
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
   });
 
   router.get('/:id', (req, res) => {
@@ -746,7 +957,20 @@ export function createOrdensRouter(db: AppDatabase): Router {
     try {
       const data = parsed.data;
       const empresaId = empresaDaSessao(req);
-      const vinculos = resolverVinculos(data, empresaId);
+      const comGrade = Boolean(data.grade?.length);
+      if (data.grade) {
+        const erroGrade = validarGrade(data.grade, data.quantidade);
+        if (erroGrade) return res.status(400).json({ erro: erroGrade });
+      }
+      const vinculos = resolverVinculos(
+        {
+          ...data,
+          tamanho: comGrade ? resumoTamanhos(data.grade ?? []) : data.tamanho,
+          variante_id: comGrade ? null : data.variante_id,
+          distribuicao: comGrade,
+        },
+        empresaId,
+      );
       if (data.codigo && getByCodigo.get(data.codigo, 0, empresaId)) {
         return res.status(409).json({ erro: 'Já existe uma OP com este código' });
       }
@@ -780,6 +1004,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         }));
       }
       if (itens.length) gravarRequisitos(id, data.quantidade, itens, empresaId);
+      if (comGrade && data.grade) gravarGrade(db, empresaId, id, data.grade);
 
       const criada = mapOrdem(id, empresaId, true)!;
       if (CONSOME_ESTOQUE.has(criada.status)) {
@@ -830,17 +1055,36 @@ export function createOrdensRouter(db: AppDatabase): Router {
     }
 
     try {
+      const quantidade = data.quantidade ?? atual.quantidade;
+      const gradeAtual = lerGrade(db, empresaId, id);
+      const comGrade = Boolean(data.grade?.length);
+      if (data.grade) {
+        const erroGrade = validarGrade(data.grade, quantidade);
+        if (erroGrade) return res.status(400).json({ erro: erroGrade });
+      } else if (
+        gradeAtual.length > 0 &&
+        data.quantidade !== undefined &&
+        data.quantidade !== atual.quantidade
+      ) {
+        const erroGrade = validarGrade(gradeAtual, quantidade);
+        if (erroGrade) return res.status(400).json({ erro: erroGrade });
+      }
+      const distribuicao = comGrade || gradeAtual.length > 0;
+
       const aplicar = db.transaction(() => {
         const vinculos = resolverVinculos({
           cliente: data.cliente ?? atual.cliente,
           produto: data.produto ?? atual.produto,
-          tamanho: data.tamanho ?? atual.tamanho,
+          tamanho: comGrade ? resumoTamanhos(data.grade ?? []) : (data.tamanho ?? atual.tamanho),
           cliente_id: data.cliente_id === undefined ? atual.cliente_id : data.cliente_id,
           produto_id: data.produto_id === undefined ? atual.produto_id : data.produto_id,
-          variante_id: data.variante_id === undefined ? atual.variante_id : data.variante_id,
+          variante_id: comGrade
+            ? null
+            : data.variante_id === undefined
+              ? atual.variante_id
+              : data.variante_id,
+          distribuicao,
         }, empresaId);
-
-        const quantidade = data.quantidade ?? atual.quantidade;
         const novoStatus = data.status ?? atual.status;
 
         db.prepare(
@@ -879,6 +1123,8 @@ export function createOrdensRouter(db: AppDatabase): Router {
           responsavel: data.responsavel === undefined ? atual.responsavel : data.responsavel,
         });
 
+        if (comGrade && data.grade) gravarGrade(db, empresaId, id, data.grade);
+
         if (data.requisitos) {
           gravarRequisitos(id, quantidade, data.requisitos, empresaId);
         } else if (data.quantidade && data.quantidade !== atual.quantidade) {
@@ -905,6 +1151,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
           }
         }
         if (novoStatus === 'cancelada' && CONSOME_ESTOQUE.has(atual.status)) {
+          estornarCortesInfesto(db, empresaId, id);
           estornarMateriais(depois);
         }
       });
@@ -930,9 +1177,19 @@ export function createOrdensRouter(db: AppDatabase): Router {
         erro: 'Não é possível excluir uma OP em produção. Cancele-a primeiro.',
       });
     }
-    const info = deleteStmt.run(id, empresaId);
-    if (info.changes === 0) {
-      return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    try {
+      const info = deleteStmt.run(id, empresaId);
+      if (info.changes === 0) {
+        return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+      }
+    } catch (e) {
+      const err = e as Error;
+      if (/FOREIGN KEY/i.test(err.message)) {
+        return res.status(409).json({
+          erro: 'Não é possível excluir uma OP que já tem ordem de corte',
+        });
+      }
+      throw e;
     }
     res.status(204).send();
   });

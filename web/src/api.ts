@@ -69,6 +69,54 @@ export interface OrdemProducao {
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  grade?: CelulaGrade[];
+  referencia?: string | null;
+  ordem_corte?: Pick<OrdemCorte, 'id' | 'codigo' | 'quantidade' | 'grade'> | null;
+}
+
+export interface CelulaGrade {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
+export interface CorCadastro {
+  id: number | null;
+  nome: string;
+  codigo?: string | null;
+  hex?: string | null;
+  ja_existia?: boolean;
+}
+
+export type CorPayload = {
+  nome: string;
+  codigo?: string | null;
+  hex?: string | null;
+};
+
+export interface TamanhoCadastro {
+  id: number;
+  nome: string;
+  ordem: number;
+  ja_existia?: boolean;
+}
+
+export interface OrdemCorte {
+  id: number;
+  codigo: string;
+  ordem_id: number;
+  cliente: string;
+  produto: string;
+  quantidade: number;
+  prioridade: string | null;
+  data_prevista: string | null;
+  responsavel: string | null;
+  observacoes: string | null;
+  cliente_id: number | null;
+  produto_id: number | null;
+  criado_em: string;
+  grade: CelulaGrade[];
+  criada?: boolean;
 }
 
 export interface NovaOrdem {
@@ -86,6 +134,7 @@ export interface NovaOrdem {
   observacoes?: string;
   responsavel?: string;
   requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
+  grade?: CelulaGrade[];
 }
 
 export interface ListaOrdens {
@@ -104,15 +153,32 @@ export interface FiltrosOrdens {
   por_pagina?: number;
 }
 
-async function parseError(res: Response): Promise<never> {
-  let mensagem = `Erro ${res.status}`;
-  try {
-    const body = await res.json();
-    if (body?.erro) mensagem = body.erro;
-  } catch {
-    // resposta sem corpo JSON
+export function mensagemErroApi(body: unknown, status = 0): string {
+  if (body && typeof body === 'object') {
+    const detalhes = (body as { detalhes?: unknown }).detalhes;
+    if (detalhes && typeof detalhes === 'object') {
+      for (const valor of Object.values(detalhes as Record<string, unknown>)) {
+        if (!Array.isArray(valor)) continue;
+        const texto = valor.find((item) => typeof item === 'string' && item);
+        if (typeof texto === 'string') return texto;
+      }
+    }
+    const erro = (body as { erro?: unknown }).erro;
+    if (typeof erro === 'string' && erro) return erro;
   }
-  throw new Error(mensagem);
+  return status ? `Erro ${status}` : 'Erro ao salvar';
+}
+
+async function parseError(res: Response): Promise<never> {
+  try {
+    const body: unknown = await res.json();
+    throw new Error(mensagemErroApi(body, res.status));
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error(`Erro ${res.status}`);
+    }
+    throw err;
+  }
 }
 
 function apiFetch(input: string, init: RequestInit = {}) {
@@ -178,6 +244,123 @@ export async function atualizarStatus(
 export async function removerOrdem(id: number): Promise<void> {
   const res = await apiFetch(`/api/ordens/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function listarCores(busca = ''): Promise<CorCadastro[]> {
+  const params = new URLSearchParams();
+  if (busca.trim()) params.set('q', busca.trim());
+  const res = await apiFetch(`/api/ordens/cores?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarCor(dados: string | CorPayload): Promise<CorCadastro> {
+  const body = typeof dados === 'string' ? { nome: dados } : dados;
+  const res = await apiFetch('/api/ordens/cores', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarCor(id: number, dados: CorPayload): Promise<CorCadastro> {
+  const res = await apiFetch(`/api/ordens/cores/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerCor(id: number): Promise<void> {
+  const res = await apiFetch(`/api/ordens/cores/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function listarTamanhos(): Promise<TamanhoCadastro[]> {
+  const res = await apiFetch('/api/ordens/tamanhos');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarTamanho(nome: string): Promise<TamanhoCadastro> {
+  const res = await apiFetch('/api/ordens/tamanhos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export interface ItemCorteInfesto {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
+export interface CorteInfesto {
+  id: number;
+  ordem_id: number;
+  materia_prima_id: number;
+  cor: string;
+  quantidade_pecas: number;
+  camadas: number;
+  metragem: number;
+  peso_real: number;
+  quantidade_baixada: number;
+  unidade_baixa: string;
+  movimento_id: number | null;
+  concluido_em: string;
+  tecido: string;
+  unidade: string;
+  ordem_codigo: string | null;
+  cliente: string;
+  produto: string;
+  status_ordem: string;
+  itens: ItemCorteInfesto[];
+  avancou?: boolean;
+  ordem?: OrdemProducao;
+}
+
+export async function listarCortesInfesto(): Promise<CorteInfesto[]> {
+  const res = await apiFetch('/api/ordens/corte-infesto');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function concluirCorteInfesto(
+  ordemId: number,
+  dados: {
+    materia_prima_id: number;
+    cor: string;
+    camadas: number;
+    metragem?: number;
+    peso_real?: number;
+    itens: Array<{ tamanho: string; quantidade: number }>;
+    autorizar_excedente?: boolean;
+  },
+): Promise<CorteInfesto> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/corte-infesto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarOrdemCorte(ordemId: number): Promise<OrdemCorte> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
 }
 
 export const STATUS_PEDIDO = [
