@@ -19,14 +19,24 @@ import {
   gradeDaOrdem,
 } from './gradeOrdem';
 
+type NovaCorGrade = {
+  nome: string;
+  codigo?: string;
+  hex?: string | null;
+};
+
 type EditorProps = {
   grade: GradeValor;
   quantidadeOrdem: number;
   catalogoCores: CorCadastro[];
   catalogoTamanhos: TamanhoCadastro[];
   onChange: (grade: GradeValor) => void;
-  onBuscarCores: (busca: string) => void;
+  onCadastrarCor?: (dados: NovaCorGrade) => Promise<{ nome: string }>;
 };
+
+function mesmoNome(a: string, b: string) {
+  return a.trim().toLocaleLowerCase('pt-BR') === b.trim().toLocaleLowerCase('pt-BR');
+}
 
 export function GradeOrdem({
   grade,
@@ -34,21 +44,27 @@ export function GradeOrdem({
   catalogoCores,
   catalogoTamanhos,
   onChange,
-  onBuscarCores,
+  onCadastrarCor,
 }: EditorProps) {
   const [buscaCor, setBuscaCor] = useState('');
+  const [selecionadas, setSelecionadas] = useState<string[]>([]);
+  const [cadastroCor, setCadastroCor] = useState(false);
+  const [novaCor, setNovaCor] = useState({ nome: '', codigo: '', hex: '#6366F1', usarHex: false });
+  const [salvandoCor, setSalvandoCor] = useState(false);
   const [tamanhoExtra, setTamanhoExtra] = useState('');
   const [rascunhoCor, setRascunhoCor] = useState<Record<number, string>>({});
   const [rascunhoTamanho, setRascunhoTamanho] = useState<Record<number, string>>({});
   const [erroLocal, setErroLocal] = useState<string | null>(null);
   const aviso = mensagemGrade(grade, quantidadeOrdem);
   const busca = buscaCor.trim().toLocaleLowerCase('pt-BR');
-  const sugestoes = catalogoCores.filter(
-    (cor) =>
-      Boolean(busca) &&
-      cor.nome.toLocaleLowerCase('pt-BR').includes(busca) &&
-      !grade.cores.some((atual) => atual.toLocaleLowerCase('pt-BR') === cor.nome.toLocaleLowerCase('pt-BR')),
-  );
+  const disponiveis = catalogoCores.filter((cor) => {
+    if (grade.cores.some((atual) => mesmoNome(atual, cor.nome))) return false;
+    if (!busca) return true;
+    return (
+      cor.nome.toLocaleLowerCase('pt-BR').includes(busca) ||
+      (cor.codigo ?? '').toLocaleLowerCase('pt-BR').includes(busca)
+    );
+  });
   const tamanhosDisponiveis = catalogoTamanhos.filter(
     (tamanho) =>
       !grade.tamanhos.some((atual) => atual.toLocaleLowerCase('pt-BR') === tamanho.nome.toLocaleLowerCase('pt-BR')),
@@ -57,14 +73,66 @@ export function GradeOrdem({
   function incluirCor(nome: string) {
     const limpo = nome.trim();
     if (!limpo) return;
-    if (grade.cores.some((cor) => cor.toLocaleLowerCase('pt-BR') === limpo.toLocaleLowerCase('pt-BR'))) {
+    if (grade.cores.some((cor) => mesmoNome(cor, limpo))) {
       setErroLocal('Esta cor já está na grade');
       return;
     }
     setErroLocal(null);
     onChange(adicionarCor(grade, limpo));
     setBuscaCor('');
-    onBuscarCores('');
+    setSelecionadas((atual) => atual.filter((item) => !mesmoNome(item, limpo)));
+  }
+
+  function alternarCor(nome: string) {
+    setSelecionadas((atual) =>
+      atual.some((item) => mesmoNome(item, nome))
+        ? atual.filter((item) => !mesmoNome(item, nome))
+        : [...atual, nome],
+    );
+  }
+
+  function incluirSelecionadas() {
+    const nomes = selecionadas.filter((nome) => !grade.cores.some((cor) => mesmoNome(cor, nome)));
+    if (nomes.length === 0) {
+      setErroLocal('Selecione ao menos uma cor');
+      return;
+    }
+    let proxima = grade;
+    for (const nome of nomes) proxima = adicionarCor(proxima, nome);
+    setSelecionadas([]);
+    setErroLocal(null);
+    onChange(proxima);
+  }
+
+  async function salvarNovaCor() {
+    const nome = novaCor.nome.trim();
+    if (!nome) {
+      setErroLocal('Informe o nome da cor');
+      return;
+    }
+    if (grade.cores.some((cor) => mesmoNome(cor, nome))) {
+      setErroLocal('Esta cor já está na grade');
+      return;
+    }
+    setSalvandoCor(true);
+    try {
+      const salva = onCadastrarCor
+        ? await onCadastrarCor({
+            nome,
+            codigo: novaCor.codigo.trim() || undefined,
+            hex: novaCor.usarHex ? novaCor.hex : null,
+          })
+        : { nome };
+      setErroLocal(null);
+      setCadastroCor(false);
+      setNovaCor({ nome: '', codigo: '', hex: '#6366F1', usarHex: false });
+      setBuscaCor('');
+      onChange(adicionarCor(grade, salva.nome));
+    } catch (e) {
+      setErroLocal((e as Error).message);
+    } finally {
+      setSalvandoCor(false);
+    }
   }
 
   function incluirTamanho(nome: string) {
@@ -130,20 +198,17 @@ export function GradeOrdem({
     <div className="grade-op">
       <h3 className="subtitulo">Grade de cores e tamanhos</h3>
       <p className="dica">
-        Digite a cor ou o tamanho e adicione na grade. Ao salvar a ordem, os nomes novos entram no cadastro da
-        empresa. A soma das células precisa ser igual à quantidade da ordem.
+        Selecione as cores já cadastradas ou cadastre uma nova sem sair da ordem. Cada cor entra na grade uma
+        única vez. A soma das células precisa ser igual à quantidade da ordem.
       </p>
       <div className="grade-op__cores">
         <label>
           Pesquisar cor
           <input
             value={buscaCor}
-            placeholder="Digite uma cor nova ou já usada"
+            placeholder="Nome ou código da cor"
             aria-label="Pesquisar cor"
-            onChange={(e) => {
-              setBuscaCor(e.target.value);
-              onBuscarCores(e.target.value);
-            }}
+            onChange={(e) => setBuscaCor(e.target.value)}
             onKeyDown={(e) => {
               if (e.key !== 'Enter') return;
               e.preventDefault();
@@ -155,17 +220,104 @@ export function GradeOrdem({
           Adicionar cor
         </button>
       </div>
-      {sugestoes.length > 0 && (
-        <div className="grade-op__sugestoes" role="list" aria-label="Cores já usadas">
-          {sugestoes.slice(0, 8).map((cor) => (
-            <button
-              key={`${cor.id ?? 'produto'}-${cor.nome}`}
-              type="button"
-              onClick={() => incluirCor(cor.nome)}
-            >
-              {cor.nome}
+      <div className="grade-op__lista" role="group" aria-label="Cores cadastradas">
+        {disponiveis.length === 0 ? (
+          <p className="dica">
+            {busca
+              ? 'Nenhuma cor cadastrada corresponde à pesquisa.'
+              : 'Nenhuma cor cadastrada fora da grade.'}
+          </p>
+        ) : (
+          disponiveis.map((cor) => (
+            <label key={`${cor.id ?? 'livre'}-${cor.nome}`} className="grade-op__opcao">
+              <input
+                type="checkbox"
+                aria-label={`Selecionar ${cor.nome}`}
+                checked={selecionadas.some((item) => mesmoNome(item, cor.nome))}
+                onChange={() => alternarCor(cor.nome)}
+              />
+              {cor.hex ? (
+                <span className="cor-amostra" style={{ background: cor.hex }} aria-hidden="true" />
+              ) : null}
+              <span>{cor.nome}</span>
+              {cor.codigo ? <small>{cor.codigo}</small> : null}
+            </label>
+          ))
+        )}
+      </div>
+      <div className="grade-op__cores">
+        <button
+          type="button"
+          className="btn-secundario"
+          disabled={selecionadas.length === 0}
+          onClick={incluirSelecionadas}
+        >
+          Adicionar selecionadas
+        </button>
+        <button
+          type="button"
+          className="btn-secundario"
+          onClick={() => {
+            setCadastroCor(true);
+            setNovaCor((atual) => ({ ...atual, nome: buscaCor.trim() || atual.nome }));
+          }}
+        >
+          Cadastrar nova cor
+        </button>
+      </div>
+      {cadastroCor && (
+        <div className="grade-op__nova">
+          <label>
+            Nome
+            <input
+              aria-label="Nome da nova cor"
+              value={novaCor.nome}
+              onChange={(e) => setNovaCor({ ...novaCor, nome: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.preventDefault();
+              }}
+            />
+          </label>
+          <label>
+            Código
+            <input
+              aria-label="Código da nova cor"
+              value={novaCor.codigo}
+              placeholder="Opcional"
+              onChange={(e) => setNovaCor({ ...novaCor, codigo: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.preventDefault();
+              }}
+            />
+          </label>
+          <label className="grade-op__opcao">
+            <input
+              type="checkbox"
+              aria-label="Usar identificação visual"
+              checked={novaCor.usarHex}
+              onChange={(e) => setNovaCor({ ...novaCor, usarHex: e.target.checked })}
+            />
+            Identificação visual
+          </label>
+          {novaCor.usarHex && (
+            <label>
+              Cor visual
+              <input
+                type="color"
+                aria-label="Cor visual da nova cor"
+                value={novaCor.hex}
+                onChange={(e) => setNovaCor({ ...novaCor, hex: e.target.value })}
+              />
+            </label>
+          )}
+          <div className="grade-op__cores">
+            <button type="button" disabled={salvandoCor} onClick={() => void salvarNovaCor()}>
+              {salvandoCor ? 'Salvando…' : 'Salvar cor'}
             </button>
-          ))}
+            <button type="button" className="btn-secundario" onClick={() => setCadastroCor(false)}>
+              Cancelar
+            </button>
+          </div>
         </div>
       )}
       <div className="grade-op__rolagem">
@@ -237,6 +389,16 @@ export function GradeOrdem({
                 <tr key={`cor-${indice}`}>
                   <th scope="row">
                     <div className="grade-op__cabecalho">
+                      {catalogoCores.find((item) => mesmoNome(item.nome, cor))?.hex ? (
+                        <span
+                          className="cor-amostra"
+                          style={{
+                            background:
+                              catalogoCores.find((item) => mesmoNome(item.nome, cor))?.hex || undefined,
+                          }}
+                          aria-hidden="true"
+                        />
+                      ) : null}
                       <input
                         aria-label={`Cor ${cor}`}
                         value={rascunhoCor[indice] ?? cor}

@@ -83,8 +83,16 @@ export interface CelulaGrade {
 export interface CorCadastro {
   id: number | null;
   nome: string;
+  codigo?: string | null;
+  hex?: string | null;
   ja_existia?: boolean;
 }
+
+export type CorPayload = {
+  nome: string;
+  codigo?: string | null;
+  hex?: string | null;
+};
 
 export interface TamanhoCadastro {
   id: number;
@@ -246,14 +254,30 @@ export async function listarCores(busca = ''): Promise<CorCadastro[]> {
   return res.json();
 }
 
-export async function criarCor(nome: string): Promise<CorCadastro> {
+export async function criarCor(dados: string | CorPayload): Promise<CorCadastro> {
+  const body = typeof dados === 'string' ? { nome: dados } : dados;
   const res = await apiFetch('/api/ordens/cores', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nome }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) return parseError(res);
   return res.json();
+}
+
+export async function atualizarCor(id: number, dados: CorPayload): Promise<CorCadastro> {
+  const res = await apiFetch(`/api/ordens/cores/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerCor(id: number): Promise<void> {
+  const res = await apiFetch(`/api/ordens/cores/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
 }
 
 export async function listarTamanhos(): Promise<TamanhoCadastro[]> {

@@ -98,6 +98,8 @@ const ROTAS_PROTEGIDAS: Array<{ metodo: string; caminho: string }> = [
   { metodo: 'GET', caminho: '/api/ordens' },
   { metodo: 'GET', caminho: '/api/ordens/cores' },
   { metodo: 'POST', caminho: '/api/ordens/cores' },
+  { metodo: 'PATCH', caminho: '/api/ordens/cores/1' },
+  { metodo: 'DELETE', caminho: '/api/ordens/cores/1' },
   { metodo: 'GET', caminho: '/api/ordens/tamanhos' },
   { metodo: 'POST', caminho: '/api/ordens/tamanhos' },
   { metodo: 'GET', caminho: '/api/ordens/1/ordem-corte' },

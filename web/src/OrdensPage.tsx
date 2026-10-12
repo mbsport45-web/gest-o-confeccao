@@ -7,6 +7,7 @@ import {
   atualizarOrdem,
   atualizarStatus,
   criarCliente,
+  criarCor,
   criarOrdem,
   criarOrdemCorte,
   criarProduto,
@@ -76,7 +77,13 @@ function formatarData(valor: string | null): string {
   return `${day}/${m}/${y}`;
 }
 
-export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa } }) {
+export function OrdensPage({
+  sessao,
+  ativa = true,
+}: {
+  sessao: { assinatura: AssinaturaEmpresa };
+  ativa?: boolean;
+}) {
   const [ordens, setOrdens] = useState<OrdemProducao[]>([]);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -150,13 +157,17 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     listarMateriasPrimas({ por_pagina: 100, status: 'ativo' })
       .then((lista) => setMaterias(lista.data))
       .catch(() => undefined);
-    listarCores()
-      .then(setCatalogoCores)
-      .catch(() => undefined);
     listarTamanhos()
       .then(setCatalogoTamanhos)
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!ativa) return;
+    listarCores()
+      .then(setCatalogoCores)
+      .catch(() => undefined);
+  }, [ativa]);
 
   const recarregar = useCallback(async () => {
     try {
@@ -308,6 +319,17 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       requisitos,
       grade: celulasDaGrade(grade),
     };
+  }
+
+  async function cadastrarCorNaOrdem(dados: { nome: string; codigo?: string; hex?: string | null }) {
+    const cor = await criarCor(dados);
+    setCatalogoCores((atual) => {
+      const restante = atual.filter(
+        (item) => item.nome.toLocaleLowerCase('pt-BR') !== cor.nome.toLocaleLowerCase('pt-BR'),
+      );
+      return [...restante, cor].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    });
+    return cor;
   }
 
   async function salvarClienteNovo() {
@@ -755,9 +777,7 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
               catalogoCores={catalogoCores}
               catalogoTamanhos={catalogoTamanhos}
               onChange={setGrade}
-              onBuscarCores={(busca) => {
-                listarCores(busca).then(setCatalogoCores).catch(() => undefined);
-              }}
+              onCadastrarCor={cadastrarCorNaOrdem}
             />
             <div className="form__row">
               <label>

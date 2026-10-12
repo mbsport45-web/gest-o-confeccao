@@ -607,8 +607,14 @@ describe('API de ordens de produção', () => {
     });
     await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
 
+    const cor = await api.get('/api/ordens/cores').query({ q: 'vinho' });
+    const edicaoAlheia = await outra.patch(`/api/ordens/cores/${cor.body[0].id}`).send({ nome: 'Outra' });
+    expect(edicaoAlheia.status).toBe(404);
+    const exclusaoAlheia = await outra.delete(`/api/ordens/cores/${cor.body[0].id}`);
+    expect(exclusaoAlheia.status).toBe(404);
+
     const coresOutra = await outra.get('/api/ordens/cores');
-    expect(coresOutra.body.map((cor: { nome: string }) => cor.nome)).not.toContain('Vinho');
+    expect(coresOutra.body.map((item: { nome: string }) => item.nome)).not.toContain('Vinho');
     const tamanhosOutra = await outra.get('/api/ordens/tamanhos');
     expect(tamanhosOutra.body.map((item: { nome: string }) => item.nome)).not.toContain('G4');
     expect(tamanhosOutra.body.map((item: { nome: string }) => item.nome)).toEqual([
@@ -618,5 +624,72 @@ describe('API de ordens de produção', () => {
     expect(leitura.status).toBe(404);
     const corte = await outra.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
     expect(corte.status).toBe(404);
+  });
+
+  it('pesquisa, edita e preserva a cor na ordem, e bloqueia exclusão em uso', async () => {
+    const criada = await api.post('/api/ordens/cores').send({
+      nome: 'Preto fosco',
+      codigo: 'PT-F',
+      hex: '#111',
+    });
+    expect(criada.status).toBe(201);
+    expect(criada.body.hex).toBe('#111111');
+    expect(criada.body.codigo).toBe('PT-F');
+
+    const porCodigo = await api.get('/api/ordens/cores').query({ q: 'pt-f' });
+    expect(porCodigo.body).toEqual([
+      expect.objectContaining({ id: criada.body.id, nome: 'Preto fosco', codigo: 'PT-F' }),
+    ]);
+
+    const produto = await api.post('/api/produtos').send({ sku: 'COR-1', nome: 'Peça cor' });
+    const op = await api.post('/api/ordens').send({
+      cliente: 'Loja Cor',
+      produto_id: produto.body.id,
+      quantidade: 3,
+      status: 'planejada',
+      grade: [{ cor: 'Preto fosco', tamanho: 'M', quantidade: 3 }],
+    });
+    expect(op.status).toBe(201);
+    await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+
+    const editada = await api.patch(`/api/ordens/cores/${criada.body.id}`).send({
+      nome: 'Preto carvão',
+      codigo: 'PT-C',
+      hex: '#222222',
+    });
+    expect(editada.status).toBe(200);
+    expect(editada.body.nome).toBe('Preto carvão');
+
+    const reaberta = await api.get(`/api/ordens/${op.body.id}`);
+    expect(reaberta.body.grade[0].cor).toBe('Preto carvão');
+    expect(reaberta.body.ordem_corte.grade[0].cor).toBe('Preto fosco');
+
+    const exclusao = await api.delete(`/api/ordens/cores/${criada.body.id}`);
+    expect(exclusao.status).toBe(409);
+    expect(exclusao.body.erro).toBe('Esta cor está em uso e não pode ser excluída');
+
+    const livre = await api.post('/api/ordens/cores').send({ nome: 'Areia', codigo: 'AR' });
+    expect(livre.status).toBe(201);
+    const repetido = await api.post('/api/ordens/cores').send({ nome: 'Areia clara', codigo: 'ar' });
+    expect(repetido.status).toBe(409);
+    expect(repetido.body.erro).toBe('Código já cadastrado');
+    const invalida = await api.post('/api/ordens/cores').send({ nome: 'Rosa', hex: 'vermelho' });
+    expect(invalida.status).toBe(400);
+
+    const removida = await api.delete(`/api/ordens/cores/${livre.body.id}`);
+    expect(removida.status).toBe(204);
+    const lista = await api.get('/api/ordens/cores').query({ q: 'areia' });
+    expect(lista.body).toEqual([]);
+
+    const produtoPreto = await api.post('/api/produtos').send({
+      sku: 'COR-PROD',
+      nome: 'Produto com cor',
+      cores: ['Lavanda'],
+      tamanhos: ['M'],
+    });
+    expect(produtoPreto.status).toBe(201);
+    const lavanda = await api.post('/api/ordens/cores').send({ nome: 'Lavanda' });
+    const bloqueio = await api.delete(`/api/ordens/cores/${lavanda.body.id}`);
+    expect(bloqueio.status).toBe(409);
   });
 });

@@ -7,7 +7,7 @@ import { EstoquePage } from './EstoquePage';
 import { FinanceiroPage } from './FinanceiroPage';
 import { MateriasPage } from './MateriasPage';
 import { OrdemDetalhePage } from './OrdemDetalhePage';
-import { OrdensPage } from './OrdensPage';
+import { OrdensArea } from './OrdensArea';
 import { PedidosPage } from './PedidosPage';
 import { ProdutosPage } from './ProdutosPage';
 import { RelatoriosPage } from './RelatoriosPage';
@@ -299,7 +299,7 @@ function AppAutenticado({
               {paginaAtual === 'estoque' && <EstoquePage />}
               {paginaAtual === 'pedidos' && <PedidosPage sessao={sessao} onAbrirOp={abrirOp} />}
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
-              {paginaAtual === 'ordens' && <OrdensPage sessao={sessao} />}
+              {paginaAtual === 'ordens' && <OrdensArea sessao={sessao} />}
               {paginaAtual === 'etapas' && <EtapasPage />}
               {paginaAtual === 'compras' && <ComprasEstoquePage permissoes={sessao.permissoes} />}
               {paginaAtual === 'financeiro' && <FinanceiroPage />}

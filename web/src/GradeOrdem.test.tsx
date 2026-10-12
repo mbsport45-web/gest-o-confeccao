@@ -1,19 +1,27 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GradeOrdem } from './GradeOrdem';
 import { gradeVazia, type GradeValor } from './gradeOrdem';
 
-function Harness({ inicial = gradeVazia([]) }: { inicial?: GradeValor }) {
+function Harness({
+  inicial = gradeVazia([]),
+  catalogoCores = [{ id: 1, nome: 'Preto' }],
+  onCadastrarCor,
+}: {
+  inicial?: GradeValor;
+  catalogoCores?: Array<{ id: number | null; nome: string; codigo?: string | null; hex?: string | null }>;
+  onCadastrarCor?: (dados: { nome: string; codigo?: string; hex?: string | null }) => Promise<{ nome: string }>;
+}) {
   const [grade, setGrade] = useState(inicial);
   return (
     <GradeOrdem
       grade={grade}
       quantidadeOrdem={3}
-      catalogoCores={[{ id: 1, nome: 'Preto' }]}
+      catalogoCores={catalogoCores}
       catalogoTamanhos={[{ id: 1, nome: 'M', ordem: 2 }]}
       onChange={setGrade}
-      onBuscarCores={() => undefined}
+      onCadastrarCor={onCadastrarCor}
     />
   );
 }
@@ -52,5 +60,45 @@ describe('grade editável da ordem', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remover cor Azul' }));
     expect(screen.queryByLabelText('Cor Azul')).toBeNull();
+  });
+
+  it('seleciona várias cores cadastradas e adiciona cada uma uma vez', () => {
+    render(
+      <Harness
+        catalogoCores={[
+          { id: 1, nome: 'Preto', codigo: 'PT' },
+          { id: 2, nome: 'Branco', codigo: 'BR' },
+          { id: 3, nome: 'Azul' },
+        ]}
+      />,
+    );
+    expect(screen.getByRole('checkbox', { name: 'Selecionar Preto' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Pesquisar cor'), { target: { value: 'PT' } });
+    expect(screen.getByRole('checkbox', { name: 'Selecionar Preto' })).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: 'Selecionar Branco' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Pesquisar cor'), { target: { value: '' } });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Selecionar Preto' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Selecionar Branco' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar selecionadas' }));
+
+    expect(screen.getByLabelText('Cor Preto')).toBeTruthy();
+    expect(screen.getByLabelText('Cor Branco')).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: 'Selecionar Preto' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Selecionar Branco' })).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Selecionar Azul' })).toBeTruthy();
+  });
+
+  it('cadastra uma cor nova e inclui na grade atual', async () => {
+    const salvar = vi.fn().mockResolvedValue({ nome: 'Oliva', codigo: 'OL', hex: '#556B2F' });
+    render(<Harness onCadastrarCor={salvar} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cadastrar nova cor' }));
+    fireEvent.change(screen.getByLabelText('Nome da nova cor'), { target: { value: 'Oliva' } });
+    fireEvent.change(screen.getByLabelText('Código da nova cor'), { target: { value: 'OL' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Usar identificação visual' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar cor' }));
+
+    expect(await screen.findByLabelText('Cor Oliva')).toBeTruthy();
+    expect(salvar).toHaveBeenCalledWith({ nome: 'Oliva', codigo: 'OL', hex: '#6366F1' });
   });
 });

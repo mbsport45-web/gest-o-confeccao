@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import {
@@ -7,6 +7,8 @@ import {
   criarCor,
   criarOuObterOrdemCorte,
   criarTamanho,
+  editarCor,
+  excluirCor,
   gravarGrade,
   lerGrade,
   listarCores,
@@ -71,6 +73,18 @@ const celulaGradeSchema = z.object({
 const nomeCadastroSchema = z.object({
   nome: z.string().trim().min(1, 'nome é obrigatório').max(80),
 });
+
+const corCadastroSchema = z.object({
+  nome: z.string().trim().min(1, 'nome é obrigatório').max(80),
+  codigo: z.string().trim().max(40).optional().nullable(),
+  hex: z.string().trim().max(20).optional().nullable(),
+});
+
+function responderCadastro(res: Response, e: unknown) {
+  const status = (e as { status?: number }).status;
+  if (!status || status >= 500) throw e;
+  return res.status(status).json({ erro: (e as Error).message });
+}
 
 const criarOrdemSchema = z
   .object({
@@ -777,12 +791,45 @@ export function createOrdensRouter(db: AppDatabase): Router {
   });
 
   router.post('/cores', (req, res) => {
-    const parsed = nomeCadastroSchema.safeParse(req.body);
+    const parsed = corCadastroSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ erro: 'Informe o nome da cor' });
     }
-    const cor = criarCor(db, empresaDaSessao(req), parsed.data.nome);
-    res.status(cor.ja_existia ? 200 : 201).json(cor);
+    try {
+      const cor = criarCor(db, empresaDaSessao(req), parsed.data);
+      res.status(cor.ja_existia ? 200 : 201).json(cor);
+    } catch (e) {
+      return responderCadastro(res, e);
+    }
+  });
+
+  router.patch('/cores/:id', (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ erro: 'Cor não encontrada' });
+    }
+    const parsed = corCadastroSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ erro: 'Informe o nome da cor' });
+    }
+    try {
+      res.json(editarCor(db, empresaDaSessao(req), id, parsed.data));
+    } catch (e) {
+      return responderCadastro(res, e);
+    }
+  });
+
+  router.delete('/cores/:id', (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ erro: 'Cor não encontrada' });
+    }
+    try {
+      excluirCor(db, empresaDaSessao(req), id);
+      res.status(204).end();
+    } catch (e) {
+      return responderCadastro(res, e);
+    }
   });
 
   router.get('/tamanhos', (req, res) => {

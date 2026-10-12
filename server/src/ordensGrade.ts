@@ -129,32 +129,210 @@ function coresDosProdutos(db: AppDatabase, empresaId: number): string[] {
   return [...variantes.map((item) => item.nome), ...extras];
 }
 
-export function listarCores(db: AppDatabase, empresaId: number, busca = '') {
+export type CorCadastro = {
+  id: number | null;
+  nome: string;
+  codigo: string | null;
+  hex: string | null;
+};
+
+export type CorSalva = {
+  id: number;
+  nome: string;
+  codigo: string | null;
+  hex: string | null;
+  ja_existia?: boolean;
+};
+
+type CorEntrada = {
+  nome: string;
+  codigo?: string | null;
+  hex?: string | null;
+};
+
+function normalizarCodigo(valor: string | null | undefined): string | null {
+  const limpo = valor?.trim() ?? '';
+  return limpo || null;
+}
+
+export function normalizarHex(valor: string | null | undefined): string | null {
+  const limpo = valor?.trim() ?? '';
+  if (!limpo) return null;
+  const completo = limpo.match(/^#?([0-9a-fA-F]{6})$/);
+  if (completo) return `#${completo[1].toUpperCase()}`;
+  const curto = limpo.match(/^#?([0-9a-fA-F]{3})$/);
+  if (curto) {
+    const [r, g, b] = curto[1].toUpperCase().split('');
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  throw Object.assign(new Error('Identificação visual inválida. Use uma cor no formato #RRGGBB'), {
+    status: 400,
+  });
+}
+
+function lerCor(db: AppDatabase, empresaId: number, id: number): CorSalva | undefined {
+  return db
+    .prepare(
+      `SELECT id, nome, codigo, hex FROM cores_cadastro
+        WHERE id = ? AND empresa_id = ?`,
+    )
+    .get(id, empresaId) as CorSalva | undefined;
+}
+
+function codigoEmUso(db: AppDatabase, empresaId: number, codigo: string, ignorarId?: number) {
+  const linha = db
+    .prepare(
+      `SELECT id FROM cores_cadastro
+        WHERE empresa_id = ? AND lower(codigo) = lower(?) AND id != ?`,
+    )
+    .get(empresaId, codigo, ignorarId ?? 0) as { id: number } | undefined;
+  return Boolean(linha);
+}
+
+export function listarCores(db: AppDatabase, empresaId: number, busca = ''): CorCadastro[] {
   const cadastradas = db
-    .prepare('SELECT id, nome FROM cores_cadastro WHERE empresa_id = ? ORDER BY nome COLLATE NOCASE')
-    .all(empresaId) as Array<{ id: number | null; nome: string }>;
-  const porNome = new Map<string, { id: number | null; nome: string }>();
-  for (const cor of [...cadastradas, ...coresDosProdutos(db, empresaId).map((nome) => ({ id: null, nome }))]) {
+    .prepare(
+      `SELECT id, nome, codigo, hex FROM cores_cadastro
+        WHERE empresa_id = ?
+        ORDER BY nome COLLATE NOCASE`,
+    )
+    .all(empresaId) as CorSalva[];
+  const porNome = new Map<string, CorCadastro>();
+  for (const cor of [
+    ...cadastradas,
+    ...coresDosProdutos(db, empresaId).map((nome) => ({
+      id: null,
+      nome,
+      codigo: null,
+      hex: null,
+    })),
+  ]) {
     const chaveNome = cor.nome.trim().toLocaleLowerCase('pt-BR');
     if (!chaveNome || porNome.has(chaveNome)) continue;
-    porNome.set(chaveNome, { id: cor.id, nome: cor.nome.trim() });
+    porNome.set(chaveNome, {
+      id: cor.id,
+      nome: cor.nome.trim(),
+      codigo: cor.codigo,
+      hex: cor.hex,
+    });
   }
   const termo = busca.trim().toLocaleLowerCase('pt-BR');
   return [...porNome.values()]
-    .filter((cor) => !termo || cor.nome.toLocaleLowerCase('pt-BR').includes(termo))
+    .filter((cor) => {
+      if (!termo) return true;
+      return (
+        cor.nome.toLocaleLowerCase('pt-BR').includes(termo) ||
+        (cor.codigo ?? '').toLocaleLowerCase('pt-BR').includes(termo)
+      );
+    })
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 }
 
-export function criarCor(db: AppDatabase, empresaId: number, nome: string) {
-  const limpo = nome.trim();
+export function criarCor(db: AppDatabase, empresaId: number, entrada: string | CorEntrada): CorSalva {
+  const dados = typeof entrada === 'string' ? { nome: entrada } : entrada;
+  const nome = dados.nome.trim();
+  if (!nome) throw Object.assign(new Error('Informe o nome da cor'), { status: 400 });
+  const codigo = normalizarCodigo(dados.codigo);
+  const hex = normalizarHex(dados.hex);
   const existente = db
-    .prepare('SELECT id, nome FROM cores_cadastro WHERE empresa_id = ? AND lower(nome) = lower(?)')
-    .get(empresaId, limpo) as { id: number; nome: string } | undefined;
+    .prepare(
+      `SELECT id, nome, codigo, hex FROM cores_cadastro
+        WHERE empresa_id = ? AND lower(nome) = lower(?)`,
+    )
+    .get(empresaId, nome) as CorSalva | undefined;
   if (existente) return { ...existente, ja_existia: true };
+  if (codigo && codigoEmUso(db, empresaId, codigo)) {
+    throw Object.assign(new Error('Código já cadastrado'), { status: 409 });
+  }
   const info = db
-    .prepare('INSERT INTO cores_cadastro (empresa_id, nome) VALUES (?, ?)')
-    .run(empresaId, limpo);
-  return { id: Number(info.lastInsertRowid), nome: limpo, ja_existia: false };
+    .prepare('INSERT INTO cores_cadastro (empresa_id, nome, codigo, hex) VALUES (?, ?, ?, ?)')
+    .run(empresaId, nome, codigo, hex);
+  return { id: Number(info.lastInsertRowid), nome, codigo, hex, ja_existia: false };
+}
+
+function corEmUso(db: AppDatabase, empresaId: number, nome: string): boolean {
+  const grade = db
+    .prepare('SELECT 1 AS ok FROM ordem_grade WHERE empresa_id = ? AND lower(cor) = lower(?) LIMIT 1')
+    .get(empresaId, nome) as { ok: number } | undefined;
+  if (grade) return true;
+  const corte = db
+    .prepare(
+      'SELECT 1 AS ok FROM ordem_corte_grade WHERE empresa_id = ? AND lower(cor) = lower(?) LIMIT 1',
+    )
+    .get(empresaId, nome) as { ok: number } | undefined;
+  if (corte) return true;
+  const variante = db
+    .prepare(
+      `SELECT 1 AS ok
+         FROM produto_variantes v
+         JOIN produtos p ON p.id = v.produto_id
+        WHERE p.empresa_id = ? AND lower(v.cor) = lower(?)
+        LIMIT 1`,
+    )
+    .get(empresaId, nome) as { ok: number } | undefined;
+  if (variante) return true;
+  const produtos = db
+    .prepare('SELECT cores FROM produtos WHERE empresa_id = ?')
+    .all(empresaId) as Array<{ cores: string }>;
+  const chaveNome = nome.trim().toLocaleLowerCase('pt-BR');
+  for (const produto of produtos) {
+    try {
+      const lista = JSON.parse(produto.cores) as unknown;
+      if (!Array.isArray(lista)) continue;
+      if (
+        lista.some(
+          (item) => typeof item === 'string' && item.trim().toLocaleLowerCase('pt-BR') === chaveNome,
+        )
+      ) {
+        return true;
+      }
+    } catch {
+      // cadastro antigo sem JSON de cores
+    }
+  }
+  return false;
+}
+
+export function editarCor(db: AppDatabase, empresaId: number, id: number, entrada: CorEntrada): CorSalva {
+  const atual = lerCor(db, empresaId, id);
+  if (!atual) throw Object.assign(new Error('Cor não encontrada'), { status: 404 });
+  const nome = entrada.nome.trim();
+  if (!nome) throw Object.assign(new Error('Informe o nome da cor'), { status: 400 });
+  const codigo = normalizarCodigo(entrada.codigo);
+  const hex = normalizarHex(entrada.hex);
+  const nomeDup = db
+    .prepare(
+      `SELECT id FROM cores_cadastro
+        WHERE empresa_id = ? AND lower(nome) = lower(?) AND id != ?`,
+    )
+    .get(empresaId, nome, id) as { id: number } | undefined;
+  if (nomeDup) throw Object.assign(new Error('Já existe uma cor com este nome'), { status: 409 });
+  if (codigo && codigoEmUso(db, empresaId, codigo, id)) {
+    throw Object.assign(new Error('Código já cadastrado'), { status: 409 });
+  }
+  const aplicar = db.transaction(() => {
+    db.prepare(
+      `UPDATE cores_cadastro SET nome = ?, codigo = ?, hex = ?
+        WHERE id = ? AND empresa_id = ?`,
+    ).run(nome, codigo, hex, id, empresaId);
+    if (atual.nome !== nome) {
+      db.prepare(
+        `UPDATE ordem_grade SET cor = ?
+          WHERE empresa_id = ? AND lower(cor) = lower(?)`,
+      ).run(nome, empresaId, atual.nome);
+    }
+  });
+  aplicar();
+  return { id, nome, codigo, hex };
+}
+
+export function excluirCor(db: AppDatabase, empresaId: number, id: number) {
+  const atual = lerCor(db, empresaId, id);
+  if (!atual) throw Object.assign(new Error('Cor não encontrada'), { status: 404 });
+  if (corEmUso(db, empresaId, atual.nome)) {
+    throw Object.assign(new Error('Esta cor está em uso e não pode ser excluída'), { status: 409 });
+  }
+  db.prepare('DELETE FROM cores_cadastro WHERE id = ? AND empresa_id = ?').run(id, empresaId);
 }
 
 export function lerGrade(db: AppDatabase, empresaId: number, ordemId: number): CelulaGrade[] {

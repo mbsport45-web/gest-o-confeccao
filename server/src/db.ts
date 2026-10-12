@@ -739,6 +739,18 @@ function aplicarGradeProducao(db: AppDatabase) {
     CREATE UNIQUE INDEX IF NOT EXISTS ordem_corte_grade_chave
       ON ordem_corte_grade (ordem_corte_id, lower(cor), lower(tamanho));
   `);
+
+  if (!colunaExiste(db, 'cores_cadastro', 'codigo')) {
+    db.exec('ALTER TABLE cores_cadastro ADD COLUMN codigo TEXT');
+  }
+  if (!colunaExiste(db, 'cores_cadastro', 'hex')) {
+    db.exec('ALTER TABLE cores_cadastro ADD COLUMN hex TEXT');
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS cores_cadastro_codigo
+      ON cores_cadastro (empresa_id, lower(codigo))
+      WHERE codigo IS NOT NULL AND codigo != '';
+  `);
 }
 
 function aplicarCamposFornecedor(db: AppDatabase) {
