@@ -329,6 +329,7 @@ export function CorteInfestoPage() {
                 <tr>
                   <th>Cor</th>
                   <th>Tamanhos</th>
+                  <th>Tecido</th>
                   <th>Camadas</th>
                   <th>Metragem</th>
                   <th>Peso real</th>
@@ -340,6 +341,7 @@ export function CorteInfestoPage() {
                   <tr key={execucao.id}>
                     <td>{execucao.cor}</td>
                     <td>{textoTamanhos(execucao)}</td>
+                    <td>{execucao.tecido}</td>
                     <td>{execucao.camadas}</td>
                     <td>{execucao.metragem}</td>
                     <td>{execucao.peso_real}</td>

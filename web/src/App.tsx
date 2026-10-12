@@ -99,7 +99,7 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
   },
   corte: {
     titulo: 'Corte / Infesto',
-    sub: 'Enfesto, baixa de tecido e conclusão do corte',
+    sub: 'Grade da ordem, corte por cor e enfesto do tecido',
   },
   etapas: {
     titulo: 'Produção/Etapas',
