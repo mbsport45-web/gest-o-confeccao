@@ -805,6 +805,11 @@ button {
   text-transform: none;
 }
 
+.grade-op__cabecalho input.grade-op__nome {
+  min-width: 9.5rem;
+  width: 11rem;
+}
+
 .grade-op th button,
 .grade-op .tabela th button {
   margin-left: 0;

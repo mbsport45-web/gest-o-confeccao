@@ -400,6 +400,7 @@ export function GradeOrdem({
                         />
                       ) : null}
                       <input
+                        className="grade-op__nome"
                         aria-label={`Cor ${cor}`}
                         value={rascunhoCor[indice] ?? cor}
                         onChange={(e) =>
