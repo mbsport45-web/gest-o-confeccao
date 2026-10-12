@@ -498,6 +498,7 @@ export function createDatabase(location: string) {
   aplicarDocumentosImportados(db);
   aplicarAviamentos(db);
   aplicarGradeProducao(db);
+  aplicarCorteInfesto(db);
   aplicarColunaEmpresaId(db);
   aplicarCamposFornecedor(db);
   aplicarSchemaEquipe(db);
@@ -526,6 +527,7 @@ const TABELAS_TENANT = [
   'cores_cadastro',
   'tamanhos_cadastro',
   'ordem_requisitos',
+  'cortes_infesto',
   'etapas_producao',
   'fornecedores',
   'pedidos_compra',
@@ -750,6 +752,31 @@ function aplicarGradeProducao(db: AppDatabase) {
     CREATE UNIQUE INDEX IF NOT EXISTS cores_cadastro_codigo
       ON cores_cadastro (empresa_id, lower(codigo))
       WHERE codigo IS NOT NULL AND codigo != '';
+  `);
+}
+
+function aplicarCorteInfesto(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cortes_infesto (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_id INTEGER NOT NULL REFERENCES ordens_producao(id),
+      materia_prima_id INTEGER NOT NULL,
+      cor TEXT NOT NULL,
+      quantidade_pecas INTEGER NOT NULL,
+      camadas INTEGER NOT NULL,
+      metragem REAL NOT NULL,
+      peso_real REAL NOT NULL,
+      quantidade_baixada REAL NOT NULL,
+      unidade_baixa TEXT NOT NULL,
+      movimento_id INTEGER,
+      concluido_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS cortes_infesto_ordem
+      ON cortes_infesto (empresa_id, ordem_id);
+    CREATE INDEX IF NOT EXISTS cortes_infesto_empresa
+      ON cortes_infesto (empresa_id, concluido_em);
   `);
 }
 

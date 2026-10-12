@@ -347,6 +347,29 @@ body {
   gap: 0.9rem;
 }
 
+.ficha {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.8rem 1rem;
+  margin: 0;
+}
+
+.ficha div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.ficha dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.ficha dd {
+  margin: 0;
+  font-weight: 650;
+}
+
 .form__row {
   display: flex;
   gap: 0.75rem;

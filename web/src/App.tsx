@@ -7,6 +7,7 @@ import { EstoquePage } from './EstoquePage';
 import { FinanceiroPage } from './FinanceiroPage';
 import { MateriasPage } from './MateriasPage';
 import { OrdemDetalhePage } from './OrdemDetalhePage';
+import { CorteInfestoPage } from './CorteInfestoPage';
 import { OrdensArea } from './OrdensArea';
 import { PedidosPage } from './PedidosPage';
 import { ProdutosPage } from './ProdutosPage';
@@ -37,6 +38,7 @@ type Pagina =
   | 'pedidos'
   | 'expedicao'
   | 'ordens'
+  | 'corte'
   | 'etapas'
   | 'compras'
   | 'financeiro'
@@ -53,6 +55,7 @@ const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'pedidos', label: 'Pedidos', modulo: 'pedidos' },
   { id: 'expedicao', label: 'Expedição', modulo: 'expedicao' },
   { id: 'ordens', label: 'Ordens de Produção', modulo: 'ordens' },
+  { id: 'corte', label: 'Corte / Infesto', modulo: 'ordens' },
   { id: 'etapas', label: 'Produção/Etapas', modulo: 'etapas' },
   { id: 'compras', label: 'Compras e Estoque', modulo: ['compras', 'fornecedores'] },
   { id: 'financeiro', label: 'Financeiro', modulo: 'financeiro' },
@@ -93,6 +96,10 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
   ordens: {
     titulo: 'Ordens de Produção',
     sub: 'Ordens, prioridade e previsão',
+  },
+  corte: {
+    titulo: 'Corte / Infesto',
+    sub: 'Enfesto, baixa de tecido e conclusão do corte',
   },
   etapas: {
     titulo: 'Produção/Etapas',
@@ -300,6 +307,7 @@ function AppAutenticado({
               {paginaAtual === 'pedidos' && <PedidosPage sessao={sessao} onAbrirOp={abrirOp} />}
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
               {paginaAtual === 'ordens' && <OrdensArea sessao={sessao} />}
+              {paginaAtual === 'corte' && <CorteInfestoPage />}
               {paginaAtual === 'etapas' && <EtapasPage />}
               {paginaAtual === 'compras' && <ComprasEstoquePage permissoes={sessao.permissoes} />}
               {paginaAtual === 'financeiro' && <FinanceiroPage />}

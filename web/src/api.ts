@@ -296,6 +296,54 @@ export async function criarTamanho(nome: string): Promise<TamanhoCadastro> {
   return res.json();
 }
 
+export interface CorteInfesto {
+  id: number;
+  ordem_id: number;
+  materia_prima_id: number;
+  cor: string;
+  quantidade_pecas: number;
+  camadas: number;
+  metragem: number;
+  peso_real: number;
+  quantidade_baixada: number;
+  unidade_baixa: string;
+  movimento_id: number | null;
+  concluido_em: string;
+  tecido: string;
+  unidade: string;
+  ordem_codigo: string | null;
+  cliente: string;
+  produto: string;
+  status_ordem: string;
+  ordem?: OrdemProducao;
+}
+
+export async function listarCortesInfesto(): Promise<CorteInfesto[]> {
+  const res = await apiFetch('/api/ordens/corte-infesto');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function concluirCorteInfesto(
+  ordemId: number,
+  dados: {
+    materia_prima_id: number;
+    cor: string;
+    quantidade_pecas: number;
+    camadas: number;
+    metragem: number;
+    peso_real: number;
+  },
+): Promise<CorteInfesto> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/corte-infesto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function criarOrdemCorte(ordemId: number): Promise<OrdemCorte> {
   const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte`, {
     method: 'POST',
