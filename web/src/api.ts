@@ -296,6 +296,12 @@ export async function criarTamanho(nome: string): Promise<TamanhoCadastro> {
   return res.json();
 }
 
+export interface ItemCorteInfesto {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
 export interface CorteInfesto {
   id: number;
   ordem_id: number;
@@ -315,6 +321,8 @@ export interface CorteInfesto {
   cliente: string;
   produto: string;
   status_ordem: string;
+  itens: ItemCorteInfesto[];
+  avancou?: boolean;
   ordem?: OrdemProducao;
 }
 
@@ -329,10 +337,11 @@ export async function concluirCorteInfesto(
   dados: {
     materia_prima_id: number;
     cor: string;
-    quantidade_pecas: number;
     camadas: number;
     metragem: number;
     peso_real: number;
+    itens: Array<{ tamanho: string; quantidade: number }>;
+    autorizar_excedente?: boolean;
   },
 ): Promise<CorteInfesto> {
   const res = await apiFetch(`/api/ordens/${ordemId}/corte-infesto`, {

@@ -49,6 +49,28 @@ describe('corte e infesto', () => {
     return item?.quantidade ?? 0;
   }
 
+  function corteBody(dados: {
+    materia_prima_id: number;
+    cor: string;
+    quantidade: number;
+    tamanho?: string;
+    camadas: number;
+    metragem: number;
+    peso_real: number;
+    itens?: Array<{ tamanho: string; quantidade: number }>;
+    autorizar_excedente?: boolean;
+  }) {
+    return {
+      materia_prima_id: dados.materia_prima_id,
+      cor: dados.cor,
+      camadas: dados.camadas,
+      metragem: dados.metragem,
+      peso_real: dados.peso_real,
+      itens: dados.itens ?? [{ tamanho: dados.tamanho ?? 'M', quantidade: dados.quantidade }],
+      ...(dados.autorizar_excedente ? { autorizar_excedente: true } : {}),
+    };
+  }
+
   it('baixa o peso real do tecido em KG, grava o histórico e segue para costura', async () => {
     const malha = await tecido({ nome: 'Malha dry' });
     const linha = await tecido({ nome: 'Linha reta', tipo: 'linha' });
@@ -69,40 +91,50 @@ describe('corte e infesto', () => {
     const op = criada.body as { id: number; codigo: string };
     await api.post('/api/etapas/fluxo').send({ ordem_id: op.id });
 
-    const invalido = await api.post(`/api/ordens/${op.id}/corte-infesto`).send({
-      materia_prima_id: linha.id,
-      cor: 'Preto',
-      quantidade_pecas: 10,
-      camadas: 20,
-      metragem: 12,
-      peso_real: 1.5,
-    });
+    const invalido = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: linha.id,
+        cor: 'Preto',
+        quantidade: 10,
+        camadas: 20,
+        metragem: 12,
+        peso_real: 1.5,
+      }),
+    );
     expect(invalido.status).toBe(400);
 
-    const acima = await api.post(`/api/ordens/${op.id}/corte-infesto`).send({
-      materia_prima_id: malha.id,
-      cor: 'Preto',
-      quantidade_pecas: 11,
-      camadas: 20,
-      metragem: 12,
-      peso_real: 1.5,
-    });
-    expect(acima.status).toBe(400);
+    const acima = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Preto',
+        quantidade: 11,
+        camadas: 20,
+        metragem: 12,
+        peso_real: 1.5,
+      }),
+    );
+    expect(acima.status).toBe(409);
+    expect(acima.body.erro).toContain('M');
 
-    const corte = await api.post(`/api/ordens/${op.id}/corte-infesto`).send({
-      materia_prima_id: malha.id,
-      cor: ' preto ',
-      quantidade_pecas: 10,
-      camadas: 20,
-      metragem: 12.5,
-      peso_real: 1.5,
-    });
+    const corte = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: ' preto ',
+        quantidade: 10,
+        camadas: 20,
+        metragem: 12.5,
+        peso_real: 1.5,
+      }),
+    );
     expect(corte.status).toBe(201);
     expect(corte.body.cor).toBe('Preto');
     expect(corte.body.camadas).toBe(20);
     expect(corte.body.metragem).toBe(12.5);
     expect(corte.body.peso_real).toBe(1.5);
+    expect(corte.body.quantidade_pecas).toBe(10);
+    expect(corte.body.itens).toEqual([{ cor: 'Preto', tamanho: 'M', quantidade: 10 }]);
     expect(corte.body.quantidade_baixada).toBe(1.5);
+    expect(corte.body.avancou).toBe(true);
     expect(corte.body.ordem.status).toBe('costura');
     expect(await saldo(malha.id)).toBe(8.5);
 
@@ -113,14 +145,16 @@ describe('corte e infesto', () => {
     expect(saida?.quantidade).toBe(1.5);
     expect(saida?.motivo).toContain(op.codigo);
 
-    const repetido = await api.post(`/api/ordens/${op.id}/corte-infesto`).send({
-      materia_prima_id: malha.id,
-      cor: 'Preto',
-      quantidade_pecas: 10,
-      camadas: 20,
-      metragem: 12.5,
-      peso_real: 1.5,
-    });
+    const repetido = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Preto',
+        quantidade: 10,
+        camadas: 20,
+        metragem: 12.5,
+        peso_real: 1.5,
+      }),
+    );
     expect(repetido.status).toBe(409);
     expect(await saldo(malha.id)).toBe(8.5);
 
@@ -144,23 +178,25 @@ describe('corte e infesto', () => {
     const op = await api.post('/api/ordens').send({
       cliente: 'Loja Já',
       produto: 'Camisa',
-      tamanho: 'M',
       quantidade: 4,
       status: 'planejada',
       requisitos: [{ materia_prima_id: malha.id, quantidade: 1 }],
+      grade: [{ cor: 'Azul', tamanho: 'M', quantidade: 4 }],
     });
     const emCorte = await api.patch(`/api/ordens/${op.body.id}`).send({ status: 'corte' });
     expect(emCorte.status).toBe(200);
     expect(await saldo(malha.id)).toBe(6);
 
-    const corte = await api.post(`/api/ordens/${op.body.id}/corte-infesto`).send({
-      materia_prima_id: malha.id,
-      cor: 'Azul',
-      quantidade_pecas: 4,
-      camadas: 8,
-      metragem: 6,
-      peso_real: 2,
-    });
+    const corte = await api.post(`/api/ordens/${op.body.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Azul',
+        quantidade: 4,
+        camadas: 8,
+        metragem: 6,
+        peso_real: 2,
+      }),
+    );
     expect(corte.status).toBe(201);
     expect(corte.body.quantidade_baixada).toBe(0);
     expect(corte.body.ordem.status).toBe('costura');
@@ -168,14 +204,16 @@ describe('corte e infesto', () => {
 
     const app = createApp(db);
     const { api: outra } = await autenticarNovaEmpresa(app);
-    const alheio = await outra.post(`/api/ordens/${op.body.id}/corte-infesto`).send({
-      materia_prima_id: malha.id,
-      cor: 'Azul',
-      quantidade_pecas: 4,
-      camadas: 8,
-      metragem: 6,
-      peso_real: 2,
-    });
+    const alheio = await outra.post(`/api/ordens/${op.body.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Azul',
+        quantidade: 4,
+        camadas: 8,
+        metragem: 6,
+        peso_real: 2,
+      }),
+    );
     expect(alheio.status).toBe(404);
     const listaOutra = await outra.get('/api/ordens/corte-infesto');
     expect(listaOutra.body).toEqual([]);
@@ -184,14 +222,16 @@ describe('corte e infesto', () => {
   it('recusa a saída quando o tecido não cobre o peso e baixa metragem quando a unidade é MT', async () => {
     const malha = await tecido({ nome: 'Malha curta' });
     const op = await ordem(2);
-    const semSaldo = await api.post(`/api/ordens/${op.id}/corte-infesto`).send({
-      materia_prima_id: malha.id,
-      cor: 'Preto',
-      quantidade_pecas: 2,
-      camadas: 4,
-      metragem: 3,
-      peso_real: 1,
-    });
+    const semSaldo = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Preto',
+        quantidade: 2,
+        camadas: 4,
+        metragem: 3,
+        peso_real: 1,
+      }),
+    );
     expect(semSaldo.status).toBe(409);
     expect(semSaldo.body.erro).toBe('Estoque insuficiente para a saída');
     const ordemDepois = await api.get(`/api/ordens/${op.id}`);
@@ -205,16 +245,212 @@ describe('corte e infesto', () => {
       materia_prima_id: metro.id,
     });
     const segunda = await ordem(2, 'Verde');
-    const corte = await api.post(`/api/ordens/${segunda.id}/corte-infesto`).send({
-      materia_prima_id: metro.id,
-      cor: 'Verde',
-      quantidade_pecas: 2,
-      camadas: 3,
-      metragem: 7.25,
-      peso_real: 0.4,
-    });
+    const corte = await api.post(`/api/ordens/${segunda.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: metro.id,
+        cor: 'Verde',
+        quantidade: 2,
+        camadas: 3,
+        metragem: 7.25,
+        peso_real: 0.4,
+      }),
+    );
     expect(corte.status).toBe(201);
     expect(corte.body.quantidade_baixada).toBe(7.25);
     expect(await saldo(metro.id)).toBe(12.75);
+  });
+
+  it('usa a grade salva, corta por cor e só conclui a ordem quando não há saldo', async () => {
+    const malha = await tecido({ nome: 'Malha grade' });
+    const linha = await tecido({ nome: 'Linha da grade', tipo: 'linha' });
+    await api.post('/api/estoque/movimentos').send({
+      tipo: 'entrada',
+      quantidade: 20,
+      materia_prima_id: malha.id,
+    });
+    await api.post('/api/estoque/movimentos').send({
+      tipo: 'entrada',
+      quantidade: 5,
+      materia_prima_id: linha.id,
+    });
+    const antiga = await api.post('/api/ordens').send({
+      cliente: 'Loja Antiga',
+      produto: 'Regata',
+      tamanho: 'M',
+      quantidade: 2,
+      status: 'planejada',
+    });
+    expect(antiga.status).toBe(201);
+    const semGrade = await api.post(`/api/ordens/${antiga.body.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Preto',
+        quantidade: 2,
+        camadas: 2,
+        metragem: 1,
+        peso_real: 0.2,
+      }),
+    );
+    expect(semGrade.status).toBe(400);
+    expect(semGrade.body.erro).toBe('Esta OP não tem grade de cores e tamanhos');
+    expect((await api.get(`/api/ordens/${antiga.body.id}`)).body.status).toBe('planejada');
+    expect(await saldo(malha.id)).toBe(20);
+
+    const criada = await api.post('/api/ordens').send({
+      cliente: 'Loja Grade',
+      produto: 'Camisa',
+      quantidade: 10,
+      status: 'planejada',
+      requisitos: [
+        { materia_prima_id: malha.id, quantidade: 0.4 },
+        { materia_prima_id: linha.id, quantidade: 0.1 },
+      ],
+      grade: [
+        { cor: 'Preto', tamanho: 'M', quantidade: 6 },
+        { cor: 'Preto', tamanho: 'G', quantidade: 0 },
+        { cor: 'Branco', tamanho: 'M', quantidade: 4 },
+        { cor: 'Branco', tamanho: 'G', quantidade: 0 },
+      ],
+    });
+    expect(criada.status).toBe(201);
+    const op = criada.body as { id: number };
+    await api.post('/api/etapas/fluxo').send({ ordem_id: op.id });
+
+    const resumo = await api.get(`/api/ordens/${op.id}/corte-infesto`);
+    expect(resumo.status).toBe(200);
+    expect(resumo.body.concluido).toBe(false);
+    expect(resumo.body.grade).toEqual([
+      { cor: 'Preto', tamanho: 'M', quantidade: 6 },
+      { cor: 'Preto', tamanho: 'G', quantidade: 0 },
+      { cor: 'Branco', tamanho: 'M', quantidade: 4 },
+      { cor: 'Branco', tamanho: 'G', quantidade: 0 },
+    ]);
+    expect(resumo.body.saldos).toEqual([
+      { cor: 'Preto', tamanho: 'M', planejado: 6, cortado: 0, restante: 6 },
+      { cor: 'Preto', tamanho: 'G', planejado: 0, cortado: 0, restante: 0 },
+      { cor: 'Branco', tamanho: 'M', planejado: 4, cortado: 0, restante: 4 },
+      { cor: 'Branco', tamanho: 'G', planejado: 0, cortado: 0, restante: 0 },
+    ]);
+
+    const acima = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Preto',
+        quantidade: 7,
+        camadas: 8,
+        metragem: 4,
+        peso_real: 1.5,
+      }),
+    );
+    expect(acima.status).toBe(409);
+    expect(acima.body.erro).toContain('ultrapassa o planejado (6)');
+    expect(await saldo(malha.id)).toBe(20);
+
+    const parcial = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'preto',
+        quantidade: 2,
+        camadas: 8,
+        metragem: 4,
+        peso_real: 1.5,
+        itens: [
+          { tamanho: 'M', quantidade: 2 },
+          { tamanho: 'G', quantidade: 0 },
+        ],
+      }),
+    );
+    expect(parcial.status).toBe(201);
+    expect(parcial.body.cor).toBe('Preto');
+    expect(parcial.body.avancou).toBe(false);
+    expect(parcial.body.quantidade_pecas).toBe(2);
+    expect(parcial.body.quantidade_baixada).toBe(1.5);
+    expect(parcial.body.ordem.status).toBe('planejada');
+    expect(await saldo(malha.id)).toBe(18.5);
+    expect(await saldo(linha.id)).toBe(5);
+    const etapasParciais = await api.get('/api/etapas').query({ ordem_id: op.id });
+    expect(
+      (etapasParciais.body.data as Array<{ tipo: string; status: string }>).find(
+        (etapa) => etapa.tipo === 'corte',
+      )?.status,
+    ).toBe('pendente');
+
+    const meio = await api.get(`/api/ordens/${op.id}/corte-infesto`);
+    expect(meio.body.concluido).toBe(false);
+    expect(meio.body.saldos[0]).toEqual({
+      cor: 'Preto',
+      tamanho: 'M',
+      planejado: 6,
+      cortado: 2,
+      restante: 4,
+    });
+
+    const semAutorizacao = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Preto',
+        quantidade: 5,
+        camadas: 4,
+        metragem: 2,
+        peso_real: 0.4,
+      }),
+    );
+    expect(semAutorizacao.status).toBe(409);
+    expect(await saldo(malha.id)).toBe(18.5);
+
+    const autorizado = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Preto',
+        quantidade: 5,
+        camadas: 4,
+        metragem: 2,
+        peso_real: 0.4,
+        autorizar_excedente: true,
+      }),
+    );
+    expect(autorizado.status).toBe(201);
+    expect(autorizado.body.avancou).toBe(false);
+    expect(autorizado.body.quantidade_baixada).toBe(0);
+    expect(autorizado.body.ordem.status).toBe('planejada');
+    expect(await saldo(malha.id)).toBe(18.5);
+    expect(await saldo(linha.id)).toBe(5);
+
+    const branco = await api.post(`/api/ordens/${op.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: malha.id,
+        cor: 'Branco',
+        quantidade: 4,
+        camadas: 6,
+        metragem: 3,
+        peso_real: 0.8,
+      }),
+    );
+    expect(branco.status).toBe(201);
+    expect(branco.body.avancou).toBe(true);
+    expect(branco.body.quantidade_baixada).toBe(0);
+    expect(branco.body.ordem.status).toBe('costura');
+    expect(await saldo(malha.id)).toBe(18.5);
+    expect(await saldo(linha.id)).toBe(4);
+
+    const fim = await api.get(`/api/ordens/${op.id}/corte-infesto`);
+    expect(fim.body.concluido).toBe(true);
+    expect(fim.body.saldos).toEqual([
+      { cor: 'Preto', tamanho: 'M', planejado: 6, cortado: 7, restante: -1 },
+      { cor: 'Preto', tamanho: 'G', planejado: 0, cortado: 0, restante: 0 },
+      { cor: 'Branco', tamanho: 'M', planejado: 4, cortado: 4, restante: 0 },
+      { cor: 'Branco', tamanho: 'G', planejado: 0, cortado: 0, restante: 0 },
+    ]);
+    const etapas = await api.get('/api/etapas').query({ ordem_id: op.id });
+    const tipos = etapas.body.data as Array<{ tipo: string; status: string }>;
+    expect(tipos.find((etapa) => etapa.tipo === 'corte')?.status).toBe('concluida');
+    expect(tipos.find((etapa) => etapa.tipo === 'costura')?.status).toBe('em_andamento');
+
+    const movimentos = await api.get('/api/estoque/movimentos');
+    const saidasMalha = (
+      movimentos.body.data as Array<{ tipo: string; quantidade: number; materia_prima_id?: number; motivo: string }>
+    ).filter((item) => item.tipo === 'saida' && item.motivo.startsWith('Corte'));
+    expect(saidasMalha).toHaveLength(1);
+    expect(saidasMalha[0]?.quantidade).toBe(1.5);
   });
 });

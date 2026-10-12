@@ -528,6 +528,7 @@ const TABELAS_TENANT = [
   'tamanhos_cadastro',
   'ordem_requisitos',
   'cortes_infesto',
+  'corte_infesto_itens',
   'etapas_producao',
   'fornecedores',
   'pedidos_compra',
@@ -773,10 +774,22 @@ function aplicarCorteInfesto(db: AppDatabase) {
       concluido_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS cortes_infesto_ordem
+    CREATE TABLE IF NOT EXISTS corte_infesto_itens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      corte_infesto_id INTEGER NOT NULL REFERENCES cortes_infesto(id),
+      cor TEXT NOT NULL,
+      tamanho TEXT NOT NULL,
+      quantidade INTEGER NOT NULL
+    );
+
+    DROP INDEX IF EXISTS cortes_infesto_ordem;
+    CREATE INDEX IF NOT EXISTS cortes_infesto_ordem
       ON cortes_infesto (empresa_id, ordem_id);
     CREATE INDEX IF NOT EXISTS cortes_infesto_empresa
       ON cortes_infesto (empresa_id, concluido_em);
+    CREATE INDEX IF NOT EXISTS corte_infesto_itens_corte
+      ON corte_infesto_itens (corte_infesto_id);
   `);
 }
 

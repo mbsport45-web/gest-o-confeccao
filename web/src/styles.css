@@ -370,6 +370,45 @@ body {
   font-weight: 650;
 }
 
+.grade-corte {
+  margin: 0.75rem 0 1rem;
+}
+
+.grade-corte .tabela th {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.grade-corte__qtd {
+  display: block;
+  font-weight: 650;
+}
+
+.grade-corte small,
+.corte-tamanhos small {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.corte-tamanhos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.75rem;
+}
+
+.form label.corte-autorizar {
+  flex-direction: row;
+  align-items: center;
+  color: var(--text);
+}
+
+.form label.corte-autorizar input {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 .form__row {
   display: flex;
   gap: 0.75rem;
