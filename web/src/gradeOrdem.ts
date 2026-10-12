@@ -20,6 +20,20 @@ export function gradeVazia(tamanhos: string[] = [...TAMANHOS_PADRAO]): GradeValo
   return { cores: [], tamanhos: [...tamanhos], quantidades: {} };
 }
 
+export function gradeAoTrocarProduto(
+  atual: GradeValor,
+  coresProduto: string[],
+  tamanhosPadrao: string[],
+): GradeValor {
+  const preenchida =
+    atual.cores.length > 0 || Object.values(atual.quantidades).some((quantidade) => quantidade > 0);
+  if (preenchida) return atual;
+  return {
+    ...gradeVazia(atual.tamanhos.length ? atual.tamanhos : tamanhosPadrao),
+    cores: [...coresProduto],
+  };
+}
+
 export function gradeDaOrdem(celulas: CelulaGrade[] | undefined, tamanhosPadrao: string[]): GradeValor {
   if (!celulas?.length) return gradeVazia(tamanhosPadrao);
   const cores: string[] = [];

@@ -4,6 +4,7 @@ import {
   adicionarTamanho,
   celulasDaGrade,
   definirQuantidade,
+  gradeAoTrocarProduto,
   gradeVazia,
   mensagemGrade,
   moverTamanho,
@@ -62,5 +63,12 @@ describe('grade da ordem de produção', () => {
     expect(renomearCor(grade, 'Oliva', 'oliva').cores).toEqual(['oliva']);
     const repetida = adicionarCor(grade, 'Areia');
     expect(renomearCor(repetida, 'Areia', 'Oliva')).toBe(repetida);
+  });
+
+  it('mantém a grade já preenchida ao trocar o produto', () => {
+    const preenchida = definirQuantidade(adicionarCor(gradeVazia(['P']), 'Verde musgo'), 'Verde musgo', 'P', 4);
+    expect(gradeAoTrocarProduto(preenchida, ['Preto'], ['M'])).toBe(preenchida);
+    const vazia = gradeVazia(['P', 'M']);
+    expect(gradeAoTrocarProduto(vazia, ['Azul'], ['P', 'M']).cores).toEqual(['Azul']);
   });
 });

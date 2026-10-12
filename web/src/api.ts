@@ -145,15 +145,32 @@ export interface FiltrosOrdens {
   por_pagina?: number;
 }
 
-async function parseError(res: Response): Promise<never> {
-  let mensagem = `Erro ${res.status}`;
-  try {
-    const body = await res.json();
-    if (body?.erro) mensagem = body.erro;
-  } catch {
-    // resposta sem corpo JSON
+export function mensagemErroApi(body: unknown, status = 0): string {
+  if (body && typeof body === 'object') {
+    const detalhes = (body as { detalhes?: unknown }).detalhes;
+    if (detalhes && typeof detalhes === 'object') {
+      for (const valor of Object.values(detalhes as Record<string, unknown>)) {
+        if (!Array.isArray(valor)) continue;
+        const texto = valor.find((item) => typeof item === 'string' && item);
+        if (typeof texto === 'string') return texto;
+      }
+    }
+    const erro = (body as { erro?: unknown }).erro;
+    if (typeof erro === 'string' && erro) return erro;
   }
-  throw new Error(mensagem);
+  return status ? `Erro ${status}` : 'Erro ao salvar';
+}
+
+async function parseError(res: Response): Promise<never> {
+  try {
+    const body: unknown = await res.json();
+    throw new Error(mensagemErroApi(body, res.status));
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error(`Erro ${res.status}`);
+    }
+    throw err;
+  }
 }
 
 function apiFetch(input: string, init: RequestInit = {}) {

@@ -6,8 +6,10 @@ import {
   STATUS_VALIDOS,
   atualizarOrdem,
   atualizarStatus,
+  criarCliente,
   criarOrdem,
   criarOrdemCorte,
+  criarProduto,
   listarClientes,
   listarCores,
   listarMateriasPrimas,
@@ -28,10 +30,12 @@ import {
   type TamanhoCadastro,
 } from './api';
 import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
+import { CampoBuscaCadastro } from './CampoBuscaCadastro';
 import { GradeOrdem, GradeResumo } from './GradeOrdem';
 import {
   TAMANHOS_PADRAO,
   celulasDaGrade,
+  gradeAoTrocarProduto,
   gradeDaOrdem,
   gradeVazia,
   mensagemGrade,
@@ -95,6 +99,21 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   const [catalogoTamanhos, setCatalogoTamanhos] = useState<TamanhoCadastro[]>([]);
   const [grade, setGrade] = useState<GradeValor>(gradeVazia());
   const [criandoCorte, setCriandoCorte] = useState(false);
+  const [textoCliente, setTextoCliente] = useState('');
+  const [textoProduto, setTextoProduto] = useState('');
+  const [rotuloCliente, setRotuloCliente] = useState('');
+  const [rotuloProduto, setRotuloProduto] = useState('');
+  const [nomeCliente, setNomeCliente] = useState('');
+  const [nomeProduto, setNomeProduto] = useState('');
+  const [referenciaProduto, setReferenciaProduto] = useState('');
+  const [cadastroCliente, setCadastroCliente] = useState(false);
+  const [cadastroProduto, setCadastroProduto] = useState(false);
+  const [novoCliente, setNovoCliente] = useState({ nome: '', cpf_cnpj: '', telefone: '' });
+  const [novoProduto, setNovoProduto] = useState({ nome: '', sku: '' });
+  const [erroCliente, setErroCliente] = useState<string | null>(null);
+  const [erroProduto, setErroProduto] = useState<string | null>(null);
+  const [salvandoCliente, setSalvandoCliente] = useState(false);
+  const [salvandoProduto, setSalvandoProduto] = useState(false);
   const produtoGradeRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -110,12 +129,24 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
   }, [statusFiltro, prioridadeFiltro]);
 
   useEffect(() => {
-    listarClientes({ por_pagina: 100, status: 'ativo' })
-      .then((lista) => setClientes(lista.data))
-      .catch(() => undefined);
-    listarProdutos({ por_pagina: 100, status: 'ativo' })
-      .then((lista) => setProdutos(lista.data))
-      .catch(() => undefined);
+    const t = setTimeout(() => {
+      listarClientes({ q: textoCliente.trim(), por_pagina: 20, status: 'ativo' })
+        .then((lista) => setClientes(lista.data))
+        .catch(() => undefined);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [textoCliente]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      listarProdutos({ q: textoProduto.trim(), por_pagina: 20, status: 'ativo' })
+        .then((lista) => setProdutos(lista.data))
+        .catch(() => undefined);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [textoProduto]);
+
+  useEffect(() => {
     listarMateriasPrimas({ por_pagina: 100, status: 'ativo' })
       .then((lista) => setMaterias(lista.data))
       .catch(() => undefined);
@@ -190,16 +221,26 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     produtoGradeRef.current = form.produtoId;
     if (!form.produtoId) return;
     const produto = produtos.find((item) => String(item.id) === form.produtoId);
-    setGrade((atual) => ({
-      ...gradeVazia(atual.tamanhos.length ? atual.tamanhos : tamanhosIniciais),
-      cores: produto?.cores ?? [],
-    }));
+    setGrade((atual) => gradeAoTrocarProduto(atual, produto?.cores ?? [], tamanhosIniciais));
   }, [modo, form.produtoId, produtos, tamanhosIniciais]);
 
   function abrirCriar() {
     if (!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')) return;
     setForm(FORM_VAZIO);
     produtoGradeRef.current = null;
+    setTextoCliente('');
+    setTextoProduto('');
+    setRotuloCliente('');
+    setRotuloProduto('');
+    setNomeCliente('');
+    setNomeProduto('');
+    setReferenciaProduto('');
+    setCadastroCliente(false);
+    setCadastroProduto(false);
+    setNovoCliente({ nome: '', cpf_cnpj: '', telefone: '' });
+    setNovoProduto({ nome: '', sku: '' });
+    setErroCliente(null);
+    setErroProduto(null);
     setGrade(gradeVazia(tamanhosIniciais));
     setEditandoId(null);
     setDetalhe(null);
@@ -230,6 +271,16 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
       })),
     });
     setGrade(gradeDaOrdem(ordem.grade, tamanhosIniciais));
+    const rotuloDaOrdem = ordem.referencia ? `${ordem.referencia} — ${ordem.produto}` : ordem.produto;
+    setTextoCliente(ordem.cliente);
+    setRotuloCliente(ordem.cliente);
+    setNomeCliente(ordem.cliente);
+    setTextoProduto(rotuloDaOrdem);
+    setRotuloProduto(rotuloDaOrdem);
+    setNomeProduto(ordem.produto);
+    setReferenciaProduto(ordem.referencia ?? '');
+    setCadastroCliente(false);
+    setCadastroProduto(false);
     setEditandoId(id);
     setDetalhe(null);
     setModo('editar');
@@ -245,8 +296,8 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
         quantidade: Number(r.quantidade),
       }));
     return {
-      cliente: cliente?.nome ?? '',
-      produto: produto?.nome ?? '',
+      cliente: cliente?.nome || nomeCliente,
+      produto: produto?.nome || nomeProduto,
       quantidade: Number(form.quantidade),
       cliente_id: form.clienteId ? Number(form.clienteId) : undefined,
       produto_id: form.produtoId ? Number(form.produtoId) : undefined,
@@ -259,8 +310,71 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
     };
   }
 
+  async function salvarClienteNovo() {
+    if (!novoCliente.nome.trim()) {
+      setErroCliente('Informe o nome ou a razão social');
+      return;
+    }
+    try {
+      setSalvandoCliente(true);
+      const criado = await criarCliente({
+        nome: novoCliente.nome.trim(),
+        cpf_cnpj: novoCliente.cpf_cnpj.trim() || undefined,
+        telefone: novoCliente.telefone.trim() || undefined,
+      });
+      setClientes((lista) => [criado, ...lista.filter((item) => item.id !== criado.id)]);
+      setForm((atual) => ({ ...atual, clienteId: String(criado.id) }));
+      setTextoCliente(criado.nome);
+      setRotuloCliente(criado.nome);
+      setNomeCliente(criado.nome);
+      setNovoCliente({ nome: '', cpf_cnpj: '', telefone: '' });
+      setCadastroCliente(false);
+      setErroCliente(null);
+    } catch (err) {
+      setErroCliente((err as Error).message);
+    } finally {
+      setSalvandoCliente(false);
+    }
+  }
+
+  async function salvarProdutoNovo() {
+    if (!novoProduto.nome.trim()) {
+      setErroProduto('Informe o nome do produto');
+      return;
+    }
+    try {
+      setSalvandoProduto(true);
+      const criado = await criarProduto({
+        nome: novoProduto.nome.trim(),
+        sku: novoProduto.sku.trim() || undefined,
+      });
+      setProdutos((lista) => [criado, ...lista.filter((item) => item.id !== criado.id)]);
+      setForm((atual) => ({ ...atual, produtoId: String(criado.id) }));
+      const rotulo = criado.sku ? `${criado.sku} — ${criado.nome}` : criado.nome;
+      setTextoProduto(rotulo);
+      setRotuloProduto(rotulo);
+      setNomeProduto(criado.nome);
+      setReferenciaProduto(criado.sku ?? '');
+      setNovoProduto({ nome: '', sku: '' });
+      setCadastroProduto(false);
+      setErroProduto(null);
+    } catch (err) {
+      setErroProduto((err as Error).message);
+    } finally {
+      setSalvandoProduto(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!form.clienteId) {
+      setErro('Selecione ou cadastre o cliente');
+      return;
+    }
+    if (!form.produtoId) {
+      setErro('Selecione ou cadastre o produto');
+      return;
+    }
     const avisoGrade = mensagemGrade(grade, Number(form.quantidade));
     if (avisoGrade) {
       setErro(avisoGrade);
@@ -486,40 +600,154 @@ export function OrdensPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
             </button>
           </div>
           <form className="form" onSubmit={handleSubmit}>
-            <label>
-              Cliente
-              <select
-                required
-                value={form.clienteId}
-                onChange={(e) => setForm({ ...form, clienteId: e.target.value })}
-              >
-                <option value="">Selecione</option>
-                {clientes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nome}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Produto
-              <select
-                required
-                value={form.produtoId}
-                onChange={(e) => setForm({ ...form, produtoId: e.target.value, requisitos: [] })}
-              >
-                <option value="">Selecione</option>
-                {produtos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.sku ? `${p.sku} — ` : ''}
-                    {p.nome}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <CampoBuscaCadastro
+              rotulo="Cliente"
+              placeholder="Pesquisar por nome, CPF/CNPJ ou telefone"
+              texto={textoCliente}
+              selecionadoId={form.clienteId}
+              selecionadoRotulo={rotuloCliente}
+              opcoes={clientes.map((cliente) => ({
+                id: cliente.id,
+                rotulo: cliente.cpf_cnpj ? `${cliente.nome} · ${cliente.cpf_cnpj}` : cliente.nome,
+              }))}
+              textoNovo="Cadastrar novo cliente"
+              cadastroAberto={cadastroCliente}
+              onTexto={setTextoCliente}
+              onSelecionar={(id) => {
+                const cliente = clientes.find((item) => String(item.id) === id);
+                setForm((atual) => ({ ...atual, clienteId: id }));
+                if (cliente) {
+                  const rotulo = cliente.cpf_cnpj ? `${cliente.nome} · ${cliente.cpf_cnpj}` : cliente.nome;
+                  setRotuloCliente(rotulo);
+                  setNomeCliente(cliente.nome);
+                  setTextoCliente(rotulo);
+                }
+                if (!id) {
+                  setRotuloCliente('');
+                  setNomeCliente('');
+                }
+              }}
+              onAbrirCadastro={() => {
+                setCadastroCliente(true);
+                setErroCliente(null);
+              }}
+              onFecharCadastro={() => setCadastroCliente(false)}
+            >
+              <label>
+                Nome / razão social
+                <input
+                  value={novoCliente.nome}
+                  aria-label="Nome do novo cliente"
+                  onChange={(e) => setNovoCliente({ ...novoCliente, nome: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.preventDefault();
+                  }}
+                />
+              </label>
+              <label>
+                CPF / CNPJ
+                <input
+                  value={novoCliente.cpf_cnpj}
+                  aria-label="CPF ou CNPJ do novo cliente"
+                  placeholder="Somente números ou formatado"
+                  onChange={(e) => setNovoCliente({ ...novoCliente, cpf_cnpj: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.preventDefault();
+                  }}
+                />
+              </label>
+              <label>
+                Telefone
+                <input
+                  value={novoCliente.telefone}
+                  aria-label="Telefone do novo cliente"
+                  onChange={(e) => setNovoCliente({ ...novoCliente, telefone: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.preventDefault();
+                  }}
+                />
+              </label>
+              <div className="busca-cadastro__acoes">
+                <button type="button" disabled={salvandoCliente} onClick={() => void salvarClienteNovo()}>
+                  {salvandoCliente ? 'Salvando…' : 'Salvar cliente'}
+                </button>
+                <button type="button" className="btn-secundario" onClick={() => setCadastroCliente(false)}>
+                  Cancelar
+                </button>
+              </div>
+              {erroCliente && <p className="erro">{erroCliente}</p>}
+            </CampoBuscaCadastro>
+            <CampoBuscaCadastro
+              rotulo="Produto"
+              placeholder="Pesquisar por nome ou SKU"
+              texto={textoProduto}
+              selecionadoId={form.produtoId}
+              selecionadoRotulo={rotuloProduto}
+              opcoes={produtos.map((produto) => ({
+                id: produto.id,
+                rotulo: produto.sku ? `${produto.sku} — ${produto.nome}` : produto.nome,
+              }))}
+              textoNovo="Cadastrar novo produto"
+              cadastroAberto={cadastroProduto}
+              onTexto={setTextoProduto}
+              onSelecionar={(id) => {
+                const produto = produtos.find((item) => String(item.id) === id);
+                setForm((atual) => ({ ...atual, produtoId: id }));
+                if (produto) {
+                  const rotulo = produto.sku ? `${produto.sku} — ${produto.nome}` : produto.nome;
+                  setRotuloProduto(rotulo);
+                  setNomeProduto(produto.nome);
+                  setReferenciaProduto(produto.sku ?? '');
+                  setTextoProduto(rotulo);
+                }
+                if (!id) {
+                  setRotuloProduto('');
+                  setNomeProduto('');
+                  setReferenciaProduto('');
+                }
+              }}
+              onAbrirCadastro={() => {
+                setCadastroProduto(true);
+                setErroProduto(null);
+              }}
+              onFecharCadastro={() => setCadastroProduto(false)}
+            >
+              <label>
+                Nome do produto
+                <input
+                  value={novoProduto.nome}
+                  aria-label="Nome do novo produto"
+                  onChange={(e) => setNovoProduto({ ...novoProduto, nome: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.preventDefault();
+                  }}
+                />
+              </label>
+              <label>
+                SKU / referência
+                <input
+                  value={novoProduto.sku}
+                  aria-label="SKU do novo produto"
+                  placeholder="Ex.: CAM-POLO"
+                  onChange={(e) => setNovoProduto({ ...novoProduto, sku: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.preventDefault();
+                  }}
+                />
+              </label>
+              <div className="busca-cadastro__acoes">
+                <button type="button" disabled={salvandoProduto} onClick={() => void salvarProdutoNovo()}>
+                  {salvandoProduto ? 'Salvando…' : 'Salvar produto'}
+                </button>
+                <button type="button" className="btn-secundario" onClick={() => setCadastroProduto(false)}>
+                  Cancelar
+                </button>
+              </div>
+              {erroProduto && <p className="erro">{erroProduto}</p>}
+            </CampoBuscaCadastro>
             <label>
               Referência
-              <input readOnly value={produtoSel?.sku ?? ''} placeholder="SKU do produto selecionado" />
+              <input readOnly value={produtoSel?.sku ?? referenciaProduto} placeholder="SKU do produto selecionado" />
             </label>
             <GradeOrdem
               grade={grade}
