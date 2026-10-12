@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "asaas:sandbox-ping": "tsx src/pagamentos/verificarSandbox.ts"
+    "asaas:sandbox-ping": "tsx src/pagamentos/verificarSandbox.ts",
+    "postgres:copiar": "tsx src/postgres/migrar.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -20,6 +21,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "pg": "^8.23.1",
     "unpdf": "^1.8.1",
     "zod": "^3.24.1"
   },
@@ -30,6 +32,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.5",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^6.0.2",
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",

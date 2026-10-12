@@ -15,7 +15,8 @@
     "test": "npm run test --workspace server && npm run test --workspace web",
     "lint": "npm run lint --workspace server && npm run lint --workspace web",
     "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace web",
-    "asaas:sandbox-ping": "npm run asaas:sandbox-ping --workspace server"
+    "asaas:sandbox-ping": "npm run asaas:sandbox-ping --workspace server",
+    "postgres:copiar": "npm run postgres:copiar --workspace server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
