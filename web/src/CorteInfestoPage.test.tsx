@@ -172,8 +172,9 @@ describe('tela Corte / Infesto', () => {
     fireEvent.change(screen.getByLabelText('Cor do corte'), { target: { value: 'Preto' } });
     fireEvent.change(screen.getByLabelText('Quantidade cortada M'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Quantidade cortada G'), { target: { value: '0' } });
+    expect(screen.queryByLabelText('Metragem consumida')).toBeNull();
+    expect(screen.getByText(/controlado em KG/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Camadas do enfesto'), { target: { value: '10' } });
-    fireEvent.change(screen.getByLabelText('Metragem'), { target: { value: '8' } });
     fireEvent.change(screen.getByLabelText('Peso real consumido'), { target: { value: '1.2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Registrar corte da cor' }));
 
@@ -182,7 +183,6 @@ describe('tela Corte / Infesto', () => {
         materia_prima_id: 2,
         cor: 'Preto',
         camadas: 10,
-        metragem: 8,
         peso_real: 1.2,
         itens: [
           { tamanho: 'M', quantidade: 2 },
@@ -202,7 +202,6 @@ describe('tela Corte / Infesto', () => {
     await screen.findByRole('table', { name: 'Grade planejada' });
     fireEvent.change(screen.getByLabelText('Quantidade cortada M'), { target: { value: '9' } });
     fireEvent.change(screen.getByLabelText('Camadas do enfesto'), { target: { value: '4' } });
-    fireEvent.change(screen.getByLabelText('Metragem'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Peso real consumido'), { target: { value: '0.5' } });
     fireEvent.click(screen.getByRole('button', { name: 'Registrar corte da cor' }));
 
@@ -224,6 +223,58 @@ describe('tela Corte / Infesto', () => {
         }),
       ),
     );
+  });
+
+  it('pede a metragem e dispensa o peso quando o tecido é controlado em metros', async () => {
+    materias.mockResolvedValue({
+      data: [
+        {
+          id: 8,
+          codigo: 'TELA',
+          nome: 'Tela metro',
+          descricao: null,
+          tipo: 'tecido',
+          categoria: null,
+          cor: null,
+          composicao: null,
+          largura_cm: null,
+          gramatura: null,
+          unidade: 'MT',
+          custo: 0,
+          estoque_minimo: 0,
+          fornecedor: null,
+          referencia_fornecedor: null,
+          ncm: null,
+          status: 'ativo',
+          observacoes: null,
+          criado_em: '',
+          atualizado_em: '',
+        },
+      ],
+      pagina: 1,
+      por_pagina: 100,
+      total: 1,
+      total_paginas: 1,
+    });
+    render(<CorteInfestoPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Executar corte' }));
+    await screen.findByRole('table', { name: 'Grade planejada' });
+    expect(screen.queryByLabelText('Peso real consumido')).toBeNull();
+    expect(screen.getByText(/controlado em MT/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Camadas do enfesto'), { target: { value: '6' } });
+    fireEvent.change(screen.getByLabelText('Metragem consumida'), { target: { value: '4.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Registrar corte da cor' }));
+    await waitFor(() =>
+      expect(concluir).toHaveBeenCalledWith(
+        4,
+        expect.objectContaining({
+          materia_prima_id: 8,
+          metragem: 4.5,
+          camadas: 6,
+        }),
+      ),
+    );
+    expect(concluir.mock.calls[0]?.[1]).not.toHaveProperty('peso_real');
   });
 
   it('informa quando a ordem não tem grade e não inventa tamanhos', async () => {

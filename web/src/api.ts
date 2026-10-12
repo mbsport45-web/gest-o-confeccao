@@ -338,8 +338,8 @@ export async function concluirCorteInfesto(
     materia_prima_id: number;
     cor: string;
     camadas: number;
-    metragem: number;
-    peso_real: number;
+    metragem?: number;
+    peso_real?: number;
     itens: Array<{ tamanho: string; quantidade: number }>;
     autorizar_excedente?: boolean;
   },

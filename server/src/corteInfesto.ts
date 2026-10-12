@@ -50,8 +50,8 @@ export type DadosCorteInfesto = {
   materia_prima_id: number;
   cor: string;
   camadas: number;
-  metragem: number;
-  peso_real: number;
+  metragem?: number;
+  peso_real?: number;
   itens: Array<{ tamanho: string; quantidade: number }>;
   autorizar_excedente?: boolean;
 };
@@ -83,9 +83,16 @@ function falha(mensagem: string, status: number): never {
   throw Object.assign(new Error(mensagem), { status });
 }
 
-export function quantidadeBaixaEstoque(unidade: string, pesoReal: number, metragem: number) {
+export function consumoPorUnidade(unidade: string): 'metro' | 'peso' {
   const normalizada = unidade.trim().toUpperCase();
-  if (normalizada === 'MT' || normalizada === 'M' || normalizada === 'METRO') {
+  if (normalizada === 'MT' || normalizada === 'M' || normalizada === 'METRO' || normalizada === 'METROS') {
+    return 'metro';
+  }
+  return 'peso';
+}
+
+export function quantidadeBaixaEstoque(unidade: string, pesoReal: number, metragem: number) {
+  if (consumoPorUnidade(unidade) === 'metro') {
     return { quantidade: metragem, origem: 'metragem' as const };
   }
   return { quantidade: pesoReal, origem: 'peso' as const };
@@ -255,12 +262,18 @@ export function concluirCorteInfesto(
   if (!Number.isInteger(dados.camadas) || dados.camadas < 1) {
     falha('Informe o número de camadas do enfesto', 400);
   }
-  if (!(dados.metragem > 0) || !(dados.peso_real > 0)) {
-    falha('Informe a metragem e o peso real consumido', 400);
+  const controle = consumoPorUnidade(materia.unidade);
+  const metragem = dados.metragem ?? 0;
+  const pesoReal = dados.peso_real ?? 0;
+  if (controle === 'metro' && !(metragem > 0)) {
+    falha('Informe a metragem consumida', 400);
+  }
+  if (controle === 'peso' && !(pesoReal > 0)) {
+    falha('Informe o peso real consumido', 400);
   }
 
   const quantidadePecas = normalizados.reduce((soma, item) => soma + item.quantidade, 0);
-  const baixa = quantidadeBaixaEstoque(materia.unidade, dados.peso_real, dados.metragem);
+  const baixa = quantidadeBaixaEstoque(materia.unidade, pesoReal, metragem);
   const requisitos = db
     .prepare(
       `SELECT id, materia_prima_id, quantidade_total, movimento_id
@@ -293,7 +306,7 @@ export function concluirCorteInfesto(
       quantidade: baixa.quantidade,
       materia_prima_id: materia.id,
       motivo: `Corte ${ordem.codigo ?? `OP ${ordem.id}`}`,
-      observacoes: `${corSalva} · ${dados.camadas} camadas · ${dados.metragem} m · ${dados.peso_real} kg`,
+      observacoes: `${corSalva} · ${dados.camadas} camadas · ${baixa.quantidade} ${materia.unidade}`,
     });
     if (!movimento.ok) falha(movimento.erro, movimento.status);
     movimentoId = movimento.movimentoId;
@@ -322,8 +335,8 @@ export function concluirCorteInfesto(
       corSalva,
       quantidadePecas,
       dados.camadas,
-      dados.metragem,
-      dados.peso_real,
+      metragem,
+      pesoReal,
       quantidadeBaixada,
       materia.unidade,
       movimentoId,

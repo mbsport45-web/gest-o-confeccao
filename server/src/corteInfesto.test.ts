@@ -55,8 +55,8 @@ describe('corte e infesto', () => {
     quantidade: number;
     tamanho?: string;
     camadas: number;
-    metragem: number;
-    peso_real: number;
+    metragem?: number;
+    peso_real?: number;
     itens?: Array<{ tamanho: string; quantidade: number }>;
     autorizar_excedente?: boolean;
   }) {
@@ -64,8 +64,8 @@ describe('corte e infesto', () => {
       materia_prima_id: dados.materia_prima_id,
       cor: dados.cor,
       camadas: dados.camadas,
-      metragem: dados.metragem,
-      peso_real: dados.peso_real,
+      ...(dados.metragem !== undefined ? { metragem: dados.metragem } : {}),
+      ...(dados.peso_real !== undefined ? { peso_real: dados.peso_real } : {}),
       itens: dados.itens ?? [{ tamanho: dados.tamanho ?? 'M', quantidade: dados.quantidade }],
       ...(dados.autorizar_excedente ? { autorizar_excedente: true } : {}),
     };
@@ -452,5 +452,102 @@ describe('corte e infesto', () => {
     ).filter((item) => item.tipo === 'saida' && item.motivo.startsWith('Corte'));
     expect(saidasMalha).toHaveLength(1);
     expect(saidasMalha[0]?.quantidade).toBe(1.5);
+  });
+
+  it('exige só o consumo da unidade cadastrada e baixa KG ou metro', async () => {
+    const quilo = await tecido({ nome: 'Malha quilo', unidade: 'KG' });
+    const metro = await tecido({ nome: 'Tela importada', unidade: 'METRO' });
+    const mt = await tecido({ nome: 'Tela cadastro', unidade: 'MT' });
+    for (const materia of [quilo, metro, mt]) {
+      const entrada = await api.post('/api/estoque/movimentos').send({
+        tipo: 'entrada',
+        quantidade: 10,
+        materia_prima_id: materia.id,
+      });
+      expect(entrada.status).toBe(201);
+    }
+
+    const opQuilo = await ordem(4, 'Preto');
+    const semPeso = await api.post(`/api/ordens/${opQuilo.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: quilo.id,
+        cor: 'Preto',
+        quantidade: 4,
+        camadas: 3,
+        metragem: 9,
+      }),
+    );
+    expect(semPeso.status).toBe(400);
+    expect(semPeso.body.erro).toBe('Informe o peso real consumido');
+    expect(await saldo(quilo.id)).toBe(10);
+    expect((await api.get(`/api/ordens/${opQuilo.id}`)).body.status).toBe('planejada');
+
+    const corteQuilo = await api.post(`/api/ordens/${opQuilo.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: quilo.id,
+        cor: 'Preto',
+        quantidade: 4,
+        camadas: 3,
+        peso_real: 1.25,
+      }),
+    );
+    expect(corteQuilo.status).toBe(201);
+    expect(corteQuilo.body.peso_real).toBe(1.25);
+    expect(corteQuilo.body.metragem).toBe(0);
+    expect(corteQuilo.body.quantidade_baixada).toBe(1.25);
+    expect(corteQuilo.body.unidade_baixa).toBe('KG');
+    expect(await saldo(quilo.id)).toBe(8.75);
+
+    const opMetro = await ordem(3, 'Azul');
+    const semMetragem = await api.post(`/api/ordens/${opMetro.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: metro.id,
+        cor: 'Azul',
+        quantidade: 3,
+        camadas: 2,
+        peso_real: 0.8,
+      }),
+    );
+    expect(semMetragem.status).toBe(400);
+    expect(semMetragem.body.erro).toBe('Informe a metragem consumida');
+    expect(await saldo(metro.id)).toBe(10);
+
+    const corteMetro = await api.post(`/api/ordens/${opMetro.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: metro.id,
+        cor: 'Azul',
+        quantidade: 3,
+        camadas: 2,
+        metragem: 4.5,
+      }),
+    );
+    expect(corteMetro.status).toBe(201);
+    expect(corteMetro.body.metragem).toBe(4.5);
+    expect(corteMetro.body.peso_real).toBe(0);
+    expect(corteMetro.body.quantidade_baixada).toBe(4.5);
+    expect(corteMetro.body.unidade_baixa).toBe('METRO');
+    expect(await saldo(metro.id)).toBe(5.5);
+    const movimentos = await api.get('/api/estoque/movimentos');
+    const saidaMetro = (
+      movimentos.body.data as Array<{ tipo: string; quantidade: number; motivo: string; observacoes: string | null }>
+    ).find((item) => item.tipo === 'saida' && item.motivo.includes(opMetro.codigo));
+    expect(saidaMetro?.quantidade).toBe(4.5);
+    expect(saidaMetro?.observacoes).toContain('4.5 METRO');
+
+    const opMt = await ordem(2, 'Verde');
+    const corteMt = await api.post(`/api/ordens/${opMt.id}/corte-infesto`).send(
+      corteBody({
+        materia_prima_id: mt.id,
+        cor: 'Verde',
+        quantidade: 2,
+        camadas: 5,
+        metragem: 3,
+      }),
+    );
+    expect(corteMt.status).toBe(201);
+    expect(corteMt.body.quantidade_baixada).toBe(3);
+    expect(corteMt.body.peso_real).toBe(0);
+    expect(corteMt.body.unidade_baixa).toBe('MT');
+    expect(await saldo(mt.id)).toBe(7);
   });
 });

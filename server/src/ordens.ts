@@ -84,8 +84,8 @@ const corteInfestoSchema = z.object({
   materia_prima_id: z.number().int().positive(),
   cor: z.string().trim().min(1, 'Informe a cor').max(80),
   camadas: z.number().int().positive('Informe o número de camadas do enfesto'),
-  metragem: z.number().positive('Informe a metragem'),
-  peso_real: z.number().positive('Informe o peso real consumido'),
+  metragem: z.number().positive('Informe a metragem consumida').optional(),
+  peso_real: z.number().positive('Informe o peso real consumido').optional(),
   itens: z
     .array(
       z.object({
@@ -886,7 +886,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
     const parsed = corteInfestoSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
-        erro: 'Informe tecido, cor, quantidades por tamanho, camadas, metragem e peso real',
+        erro: 'Informe tecido, cor, quantidades por tamanho, camadas e o consumo do tecido',
       });
     }
     try {

@@ -23,6 +23,18 @@ import {
 
 const PODE_CORTAR = new Set(['planejada', 'pendente', 'corte']);
 
+function consumoPorUnidade(unidade: string | undefined): 'metro' | 'peso' {
+  const normalizada = (unidade ?? '').trim().toUpperCase();
+  if (normalizada === 'MT' || normalizada === 'M' || normalizada === 'METRO' || normalizada === 'METROS') {
+    return 'metro';
+  }
+  return 'peso';
+}
+
+function textoConsumo(valor: number) {
+  return valor > 0 ? String(valor) : '—';
+}
+
 function somarCortes(execucoes: CorteInfesto[]): Record<string, number> {
   const mapa: Record<string, number> = {};
   for (const execucao of execucoes) {
@@ -144,6 +156,15 @@ export function CorteInfestoPage() {
       setErro('A quantidade cortada ultrapassa o planejado. Marque a autorização para continuar.');
       return;
     }
+    const emMetro = consumoPorUnidade(tecido?.unidade) === 'metro';
+    if (emMetro && !(Number(metragem) > 0)) {
+      setErro('Informe a metragem consumida.');
+      return;
+    }
+    if (!emMetro && !(Number(peso) > 0)) {
+      setErro('Informe o peso real consumido.');
+      return;
+    }
     setSalvando(true);
     setErro(null);
     try {
@@ -151,9 +172,8 @@ export function CorteInfestoPage() {
         materia_prima_id: Number(tecidoId),
         cor: corAtiva,
         camadas,
-        metragem: Number(metragem),
-        peso_real: Number(peso),
         itens,
+        ...(emMetro ? { metragem: Number(metragem) } : { peso_real: Number(peso) }),
         ...(autorizar ? { autorizar_excedente: true } : {}),
       });
       const historico = await carregar();
@@ -343,8 +363,8 @@ export function CorteInfestoPage() {
                     <td>{textoTamanhos(execucao)}</td>
                     <td>{execucao.tecido}</td>
                     <td>{execucao.camadas}</td>
-                    <td>{execucao.metragem}</td>
-                    <td>{execucao.peso_real}</td>
+                    <td>{textoConsumo(execucao.metragem)}</td>
+                    <td>{textoConsumo(execucao.peso_real)}</td>
                     <td>
                       {execucao.quantidade_baixada > 0
                         ? `${execucao.quantidade_baixada} ${execucao.unidade_baixa}`
@@ -369,7 +389,12 @@ export function CorteInfestoPage() {
                 <select
                   aria-label="Tecido"
                   value={tecidoId}
-                  onChange={(e) => setTecidoId(e.target.value)}
+                  onChange={(e) => {
+                    setTecidoId(e.target.value);
+                    const proximo = tecidos.find((item) => String(item.id) === e.target.value);
+                    if (consumoPorUnidade(proximo?.unidade) === 'metro') setPeso('');
+                    else setMetragem('');
+                  }}
                   required
                 >
                   <option value="">Selecione o tecido</option>
@@ -454,11 +479,11 @@ export function CorteInfestoPage() {
                   />
                 </label>
               </div>
-              <div className="form__row">
+              {tecido && consumoPorUnidade(tecido.unidade) === 'metro' ? (
                 <label>
-                  Metragem
+                  Metragem consumida ({tecido.unidade})
                   <input
-                    aria-label="Metragem"
+                    aria-label="Metragem consumida"
                     type="number"
                     min={0.001}
                     step="0.001"
@@ -467,8 +492,9 @@ export function CorteInfestoPage() {
                     required
                   />
                 </label>
+              ) : (
                 <label>
-                  Peso real consumido
+                  Peso real consumido ({tecido?.unidade || 'KG'})
                   <input
                     aria-label="Peso real consumido"
                     type="number"
@@ -479,11 +505,11 @@ export function CorteInfestoPage() {
                     required
                   />
                 </label>
-              </div>
+              )}
               <p className="dica">
-                {tecido?.unidade === 'MT'
-                  ? 'Este tecido está em metros. A baixa usa a metragem e acontece uma vez para este tecido na ordem.'
-                  : 'A baixa usa o peso real na primeira execução deste tecido. As cores seguintes não baixam o estoque de novo.'}
+                {tecido && consumoPorUnidade(tecido.unidade) === 'metro'
+                  ? `Este tecido é controlado em ${tecido.unidade}. Preencha a metragem consumida. A baixa usa essa metragem na primeira execução deste tecido na ordem.`
+                  : `Este tecido é controlado em ${tecido?.unidade || 'KG'}. Preencha o peso real consumido. A baixa usa esse peso na primeira execução deste tecido na ordem.`}
               </p>
               <button type="submit" disabled={salvando || !tecidoId}>
                 {salvando ? 'Registrando…' : 'Registrar corte da cor'}
