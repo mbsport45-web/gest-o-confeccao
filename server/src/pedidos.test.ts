@@ -273,4 +273,34 @@ describe('API de pedidos de venda', () => {
     expect(resumo.body.atrasados).toBe(1);
     expect(resumo.body.total_vendido).toBe(60);
   });
+
+  it('recusa cancelar pedido faturado ainda não expedido e continua cancelando o elegível', async () => {
+    const { cliente, produto, variante } = await seed();
+    const item = { produto_id: produto.id, variante_id: variante.id, quantidade: 2, preco_unitario: 30 };
+    const faturado = await api.post('/api/pedidos').send({
+      cliente_id: cliente.id,
+      status: 'aberto',
+      itens: [item],
+    });
+    expect((await api.patch(`/api/pedidos/${faturado.body.id}`).send({ status: 'confirmado' })).status).toBe(200);
+    expect((await api.patch(`/api/pedidos/${faturado.body.id}`).send({ status: 'faturado' })).status).toBe(200);
+    expect((await api.get(`/api/pedidos/${faturado.body.id}`)).body).toMatchObject({
+      status: 'faturado',
+      expedicao_status: null,
+    });
+
+    const recusa = await api.patch(`/api/pedidos/${faturado.body.id}`).send({ status: 'cancelado' });
+    expect(recusa.status).toBe(409);
+    expect(recusa.body.erro).toBe('Transição de faturado para cancelado não é permitida');
+    expect((await api.get(`/api/pedidos/${faturado.body.id}`)).body.status).toBe('faturado');
+
+    const elegivel = await api.post('/api/pedidos').send({
+      cliente_id: cliente.id,
+      status: 'aberto',
+      itens: [item],
+    });
+    const cancel = await api.patch(`/api/pedidos/${elegivel.body.id}`).send({ status: 'cancelado' });
+    expect(cancel.status).toBe(200);
+    expect(cancel.body.status).toBe('cancelado');
+  });
 });

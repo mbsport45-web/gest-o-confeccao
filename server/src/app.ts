@@ -45,8 +45,8 @@ export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
     opcoes.webhookToken ?? (process.env.VITEST ? '' : process.env.ASAAS_WEBHOOK_TOKEN ?? '');
 
   app.use(cors({ origin: true, credentials: true }));
-  // 2mb: imagens de produto podem ir como data URL no cadastro.
-  app.use(express.json({ limit: '2mb' }));
+  // 12mb: importação de PDF em base64 e imagens de produto em data URL.
+  app.use(express.json({ limit: '12mb' }));
   app.use(cookieParser());
 
   app.get('/api/health', (_req, res) => {

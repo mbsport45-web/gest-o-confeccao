@@ -1,9 +1,18 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
-import { registrarMovimentoEstoque } from './estoque.js';
-import { arredondarDinheiro, sincronizarContaPagarCompra } from './financeiro.js';
+import { mapearSaldoEstoque, registrarMovimentoEstoque } from './estoque.js';
+import {
+  arredondarDinheiro,
+  inferirFormaPagamento,
+  lancarContasPagarCompra,
+  sincronizarContaPagarCompra,
+  type DadosPagamentoCompra,
+  type FinanceiroLancamento,
+} from './financeiro.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
+import { entradaExistente, processarDocumentoCompra } from './documentosCompra.js';
+import { TIPOS_DOCUMENTO } from './leituraDocumento.js';
 
 export const STATUS_COMPRA = [
   'rascunho',
@@ -25,6 +34,7 @@ export interface CompraItem {
   custo_unitario: number;
   total: number;
   unidade: string | null;
+  cor: string | null;
   criado_em: string;
   nome?: string | null;
   codigo?: string | null;
@@ -48,6 +58,10 @@ export interface PedidoCompra {
   vencimento: string | null;
   criado_em: string;
   atualizado_em: string;
+  documento_importado_id?: number | null;
+  documento_nome?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
   fornecedor?: string;
   itens?: CompraItem[];
 }
@@ -68,6 +82,7 @@ const itemSchema = z
     quantidade: z.number().positive('quantidade deve ser maior que zero'),
     custo_unitario: z.number().min(0, 'custo não pode ser negativo'),
     unidade: textoOpcional,
+    cor: textoOpcional,
   })
   .refine(
     (item) => {
@@ -95,10 +110,29 @@ const compraBaseSchema = z.object({
   forma_pagamento: textoOpcional,
   condicao_pagamento: textoOpcional,
   vencimento: textoOpcional,
+  documento_importado_id: z.number().int().positive().optional(),
+  confirmar: z.boolean().optional(),
+  parcelas: z
+    .array(
+      z.object({
+        vencimento: z.string().trim().min(1, 'Informe o vencimento da parcela'),
+        valor: z.number().positive('valor da parcela deve ser maior que zero'),
+      }),
+    )
+    .optional(),
   itens: z.array(itemSchema).optional(),
+  itens_ignorados: z
+    .array(
+      z.object({
+        descricao: z.string().trim().min(1),
+        aviso: z.string().trim().min(1).optional(),
+      }),
+    )
+    .optional(),
 });
 
 const atualizarCompraSchema = compraBaseSchema
+  .omit({ confirmar: true, documento_importado_id: true })
   .partial()
   .extend({
     fornecedor_id: z.number().int().positive().optional(),
@@ -119,9 +153,14 @@ const receberSchema = z.object({
 });
 
 const COMPRA_SELECT = `
-  SELECT c.*, f.nome AS fornecedor
+  SELECT c.*, f.nome AS fornecedor,
+         d.nome_arquivo AS documento_nome,
+         d.numero AS documento_numero,
+         d.tipo AS documento_tipo
   FROM pedidos_compra c
   JOIN fornecedores f ON f.id = c.fornecedor_id
+  LEFT JOIN documentos_importados d
+    ON d.id = c.documento_importado_id AND d.empresa_id = c.empresa_id
 `;
 
 const ITEM_SELECT = `
@@ -236,10 +275,10 @@ export function createComprasRouter(db: AppDatabase): Router {
       .prepare(
         `INSERT INTO pedido_compra_itens (
            empresa_id, compra_id, materia_prima_id, produto_id, variante_id,
-           quantidade, quantidade_recebida, custo_unitario, total, unidade
+           quantidade, quantidade_recebida, custo_unitario, total, unidade, cor
          ) VALUES (
            @empresa_id, @compra_id, @materia_prima_id, @produto_id, @variante_id,
-           @quantidade, 0, @custo_unitario, @total, @unidade
+           @quantidade, 0, @custo_unitario, @total, @unidade, @cor
          )`,
       )
       .run({
@@ -252,8 +291,106 @@ export function createComprasRouter(db: AppDatabase): Router {
         custo_unitario: item.custo_unitario,
         total,
         unidade: item.unidade ?? null,
+        cor: item.cor ?? null,
       });
     return Number(info.lastInsertRowid);
+  }
+
+  function receberItens(
+    compra: PedidoCompra,
+    pedidos: Array<{ item_id: number; quantidade: number }>,
+    financeiro?: DadosPagamentoCompra,
+  ) {
+    const itens = compra.itens ?? [];
+    for (const pedido of pedidos) {
+      const item = itens.find((i) => i.id === pedido.item_id);
+      if (!item) throw Object.assign(new Error('Item não pertence à compra'), { status: 404 });
+      const restante = arredondarDinheiro(item.quantidade - item.quantidade_recebida);
+      if (pedido.quantidade - restante > 1e-6) {
+        throw Object.assign(
+          new Error(`Quantidade a receber excede o saldo do item (${restante})`),
+          { status: 400 },
+        );
+      }
+      const documento = compra.documento_nome
+        ? `Documento ${compra.documento_numero ?? ''} (${compra.documento_nome})`.replace(/\s+/g, ' ').trim()
+        : '';
+      const mov = registrarMovimentoEstoque(db, compra.empresa_id, {
+        tipo: 'entrada',
+        quantidade: pedido.quantidade,
+        materia_prima_id: item.materia_prima_id ?? undefined,
+        produto_id: item.variante_id ? undefined : item.produto_id ?? undefined,
+        variante_id: item.variante_id ?? undefined,
+        motivo: `Compra ${compra.codigo ?? compra.id}`,
+        observacoes: [
+          `Recebimento item ${item.id}`,
+          documento,
+          item.cor ? `Cor ${item.cor}` : '',
+          item.unidade ? `Unidade ${item.unidade}` : '',
+        ]
+          .filter(Boolean)
+          .join('. '),
+      });
+      if (!mov.ok) {
+        throw Object.assign(new Error(mov.erro), { status: mov.status });
+      }
+      db.prepare(
+        `UPDATE pedido_compra_itens
+            SET quantidade_recebida = quantidade_recebida + @q
+          WHERE id = @id`,
+      ).run({ id: item.id, q: pedido.quantidade });
+    }
+    const atualizados = mapItens(compra.id);
+    const algum = atualizados.some((i) => i.quantidade_recebida > 0);
+    const todos = atualizados.every(
+      (i) => i.quantidade_recebida + 1e-9 >= i.quantidade,
+    );
+    const status: StatusCompra = todos ? 'recebida' : algum ? 'parcial' : compra.status;
+    db.prepare(
+      `UPDATE pedidos_compra SET status = @status, atualizado_em = datetime('now')
+        WHERE id = @id AND empresa_id = @empresa_id`,
+    ).run({ id: compra.id, empresa_id: compra.empresa_id, status });
+    const after = mapCompra(compra.id, compra.empresa_id);
+    if (!after) return;
+    if (financeiro) lancarContasPagarCompra(db, after, financeiro);
+    else sincronizarContaPagarCompra(db, after);
+  }
+
+  function resumoConfirmacao(
+    compra: PedidoCompra,
+    ignorados: Array<{ descricao: string; aviso?: string }> = [],
+  ) {
+    const financeiro = db
+      .prepare(
+        `SELECT * FROM financeiro_lancamentos
+          WHERE compra_id = ? AND empresa_id = ? AND tipo = 'pagar'
+          ORDER BY ifnull(parcela, id), id`,
+      )
+      .all(compra.id, compra.empresa_id) as FinanceiroLancamento[];
+    const estoque = (compra.itens ?? [])
+      .filter((item) => item.quantidade_recebida > 0 && item.materia_prima_id)
+      .map((item) => {
+        const saldo = db
+          .prepare(
+            `SELECT id FROM estoque_saldos
+              WHERE empresa_id = ? AND materia_prima_id = ?`,
+          )
+          .get(compra.empresa_id, item.materia_prima_id) as { id: number } | undefined;
+        const mapeado = saldo ? mapearSaldoEstoque(db, saldo.id, compra.empresa_id) : undefined;
+        return {
+          materia_prima_id: item.materia_prima_id,
+          nome: item.nome ?? mapeado?.nome ?? null,
+          quantidade: item.quantidade_recebida,
+          unidade: item.unidade ?? mapeado?.unidade ?? null,
+          cor: item.cor,
+          saldo: mapeado?.quantidade ?? 0,
+        };
+      });
+    return {
+      estoque,
+      financeiro,
+      itens_ignorados: ignorados,
+    };
   }
 
   router.get('/', (req, res) => {
@@ -313,6 +450,35 @@ export function createComprasRouter(db: AppDatabase): Router {
     });
   });
 
+  const documentoSchema = z.object({
+    tipo: z.enum(TIPOS_DOCUMENTO),
+    nome_arquivo: z.string().trim().min(1, 'informe o arquivo').max(200),
+    conteudo_base64: z.string().trim().min(20, 'envie o PDF').max(12_000_000),
+  });
+
+  router.post('/documentos', async (req, res) => {
+    const parsed = documentoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Dados inválidos',
+        detalhes: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const pdf = Buffer.from(parsed.data.conteudo_base64, 'base64');
+    if (pdf.length === 0) return res.status(400).json({ erro: 'Arquivo PDF inválido' });
+    try {
+      const documento = await processarDocumentoCompra(db, empresaDaSessao(req), req.usuario!.id, {
+        tipo: parsed.data.tipo,
+        nomeArquivo: parsed.data.nome_arquivo,
+        pdf,
+      });
+      res.status(201).json(documento);
+    } catch (err) {
+      const falha = err as Error & { status?: number };
+      return res.status(falha.status ?? 400).json({ erro: falha.message });
+    }
+  });
+
   router.get('/:id', (req, res) => {
     const compra = mapCompra(Number(req.params.id), empresaDaSessao(req), true);
     if (!compra) return res.status(404).json({ erro: 'Compra não encontrada' });
@@ -334,11 +500,64 @@ export function createComprasRouter(db: AppDatabase): Router {
       .prepare('SELECT id FROM fornecedores WHERE id = ? AND empresa_id = ?')
       .get(data.fornecedor_id, empresaId);
     if (!fornecedor) return res.status(404).json({ erro: 'Fornecedor não encontrado' });
+    if (data.documento_importado_id) {
+      const documento = db
+        .prepare(
+          `SELECT id, conteudo_hash, tipo, numero, cnpj, cpf
+             FROM documentos_importados WHERE id = ? AND empresa_id = ?`,
+        )
+        .get(data.documento_importado_id, empresaId) as
+        | {
+            id: number;
+            conteudo_hash: string | null;
+            tipo: string;
+            numero: string | null;
+            cnpj: string | null;
+            cpf: string | null;
+          }
+        | undefined;
+      if (!documento) return res.status(404).json({ erro: 'Documento não encontrado' });
+      const existente = entradaExistente(db, empresaId, {
+        conteudo_hash: documento.conteudo_hash ?? '',
+        tipo: documento.tipo,
+        numero: documento.numero,
+        cnpj: documento.cnpj,
+        cpf: documento.cpf,
+      });
+      if (existente) {
+        return res.status(409).json({
+          erro: 'Este documento já foi importado',
+          compra_id: existente.id,
+        });
+      }
+    }
     if (data.status && data.status !== 'rascunho' && data.status !== 'aberta') {
       return res.status(400).json({ erro: 'Nova compra deve nascer como rascunho ou aberta' });
     }
     if (data.status === 'aberta' && (!data.itens || data.itens.length === 0)) {
       return res.status(400).json({ erro: 'Abra a compra com ao menos um item' });
+    }
+    if (data.confirmar && (!data.itens || data.itens.length === 0)) {
+      return res.status(400).json({ erro: 'Confirme a compra com ao menos um item reconhecido' });
+    }
+    let pagamento: DadosPagamentoCompra | undefined;
+    if (data.confirmar && data.documento_importado_id) {
+      pagamento = {
+        forma: inferirFormaPagamento(data.forma_pagamento),
+        vencimento: data.vencimento ?? null,
+        parcelas: data.parcelas,
+        exigirDados: true,
+      };
+      if (!pagamento.forma) {
+        return res.status(400).json({
+          erro: 'Informe se o pagamento é à vista ou a prazo antes de confirmar a nota',
+        });
+      }
+      if (pagamento.forma === 'a_prazo' && !pagamento.vencimento && !(pagamento.parcelas && pagamento.parcelas.length)) {
+        return res.status(400).json({
+          erro: 'Informe o vencimento ou as parcelas da conta a prazo',
+        });
+      }
     }
 
     try {
@@ -347,10 +566,10 @@ export function createComprasRouter(db: AppDatabase): Router {
           .prepare(
             `INSERT INTO pedidos_compra (
                empresa_id, codigo, fornecedor_id, data_emissao, data_prevista, status, observacoes,
-               desconto, frete, forma_pagamento, condicao_pagamento, vencimento
+               desconto, frete, forma_pagamento, condicao_pagamento, vencimento, documento_importado_id
              ) VALUES (
                @empresa_id, @codigo, @fornecedor_id, @data_emissao, @data_prevista, @status, @observacoes,
-               @desconto, @frete, @forma_pagamento, @condicao_pagamento, @vencimento
+               @desconto, @frete, @forma_pagamento, @condicao_pagamento, @vencimento, @documento_importado_id
              )`,
           )
           .run({
@@ -359,13 +578,18 @@ export function createComprasRouter(db: AppDatabase): Router {
             fornecedor_id: data.fornecedor_id,
             data_emissao: data.data_emissao ?? hoje(),
             data_prevista: data.data_prevista ?? null,
-            status: data.status ?? 'rascunho',
+            status: data.confirmar ? 'aberta' : data.status ?? 'rascunho',
             observacoes: data.observacoes ?? null,
             desconto: data.desconto ?? 0,
             frete: data.frete ?? 0,
             forma_pagamento: data.forma_pagamento ?? null,
             condicao_pagamento: data.condicao_pagamento ?? null,
-            vencimento: data.vencimento ?? data.data_prevista ?? null,
+            vencimento:
+              data.vencimento ??
+              data.parcelas?.[0]?.vencimento ??
+              data.data_prevista ??
+              null,
+            documento_importado_id: data.documento_importado_id ?? null,
           });
         const id = Number(info.lastInsertRowid);
         if (!data.codigo) {
@@ -379,10 +603,28 @@ export function createComprasRouter(db: AppDatabase): Router {
         }
         for (const item of data.itens ?? []) inserirItem(id, empresaId, item);
         recalc(id, empresaId);
+        if (data.confirmar) {
+          const compra = mapCompra(id, empresaId, true);
+          if (!compra?.itens?.length) {
+            throw Object.assign(new Error('Confirme a compra com ao menos um item reconhecido'), { status: 400 });
+          }
+          receberItens(
+            compra,
+            compra.itens.map((item) => ({ item_id: item.id, quantidade: item.quantidade })),
+            pagamento,
+          );
+        }
         return id;
       });
       const id = criar();
-      res.status(201).json(mapCompra(id, empresaId, true));
+      const criada = mapCompra(id, empresaId, true);
+      if (data.confirmar && criada) {
+        return res.status(201).json({
+          ...criada,
+          confirmacao: resumoConfirmacao(criada, data.itens_ignorados ?? []),
+        });
+      }
+      res.status(201).json(criada);
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       if (err instanceof Error && /UNIQUE/i.test(err.message)) {
@@ -607,46 +849,7 @@ export function createComprasRouter(db: AppDatabase): Router {
 
     try {
       db.transaction(() => {
-        for (const pedido of pedidos) {
-          const item = itens.find((i) => i.id === pedido.item_id);
-          if (!item) throw Object.assign(new Error('Item não pertence à compra'), { status: 404 });
-          const restante = arredondarDinheiro(item.quantidade - item.quantidade_recebida);
-          if (pedido.quantidade - restante > 1e-6) {
-            throw Object.assign(
-              new Error(`Quantidade a receber excede o saldo do item (${restante})`),
-              { status: 400 },
-            );
-          }
-          const mov = registrarMovimentoEstoque(db, compra.empresa_id, {
-            tipo: 'entrada',
-            quantidade: pedido.quantidade,
-            materia_prima_id: item.materia_prima_id ?? undefined,
-            produto_id: item.variante_id ? undefined : item.produto_id ?? undefined,
-            variante_id: item.variante_id ?? undefined,
-            motivo: `Compra ${compra.codigo ?? compra.id}`,
-            observacoes: `Recebimento item ${item.id}`,
-          });
-          if (!mov.ok) {
-            throw Object.assign(new Error(mov.erro), { status: mov.status });
-          }
-          db.prepare(
-            `UPDATE pedido_compra_itens
-                SET quantidade_recebida = quantidade_recebida + @q
-              WHERE id = @id`,
-          ).run({ id: item.id, q: pedido.quantidade });
-        }
-        const atualizados = mapItens(compra.id);
-        const algum = atualizados.some((i) => i.quantidade_recebida > 0);
-        const todos = atualizados.every(
-          (i) => i.quantidade_recebida + 1e-9 >= i.quantidade,
-        );
-        const status: StatusCompra = todos ? 'recebida' : algum ? 'parcial' : compra.status;
-        db.prepare(
-          `UPDATE pedidos_compra SET status = @status, atualizado_em = datetime('now')
-            WHERE id = @id AND empresa_id = @empresa_id`,
-        ).run({ id: compra.id, empresa_id: compra.empresa_id, status });
-        const after = mapCompra(compra.id, compra.empresa_id);
-        if (after) sincronizarContaPagarCompra(db, after);
+        receberItens(compra, pedidos);
       })();
       res.json(mapCompra(compra.id, compra.empresa_id, true));
     } catch (err) {

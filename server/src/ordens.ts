@@ -1,6 +1,23 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import {
+  type CelulaGrade,
+  criarCor,
+  criarTamanho,
+  gravarGrade,
+  lerGrade,
+  listarCores,
+  listarTamanhos,
+  resumoTamanhos,
+  validarGrade,
+} from './ordensGrade.js';
+import {
+  concluirCorteInfesto,
+  estornarCortesInfesto,
+  listarCortesInfesto,
+  resumirCorteInfesto,
+} from './corteInfesto.js';
 import { sincronizarStatusPedidoFromOps } from './pedidos.js';
 import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
@@ -43,9 +60,57 @@ const textoOpcional = z
   .or(z.literal(''))
   .transform((v) => (v ? v : undefined));
 
+const referenciaCampo = z
+  .union([z.string().trim().max(200), z.null()])
+  .optional()
+  .transform((v) => {
+    if (v === undefined) return undefined;
+    if (v === null) return null;
+    return v === '' ? null : v;
+  });
+
 const requisitoSchema = z.object({
   materia_prima_id: z.number().int().positive(),
   quantidade: z.number().positive('quantidade deve ser maior que zero'),
+});
+
+const celulaGradeSchema = z.object({
+  cor: z.string().trim().min(1, 'cor é obrigatória'),
+  tamanho: z.string().trim().min(1, 'tamanho é obrigatório'),
+  quantidade: z.number().int().min(0, 'quantidade da grade não pode ser negativa'),
+});
+
+const nomeCadastroSchema = z.object({
+  nome: z.string().trim().min(1, 'nome é obrigatório').max(80),
+});
+
+const corCadastroSchema = z.object({
+  nome: z.string().trim().min(1, 'nome é obrigatório').max(80),
+  codigo: z.string().trim().max(40).optional().nullable(),
+  hex: z.string().trim().max(20).optional().nullable(),
+});
+
+function responderCadastro(res: Response, e: unknown) {
+  const status = (e as { status?: number }).status;
+  if (!status || status >= 500) throw e;
+  return res.status(status).json({ erro: (e as Error).message });
+}
+
+const corteInfestoSchema = z.object({
+  materia_prima_id: z.number().int().positive(),
+  cor: z.string().trim().min(1, 'Informe a cor').max(80),
+  camadas: z.number().int().positive('Informe o número de camadas do enfesto'),
+  metragem: z.number().positive('Informe a metragem consumida').optional(),
+  peso_real: z.number().positive('Informe o peso real consumido').optional(),
+  itens: z
+    .array(
+      z.object({
+        tamanho: z.string().trim().min(1).max(40),
+        quantidade: z.number().int().min(0),
+      }),
+    )
+    .min(1),
+  autorizar_excedente: z.boolean().optional(),
 });
 
 const criarOrdemSchema = z
@@ -75,7 +140,9 @@ const criarOrdemSchema = z
       .or(z.literal(''))
       .transform((v) => (v ? v : undefined)),
     responsavel: textoOpcional,
+    referencia: referenciaCampo,
     requisitos: z.array(requisitoSchema).optional(),
+    grade: z.array(celulaGradeSchema).optional(),
   })
   .refine((d) => Boolean(d.cliente || d.cliente_id), {
     message: 'cliente é obrigatório',
@@ -85,7 +152,7 @@ const criarOrdemSchema = z
     message: 'produto é obrigatório',
     path: ['produto'],
   })
-  .refine((d) => Boolean(d.tamanho || d.variante_id), {
+  .refine((d) => Boolean(d.tamanho || d.variante_id || (d.grade && d.grade.length > 0)), {
     message: 'tamanho é obrigatório',
     path: ['tamanho'],
   });
@@ -125,7 +192,9 @@ const atualizarOrdemSchema = z.object({
     .or(z.literal(''))
     .transform((v) => (v === '' ? null : v))
     .optional(),
+  referencia: referenciaCampo,
   requisitos: z.array(requisitoSchema).optional(),
+  grade: z.array(celulaGradeSchema).optional(),
 });
 
 const fichaSchema = z.object({
@@ -164,9 +233,11 @@ export interface OrdemProducao {
   cliente_id: number | null;
   produto_id: number | null;
   variante_id: number | null;
+  referencia: string | null;
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  grade?: CelulaGrade[];
 }
 
 function podeTransicionar(
@@ -189,11 +260,11 @@ export function createOrdensRouter(db: AppDatabase): Router {
     `INSERT INTO ordens_producao (
        empresa_id, cliente, produto, tamanho, quantidade, status,
        cliente_id, produto_id, variante_id,
-       codigo, prioridade, data_prevista, observacoes, responsavel, atualizado_em
+       codigo, prioridade, data_prevista, observacoes, responsavel, referencia, atualizado_em
      ) VALUES (
        @empresa_id, @cliente, @produto, @tamanho, @quantidade, @status,
        @cliente_id, @produto_id, @variante_id,
-       @codigo, @prioridade, @data_prevista, @observacoes, @responsavel, datetime('now')
+       @codigo, @prioridade, @data_prevista, @observacoes, @responsavel, @referencia, datetime('now')
      )`,
   );
   const setCodigoStmt = db.prepare(
@@ -292,6 +363,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
   function mapOrdem(id: number, empresaId: number, comRequisitos = false): OrdemProducao | undefined {
     const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
     if (!ordem) return undefined;
+    ordem.grade = lerGrade(db, empresaId, id);
     if (comRequisitos) ordem.requisitos = mapRequisitos(id);
     return ordem;
   }
@@ -502,12 +574,13 @@ export function createOrdensRouter(db: AppDatabase): Router {
       cliente_id?: number | null;
       produto_id?: number | null;
       variante_id?: number | null;
+      distribuicao?: boolean;
     },
     empresaId: number,
   ) {
     let clienteId = input.cliente_id ?? null;
     let produtoId = input.produto_id ?? null;
-    let varianteId = input.variante_id ?? null;
+    let varianteId = input.distribuicao ? null : (input.variante_id ?? null);
     let clienteNome = input.cliente?.trim() ?? '';
     let produtoNome = input.produto?.trim() ?? '';
     let tamanho = input.tamanho?.trim() ?? '';
@@ -555,7 +628,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         )
         .get(empresaId, produtoNome) as { id: number } | undefined;
       produtoId = p?.id ?? null;
-      if (produtoId && tamanho && !varianteId) {
+      if (produtoId && tamanho && !varianteId && !input.distribuicao) {
         const v = db
           .prepare(
             `SELECT id FROM produto_variantes
@@ -678,7 +751,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
       where.push(
         `(ifnull(codigo,'') LIKE @q OR cliente LIKE @q OR produto LIKE @q
           OR tamanho LIKE @q OR ifnull(responsavel,'') LIKE @q
-          OR ifnull(observacoes,'') LIKE @q)`,
+          OR ifnull(observacoes,'') LIKE @q OR ifnull(referencia,'') LIKE @q)`,
       );
       params.q = `%${q}%`;
     }
@@ -726,6 +799,82 @@ export function createOrdensRouter(db: AppDatabase): Router {
     });
   });
 
+  router.get('/cores', (req, res) => {
+    const busca = String(req.query.q ?? '');
+    res.json(listarCores(db, empresaDaSessao(req), busca));
+  });
+
+  router.post('/cores', (req, res) => {
+    const parsed = corCadastroSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ erro: 'Informe o nome da cor' });
+    }
+    try {
+      const cor = criarCor(db, empresaDaSessao(req), parsed.data);
+      res.status(cor.ja_existia ? 200 : 201).json(cor);
+    } catch (e) {
+      return responderCadastro(res, e);
+    }
+  });
+
+  router.get('/tamanhos', (req, res) => {
+    res.json(listarTamanhos(db, empresaDaSessao(req)));
+  });
+
+  router.post('/tamanhos', (req, res) => {
+    const parsed = nomeCadastroSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ erro: 'Informe o nome do tamanho' });
+    }
+    const tamanho = criarTamanho(db, empresaDaSessao(req), parsed.data.nome);
+    res.status(tamanho.ja_existia ? 200 : 201).json(tamanho);
+  });
+
+  router.get('/corte-infesto', (req, res) => {
+    res.json(listarCortesInfesto(db, empresaDaSessao(req)));
+  });
+
+  router.get('/:id/corte-infesto', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    res.json(resumirCorteInfesto(db, empresaId, id));
+  });
+
+  router.post('/:id/corte-infesto', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const parsed = corteInfestoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Informe tecido, cor, quantidades por tamanho, camadas e o consumo do tecido',
+      });
+    }
+    try {
+      const aplicar = db.transaction(() => {
+        const antes = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+        if (!antes) {
+          throw Object.assign(new Error('Ordem de produção não encontrada'), { status: 404 });
+        }
+        const corte = concluirCorteInfesto(db, empresaId, id, parsed.data);
+        if (corte.avancou && AINDA_PLANEJADA.has(antes.status)) {
+          const depois = getStmt.get(id, empresaId) as OrdemProducao;
+          const consumo = consumirMateriais(depois);
+          if (!consumo.ok) throw Object.assign(new Error(consumo.erro), { status: consumo.status });
+        }
+        return corte;
+      });
+      const corte = aplicar();
+      sincronizarStatusPedidoFromOps(db, id);
+      const ordem = mapOrdem(id, empresaId, true);
+      res.status(201).json({ ...corte, ordem });
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
+  });
+
   router.get('/:id', (req, res) => {
     const ordem = mapOrdem(Number(req.params.id), empresaDaSessao(req), true);
     if (!ordem) {
@@ -746,7 +895,20 @@ export function createOrdensRouter(db: AppDatabase): Router {
     try {
       const data = parsed.data;
       const empresaId = empresaDaSessao(req);
-      const vinculos = resolverVinculos(data, empresaId);
+      const comGrade = Boolean(data.grade?.length);
+      const quantidade = comGrade
+        ? (data.grade ?? []).reduce((soma, celula) => soma + celula.quantidade, 0)
+        : data.quantidade;
+      if (data.grade) {
+        const erroGrade = validarGrade(data.grade, quantidade);
+        if (erroGrade) return res.status(400).json({ erro: erroGrade });
+      }
+      const vinculos = resolverVinculos({
+        ...data,
+        tamanho: comGrade ? resumoTamanhos(data.grade ?? []) : data.tamanho,
+        variante_id: comGrade ? undefined : data.variante_id,
+        distribuicao: comGrade,
+      }, empresaId);
       if (data.codigo && getByCodigo.get(data.codigo, 0, empresaId)) {
         return res.status(409).json({ erro: 'Já existe uma OP com este código' });
       }
@@ -756,7 +918,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         cliente: vinculos.clienteNome,
         produto: vinculos.produtoNome,
         tamanho: vinculos.tamanho,
-        quantidade: data.quantidade,
+        quantidade,
         status: data.status ?? 'pendente',
         cliente_id: vinculos.clienteId,
         produto_id: vinculos.produtoId,
@@ -766,6 +928,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
         data_prevista: data.data_prevista ?? null,
         observacoes: data.observacoes ?? null,
         responsavel: data.responsavel ?? null,
+        referencia: data.referencia ?? null,
       });
       const id = Number(info.lastInsertRowid);
       if (!data.codigo) {
@@ -779,7 +942,8 @@ export function createOrdensRouter(db: AppDatabase): Router {
           quantidade: i.quantidade,
         }));
       }
-      if (itens.length) gravarRequisitos(id, data.quantidade, itens, empresaId);
+      if (itens.length) gravarRequisitos(id, quantidade, itens, empresaId);
+      if (comGrade && data.grade) gravarGrade(db, empresaId, id, data.grade);
 
       const criada = mapOrdem(id, empresaId, true)!;
       if (CONSOME_ESTOQUE.has(criada.status)) {
@@ -830,17 +994,39 @@ export function createOrdensRouter(db: AppDatabase): Router {
     }
 
     try {
+      const gradeAtual = lerGrade(db, empresaId, id);
+      const comGrade = Boolean(data.grade?.length);
+      const quantidade = comGrade
+        ? (data.grade ?? []).reduce((soma, celula) => soma + celula.quantidade, 0)
+        : (data.quantidade ?? atual.quantidade);
+      if (data.grade) {
+        const erroGrade = validarGrade(data.grade, quantidade);
+        if (erroGrade) return res.status(400).json({ erro: erroGrade });
+      } else if (
+        gradeAtual.length > 0 &&
+        data.quantidade !== undefined &&
+        data.quantidade !== atual.quantidade
+      ) {
+        const erroGrade = validarGrade(gradeAtual, quantidade);
+        if (erroGrade) return res.status(400).json({ erro: erroGrade });
+      }
+      const distribuicao = comGrade || gradeAtual.length > 0;
+
       const aplicar = db.transaction(() => {
         const vinculos = resolverVinculos({
           cliente: data.cliente ?? atual.cliente,
           produto: data.produto ?? atual.produto,
-          tamanho: data.tamanho ?? atual.tamanho,
+          tamanho: comGrade ? resumoTamanhos(data.grade ?? []) : (data.tamanho ?? atual.tamanho),
           cliente_id: data.cliente_id === undefined ? atual.cliente_id : data.cliente_id,
           produto_id: data.produto_id === undefined ? atual.produto_id : data.produto_id,
-          variante_id: data.variante_id === undefined ? atual.variante_id : data.variante_id,
+          variante_id: comGrade
+            ? null
+            : data.variante_id === undefined
+              ? atual.variante_id
+              : data.variante_id,
+          distribuicao,
         }, empresaId);
 
-        const quantidade = data.quantidade ?? atual.quantidade;
         const novoStatus = data.status ?? atual.status;
 
         db.prepare(
@@ -858,6 +1044,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
              data_prevista = @data_prevista,
              observacoes = @observacoes,
              responsavel = @responsavel,
+             referencia = @referencia,
              atualizado_em = datetime('now')
            WHERE id = @id AND empresa_id = @empresa_id`,
         ).run({
@@ -877,7 +1064,10 @@ export function createOrdensRouter(db: AppDatabase): Router {
             data.data_prevista === undefined ? atual.data_prevista : data.data_prevista,
           observacoes: data.observacoes === undefined ? atual.observacoes : data.observacoes,
           responsavel: data.responsavel === undefined ? atual.responsavel : data.responsavel,
+          referencia: data.referencia === undefined ? atual.referencia : data.referencia,
         });
+
+        if (comGrade && data.grade) gravarGrade(db, empresaId, id, data.grade);
 
         if (data.requisitos) {
           gravarRequisitos(id, quantidade, data.requisitos, empresaId);
@@ -905,6 +1095,7 @@ export function createOrdensRouter(db: AppDatabase): Router {
           }
         }
         if (novoStatus === 'cancelada' && CONSOME_ESTOQUE.has(atual.status)) {
+          estornarCortesInfesto(db, empresaId, id);
           estornarMateriais(depois);
         }
       });
