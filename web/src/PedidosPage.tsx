@@ -51,6 +51,15 @@ function formatarData(valor: string | null | undefined): string {
   return `${d}/${m}/${y}`;
 }
 
+function jaExpedido(p: PedidoVenda): boolean {
+  return p.expedicao_status === 'expedido' || p.expedicao_status === 'entregue';
+}
+
+// O servidor só aceita cancelar a partir de orçamento, aberto, confirmado, em produção ou pronto.
+function podeCancelarPedido(p: PedidoVenda): boolean {
+  return !['entregue', 'cancelado', 'faturado'].includes(p.status) && !jaExpedido(p);
+}
+
 export function PedidosPage({
   onAbrirOp,
   sessao,
@@ -251,13 +260,13 @@ export function PedidosPage({
 
   const editavel = detalhe && (detalhe.status === 'orcamento' || detalhe.status === 'aberto');
   const podeConfirmar = detalhe && (detalhe.status === 'orcamento' || detalhe.status === 'aberto');
-  const podeGerarOp = detalhe && ['confirmado', 'em_producao', 'pronto'].includes(detalhe.status);
+  const podeGerarOp =
+    detalhe && ['confirmado', 'em_producao', 'pronto'].includes(detalhe.status) && !jaExpedido(detalhe);
   const podeFinanceiro =
     detalhe &&
     !detalhe.financeiro &&
     ['confirmado', 'em_producao', 'pronto', 'faturado', 'entregue'].includes(detalhe.status);
-  const podeCancelar =
-    detalhe && !['entregue', 'cancelado'].includes(detalhe.status);
+  const podeCancelar = detalhe && podeCancelarPedido(detalhe);
 
   return (
     <main className="app__main app__main--pedidos">
@@ -369,7 +378,7 @@ export function PedidosPage({
                         Gerar OP
                       </button>
                     )}
-                    {p.status !== 'cancelado' && p.status !== 'entregue' && (
+                    {podeCancelarPedido(p) && (
                       <button
                         type="button"
                         className="btn-remover-texto"
@@ -605,6 +614,9 @@ export function PedidosPage({
               <button type="button" className="btn-remover-texto" disabled={salvando} onClick={() => void acao(() => atualizarPedido(detalhe.id, { status: 'cancelado' }))}>
                 Cancelar
               </button>
+            )}
+            {detalhe.status === 'faturado' && !jaExpedido(detalhe) && (
+              <p className="dica">Pedido faturado não pode ser cancelado. Só é possível registrar a entrega.</p>
             )}
           </div>
         </section>

@@ -76,8 +76,13 @@ function hojeIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function estadoExpedicaoAtual(row: ExpedicaoRow): StatusExpedicao | null {
+  if (row.pedido_status === 'entregue' || row.expedicao_status === 'entregue') return 'entregue';
+  return (row.expedicao_status ?? null) as StatusExpedicao | null;
+}
+
 function mapRow(row: ExpedicaoRow) {
-  const expedicaoStatus = (row.expedicao_status ?? null) as StatusExpedicao | null;
+  const expedicaoStatus = estadoExpedicaoAtual(row);
   return {
     pedido_id: row.pedido_id,
     codigo: row.codigo,
@@ -97,8 +102,9 @@ function mapRow(row: ExpedicaoRow) {
   };
 }
 
+// Cada pedido ativo entra em no máximo uma fila. Entregue (no pedido ou na expedição) sai de Expedidos.
 function filtroFila(fila: string): string {
-  if (fila === 'expedidos') return `e.status = 'expedido'`;
+  if (fila === 'expedidos') return `e.status = 'expedido' AND p.status != 'entregue'`;
   if (fila === 'entregues') return `(e.status = 'entregue' OR p.status = 'entregue')`;
   if (fila === 'todos') {
     return `(p.status IN ('pronto','faturado','entregue') OR e.id IS NOT NULL)`;
@@ -158,37 +164,31 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
 
   router.get('/resumo', (req, res) => {
     const empresaId = empresaDaSessao(req);
-    const prontos = (
+    const contarFila = (fila: (typeof FILAS)[number]) =>
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM pedidos p
+             LEFT JOIN expedicoes e ON e.pedido_id = p.id
+             WHERE p.empresa_id = ? AND p.status != 'cancelado' AND ${filtroFila(fila)}`,
+          )
+          .get(empresaId) as { n: number }
+      ).n;
+    const prontosEnvio = (
       db
         .prepare(
-          `SELECT COUNT(*) AS n FROM pedidos p
-           LEFT JOIN expedicoes e ON e.pedido_id = p.id
-           WHERE p.empresa_id = ? AND ${filtroFila('prontos')}`,
+          `SELECT COUNT(*) AS n FROM expedicoes e
+             JOIN pedidos p ON p.id = e.pedido_id
+            WHERE e.empresa_id = ? AND e.status = 'pronto_envio'
+              AND p.status != 'cancelado' AND p.status != 'entregue'`,
         )
         .get(empresaId) as { n: number }
     ).n;
-    const prontosEnvio = (
-      db
-        .prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE empresa_id = ? AND status = 'pronto_envio'`)
-        .get(empresaId) as {
-        n: number;
-      }
-    ).n;
-    const expedidos = (
-      db
-        .prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE empresa_id = ? AND status = 'expedido'`)
-        .get(empresaId) as { n: number }
-    ).n;
-    const entregues = (
-      db
-        .prepare(`SELECT COUNT(*) AS n FROM expedicoes WHERE empresa_id = ? AND status = 'entregue'`)
-        .get(empresaId) as { n: number }
-    ).n;
     res.json({
-      fila: prontos,
+      fila: contarFila('prontos'),
       prontos_envio: prontosEnvio,
-      expedidos,
-      entregues,
+      expedidos: contarFila('expedidos'),
+      entregues: contarFila('entregues'),
     });
   });
 

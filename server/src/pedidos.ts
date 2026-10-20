@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import type { StatusExpedicao } from './expedicao.js';
 import { arredondarDinheiro, sincronizarContaReceberPedido } from './financeiro.js';
 import { avaliarLimite, exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
@@ -123,6 +124,7 @@ export interface PedidoVenda {
   cliente?: string;
   produtos?: string | null;
   quantidade?: number;
+  expedicao_status?: StatusExpedicao | null;
   itens?: PedidoItem[];
   ordens?: Array<{
     id: number;
@@ -141,6 +143,7 @@ export interface PedidoVenda {
   } | null;
 }
 
+// Pedido cancelado guarda o registro em expedicoes como histórico, mas não tem expedição ativa.
 const PEDIDO_SELECT = `
   SELECT
     p.*,
@@ -148,7 +151,10 @@ const PEDIDO_SELECT = `
     (SELECT ifnull(SUM(i.quantidade),0) FROM pedido_itens i WHERE i.pedido_id = p.id) AS quantidade,
     (SELECT GROUP_CONCAT(pr.nome, ', ')
        FROM pedido_itens i JOIN produtos pr ON pr.id = i.produto_id
-      WHERE i.pedido_id = p.id) AS produtos
+      WHERE i.pedido_id = p.id) AS produtos,
+    (SELECT e.status FROM expedicoes e
+      WHERE e.pedido_id = p.id AND e.empresa_id = p.empresa_id
+        AND p.status != 'cancelado') AS expedicao_status
   FROM pedidos p
   JOIN clientes c ON c.id = p.cliente_id
 `;
@@ -179,6 +185,10 @@ function hoje(): string {
 function podeTransicionar(de: StatusPedido, para: StatusPedido): boolean {
   if (de === para) return true;
   return TRANSICOES[de].includes(para);
+}
+
+function jaExpedido(pedido: PedidoVenda): boolean {
+  return pedido.expedicao_status === 'expedido' || pedido.expedicao_status === 'entregue';
 }
 
 export function sincronizarStatusPedidoFromOps(db: AppDatabase, ordemId: number) {
@@ -697,6 +707,9 @@ export function createPedidosRouter(db: AppDatabase): Router {
             erro: 'Não cancele um pedido com OP já em produção',
           });
         }
+        if (jaExpedido(atual)) {
+          return res.status(409).json({ erro: 'Pedido já expedido não pode ser cancelado' });
+        }
       }
     }
     if (data.itens && !EDITAVEL.has(atual.status)) {
@@ -872,6 +885,9 @@ export function createPedidosRouter(db: AppDatabase): Router {
   router.post('/:id/gerar-op', (req, res) => {
     const pedido = mapPedido(Number(req.params.id), empresaDaSessao(req), true);
     if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado' });
+    if (jaExpedido(pedido)) {
+      return res.status(409).json({ erro: 'Pedido já expedido não pode receber nova OP' });
+    }
     if (!['confirmado', 'em_producao', 'pronto'].includes(pedido.status)) {
       return res.status(409).json({ erro: 'Confirme o pedido antes de gerar OP' });
     }

@@ -7,15 +7,24 @@ import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_FORNECEDOR = ['ativo', 'inativo'] as const;
 
+export const TIPOS_PESSOA = ['juridica', 'fisica'] as const;
+
 export interface Fornecedor {
   id: number;
   codigo: string | null;
   nome: string;
+  tipo_pessoa: (typeof TIPOS_PESSOA)[number] | null;
+  nome_fantasia: string | null;
   cpf_cnpj: string | null;
+  inscricao_estadual: string | null;
   contato: string | null;
   telefone: string | null;
+  whatsapp: string | null;
   email: string | null;
   endereco: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
   cidade: string | null;
   estado: string | null;
   cep: string | null;
@@ -34,9 +43,31 @@ const textoOpcional = z
   .or(z.literal(''))
   .transform((v) => (v ? v : undefined));
 
+function telefoneCampo(mensagem: string) {
+  return z
+    .string()
+    .trim()
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (v ? apenasDigitos(v) : undefined))
+    .refine((v) => v === undefined || (v.length >= 10 && v.length <= 15), mensagem);
+}
+
 const fornecedorBaseSchema = z.object({
   codigo: textoOpcional,
+  tipo_pessoa: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (v ? v : undefined))
+    .refine(
+      (v) => v === undefined || (TIPOS_PESSOA as readonly string[]).includes(v),
+      'tipo de pessoa inválido',
+    ),
   nome: z.string().trim().min(1, 'nome é obrigatório').max(200),
+  nome_fantasia: textoOpcional,
   cpf_cnpj: z
     .string()
     .trim()
@@ -44,17 +75,16 @@ const fornecedorBaseSchema = z.object({
     .or(z.literal(''))
     .transform((v) => (v ? apenasDigitos(v) : undefined))
     .refine((v) => v === undefined || cpfCnpjValido(v), 'CPF/CNPJ inválido'),
-  contato: textoOpcional,
-  telefone: z
+  inscricao_estadual: z
     .string()
     .trim()
+    .max(20)
     .optional()
     .or(z.literal(''))
-    .transform((v) => (v ? apenasDigitos(v) : undefined))
-    .refine(
-      (v) => v === undefined || (v.length >= 10 && v.length <= 15),
-      'telefone deve ter entre 10 e 15 dígitos',
-    ),
+    .transform((v) => (v ? v : undefined)),
+  contato: textoOpcional,
+  telefone: telefoneCampo('telefone deve ter entre 10 e 15 dígitos'),
+  whatsapp: telefoneCampo('WhatsApp deve ter entre 10 e 15 dígitos'),
   email: z
     .string()
     .trim()
@@ -69,6 +99,21 @@ const fornecedorBaseSchema = z.object({
     .optional()
     .or(z.literal(''))
     .transform((v) => (v ? v : undefined)),
+  numero: z
+    .string()
+    .trim()
+    .max(30)
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (v ? v : undefined)),
+  complemento: z
+    .string()
+    .trim()
+    .max(120)
+    .optional()
+    .or(z.literal(''))
+    .transform((v) => (v ? v : undefined)),
+  bairro: textoOpcional,
   cidade: textoOpcional,
   estado: z
     .string()
@@ -96,10 +141,35 @@ const fornecedorBaseSchema = z.object({
     .transform((v) => (v ? v : undefined)),
 });
 
-const atualizarSchema = fornecedorBaseSchema.partial().refine(
-  (body) => Object.keys(body).length > 0,
-  { message: 'Informe ao menos um campo para atualizar' },
-);
+function conferirDocumentoFiscal(
+  data: { tipo_pessoa?: string; cpf_cnpj?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (!data.tipo_pessoa || !data.cpf_cnpj) return;
+  if (data.tipo_pessoa === 'fisica' && data.cpf_cnpj.length !== 11) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['cpf_cnpj'],
+      message: 'Informe um CPF para pessoa física',
+    });
+  }
+  if (data.tipo_pessoa === 'juridica' && data.cpf_cnpj.length !== 14) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['cpf_cnpj'],
+      message: 'Informe um CNPJ para pessoa jurídica',
+    });
+  }
+}
+
+const fornecedorSchema = fornecedorBaseSchema.superRefine(conferirDocumentoFiscal);
+
+const atualizarSchema = fornecedorBaseSchema
+  .partial()
+  .superRefine(conferirDocumentoFiscal)
+  .refine((body) => Object.keys(body).length > 0, {
+    message: 'Informe ao menos um campo para atualizar',
+  });
 
 function nulo(valor: string | undefined): string | null {
   return valor === undefined ? null : valor;
@@ -109,15 +179,47 @@ function erroDuplicidade(err: unknown): boolean {
   return err instanceof Error && /UNIQUE/i.test(err.message);
 }
 
+function fornecedorComMesmoDocumento(
+  db: AppDatabase,
+  empresaId: number,
+  cpfCnpj: string | null,
+) {
+  if (!cpfCnpj) return null;
+  return (
+    db
+      .prepare('SELECT * FROM fornecedores WHERE empresa_id = ? AND cpf_cnpj = ?')
+      .get(empresaId, cpfCnpj) ?? null
+  );
+}
+
+function responderFornecedorDuplicado(
+  res: { status: (code: number) => { json: (body: unknown) => unknown } },
+  fornecedor: unknown,
+) {
+  return res.status(409).json({
+    erro: 'Fornecedor já cadastrado (código ou CPF/CNPJ)',
+    ...(fornecedor ? { fornecedor } : {}),
+  });
+}
+
 function campos(data: Partial<z.infer<typeof fornecedorBaseSchema>>, parciais = false) {
   const row: Record<string, string | null> = {};
   if (!parciais || data.codigo !== undefined) row.codigo = nulo(data.codigo);
+  if (!parciais || data.tipo_pessoa !== undefined) row.tipo_pessoa = nulo(data.tipo_pessoa);
   if (!parciais || data.nome !== undefined) row.nome = data.nome ?? '';
+  if (!parciais || data.nome_fantasia !== undefined) row.nome_fantasia = nulo(data.nome_fantasia);
   if (!parciais || data.cpf_cnpj !== undefined) row.cpf_cnpj = nulo(data.cpf_cnpj);
+  if (!parciais || data.inscricao_estadual !== undefined) {
+    row.inscricao_estadual = nulo(data.inscricao_estadual);
+  }
   if (!parciais || data.contato !== undefined) row.contato = nulo(data.contato);
   if (!parciais || data.telefone !== undefined) row.telefone = nulo(data.telefone);
+  if (!parciais || data.whatsapp !== undefined) row.whatsapp = nulo(data.whatsapp);
   if (!parciais || data.email !== undefined) row.email = nulo(data.email);
   if (!parciais || data.endereco !== undefined) row.endereco = nulo(data.endereco);
+  if (!parciais || data.numero !== undefined) row.numero = nulo(data.numero);
+  if (!parciais || data.complemento !== undefined) row.complemento = nulo(data.complemento);
+  if (!parciais || data.bairro !== undefined) row.bairro = nulo(data.bairro);
   if (!parciais || data.cidade !== undefined) row.cidade = nulo(data.cidade);
   if (!parciais || data.estado !== undefined) row.estado = nulo(data.estado);
   if (!parciais || data.cep !== undefined) row.cep = nulo(data.cep);
@@ -147,8 +249,8 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
     aplicarEmpresa(where, params, req);
     if (q) {
       where.push(
-        `(nome LIKE @q OR ifnull(codigo,'') LIKE @q OR ifnull(cpf_cnpj,'') LIKE @q
-          OR ifnull(contato,'') LIKE @q OR ifnull(cidade,'') LIKE @q)`,
+        `(nome LIKE @q OR ifnull(nome_fantasia,'') LIKE @q OR ifnull(codigo,'') LIKE @q
+          OR ifnull(cpf_cnpj,'') LIKE @q OR ifnull(contato,'') LIKE @q OR ifnull(cidade,'') LIKE @q)`,
       );
       params.q = `%${q}%`;
     }
@@ -186,7 +288,7 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
   });
 
   router.post('/', (req, res) => {
-    const parsed = fornecedorBaseSchema.safeParse(req.body);
+    const parsed = fornecedorSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
         erro: 'Dados inválidos',
@@ -195,15 +297,19 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
     }
     const row = campos(parsed.data);
     const empresaId = empresaDaSessao(req);
+    const duplicado = fornecedorComMesmoDocumento(db, empresaId, row.cpf_cnpj);
+    if (duplicado) return responderFornecedorDuplicado(res, duplicado);
     try {
       const info = db
         .prepare(
           `INSERT INTO fornecedores (
-             empresa_id, codigo, nome, cpf_cnpj, contato, telefone, email, endereco, cidade, estado, cep,
-             condicao_pagamento, status, observacoes
+             empresa_id, codigo, tipo_pessoa, nome, nome_fantasia, cpf_cnpj, inscricao_estadual,
+             contato, telefone, whatsapp, email, endereco, numero, complemento, bairro,
+             cidade, estado, cep, condicao_pagamento, status, observacoes
            ) VALUES (
-             @empresa_id, @codigo, @nome, @cpf_cnpj, @contato, @telefone, @email, @endereco, @cidade, @estado, @cep,
-             @condicao_pagamento, @status, @observacoes
+             @empresa_id, @codigo, @tipo_pessoa, @nome, @nome_fantasia, @cpf_cnpj, @inscricao_estadual,
+             @contato, @telefone, @whatsapp, @email, @endereco, @numero, @complemento, @bairro,
+             @cidade, @estado, @cep, @condicao_pagamento, @status, @observacoes
            )`,
         )
         .run({ ...row, empresa_id: empresaId });
@@ -220,7 +326,10 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
       res.status(201).json(getStmt.get(id, empresaId));
     } catch (err) {
       if (erroDuplicidade(err)) {
-        return res.status(409).json({ erro: 'Fornecedor já cadastrado (código ou CPF/CNPJ)' });
+        return responderFornecedorDuplicado(
+          res,
+          fornecedorComMesmoDocumento(db, empresaId, row.cpf_cnpj),
+        );
       }
       throw err;
     }
@@ -250,7 +359,10 @@ export function createFornecedoresRouter(db: AppDatabase): Router {
       res.json(getStmt.get(id, empresaId));
     } catch (err) {
       if (erroDuplicidade(err)) {
-        return res.status(409).json({ erro: 'Fornecedor já cadastrado (código ou CPF/CNPJ)' });
+        return responderFornecedorDuplicado(
+          res,
+          fornecedorComMesmoDocumento(db, empresaId, row.cpf_cnpj),
+        );
       }
       throw err;
     }

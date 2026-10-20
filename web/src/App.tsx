@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ClientesPage } from './ClientesPage';
-import { ComprasPage } from './ComprasPage';
+import { ComprasEstoquePage } from './ComprasEstoquePage';
+import { CorteInfestoPage } from './CorteInfestoPage';
 import { DashboardPage } from './DashboardPage';
 import { EtapasPage } from './EtapasPage';
 import { EstoquePage } from './EstoquePage';
@@ -37,6 +38,7 @@ type Pagina =
   | 'pedidos'
   | 'expedicao'
   | 'ordens'
+  | 'corte'
   | 'etapas'
   | 'compras'
   | 'financeiro'
@@ -53,8 +55,9 @@ const NAV: Array<{ id: Pagina; label: string; modulo?: Modulo | Modulo[] }> = [
   { id: 'pedidos', label: 'Pedidos', modulo: 'pedidos' },
   { id: 'expedicao', label: 'Expedição', modulo: 'expedicao' },
   { id: 'ordens', label: 'Ordens de Produção', modulo: 'ordens' },
+  { id: 'corte', label: 'Corte e Enfesto', modulo: 'ordens' },
   { id: 'etapas', label: 'Produção/Etapas', modulo: 'etapas' },
-  { id: 'compras', label: 'Compras', modulo: ['compras', 'fornecedores'] },
+  { id: 'compras', label: 'Compras e Estoque', modulo: ['compras', 'fornecedores'] },
   { id: 'financeiro', label: 'Financeiro', modulo: 'financeiro' },
   { id: 'relatorios', label: 'Relatórios', modulo: 'relatorios' },
   { id: 'equipe', label: 'Equipe', modulo: 'equipe' },
@@ -94,13 +97,17 @@ const TITULOS: Record<Pagina, { titulo: string; sub: string }> = {
     titulo: 'Ordens de Produção',
     sub: 'Ordens, prioridade e previsão',
   },
+  corte: {
+    titulo: 'Corte e Enfesto',
+    sub: 'Grade da ordem, corte por cor e enfesto do tecido',
+  },
   etapas: {
     titulo: 'Produção/Etapas',
     sub: 'Fluxo Corte → Embalagem',
   },
   compras: {
-    titulo: 'Compras',
-    sub: 'Compras e fornecedores',
+    titulo: 'Compras e Estoque',
+    sub: 'Compras, fornecedores e estoque de materiais',
   },
   financeiro: {
     titulo: 'Financeiro',
@@ -157,10 +164,12 @@ function AppAutenticado({
 }) {
   const [pagina, setPagina] = useState<Pagina>('dashboard');
   const [ordemId, setOrdemId] = useState<number | null>(null);
+  const [corteOrdemId, setCorteOrdemId] = useState<number | null>(null);
   const [menuAberto, setMenuAberto] = useState(false);
 
   function ir(destino: Pagina) {
     setOrdemId(null);
+    setCorteOrdemId(null);
     setPagina(destino);
     setMenuAberto(false);
   }
@@ -168,6 +177,14 @@ function AppAutenticado({
   function abrirOp(id: number) {
     setPagina('ordens');
     setOrdemId(id);
+    setCorteOrdemId(null);
+    setMenuAberto(false);
+  }
+
+  function abrirCorteDaOp(ordem: { id: number }) {
+    setOrdemId(null);
+    setCorteOrdemId(ordem.id);
+    setPagina('corte');
     setMenuAberto(false);
   }
 
@@ -299,9 +316,12 @@ function AppAutenticado({
               {paginaAtual === 'estoque' && <EstoquePage />}
               {paginaAtual === 'pedidos' && <PedidosPage sessao={sessao} onAbrirOp={abrirOp} />}
               {paginaAtual === 'expedicao' && <ExpedicaoPage />}
-              {paginaAtual === 'ordens' && <OrdensPage sessao={sessao} />}
+              {paginaAtual === 'ordens' && (
+                <OrdensPage sessao={sessao} onOpCriada={abrirCorteDaOp} />
+              )}
+              {paginaAtual === 'corte' && <CorteInfestoPage ordemInicialId={corteOrdemId} />}
               {paginaAtual === 'etapas' && <EtapasPage />}
-              {paginaAtual === 'compras' && <ComprasPage />}
+              {paginaAtual === 'compras' && <ComprasEstoquePage permissoes={sessao.permissoes} />}
               {paginaAtual === 'financeiro' && <FinanceiroPage />}
               {paginaAtual === 'relatorios' && <RelatoriosPage />}
               {paginaAtual === 'equipe' && podeEquipe && <EquipePage sessao={sessao} />}

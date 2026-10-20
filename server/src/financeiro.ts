@@ -36,6 +36,7 @@ export interface FinanceiroLancamento {
   compra_id: number | null;
   ordem_id: number | null;
   pedido_id: number | null;
+  parcela: number | null;
   observacoes: string | null;
   criado_em: string;
   atualizado_em: string;
@@ -230,72 +231,206 @@ export function categoriaComprasId(db: AppDatabase): number | null {
   return row?.id ?? null;
 }
 
+export type ParcelaCompra = { vencimento: string; valor: number };
+
+export type DadosPagamentoCompra = {
+  forma?: 'a_vista' | 'a_prazo' | null;
+  vencimento?: string | null;
+  parcelas?: ParcelaCompra[];
+  exigirDados?: boolean;
+};
+
+type CompraFinanceiro = {
+  id: number;
+  codigo: string | null;
+  fornecedor_id: number;
+  total: number;
+  vencimento: string | null;
+  status: string;
+  empresa_id: number;
+  data_emissao?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
+  forma_pagamento?: string | null;
+};
+
+export function descricaoContaPagar(compra: CompraFinanceiro): string {
+  const codigo = compra.codigo ?? compra.id;
+  const numero = compra.documento_numero?.trim();
+  if (!numero) return `Compra ${codigo}`;
+  const tipo = compra.documento_tipo === 'pedido_compra' ? 'Pedido' : 'NF';
+  return `Compra ${codigo} · ${tipo} ${numero}`;
+}
+
+export function inferirFormaPagamento(forma?: string | null): 'a_vista' | 'a_prazo' | null {
+  if (!forma) return null;
+  const n = forma
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .trim()
+    .toLowerCase();
+  if (['a_vista', 'avista', 'a vista', 'dinheiro', 'pix', 'debito', 'cartao'].includes(n)) {
+    return 'a_vista';
+  }
+  if (['a_prazo', 'aprazo', 'a prazo', 'boleto', 'prazo', 'parcelado'].includes(n)) {
+    return 'a_prazo';
+  }
+  return null;
+}
+
+function listarContasPagarCompra(db: AppDatabase, compraId: number): FinanceiroLancamento[] {
+  return (
+    db
+      .prepare(
+        `SELECT * FROM financeiro_lancamentos
+          WHERE compra_id = ? AND tipo = 'pagar'
+          ORDER BY ifnull(parcela, id), id`,
+      )
+      .all(compraId) as FinanceiroLancamento[]
+  ).map(mapLancamento);
+}
+
+export function lancarContasPagarCompra(
+  db: AppDatabase,
+  compra: CompraFinanceiro,
+  opts: DadosPagamentoCompra = {},
+): FinanceiroLancamento[] {
+  const existentes = listarContasPagarCompra(db, compra.id);
+  if (existentes.length > 0) {
+    const substituiveis =
+      opts.exigirDados &&
+      existentes.every((titulo) => titulo.status === 'pendente' || titulo.status === 'vencido');
+    if (!substituiveis) return existentes;
+    db.prepare(
+      `DELETE FROM financeiro_lancamentos
+        WHERE compra_id = ? AND tipo = 'pagar' AND status IN ('pendente', 'vencido')`,
+    ).run(compra.id);
+  }
+
+  const forma = opts.forma ?? inferirFormaPagamento(compra.forma_pagamento);
+  if (opts.exigirDados && !forma) {
+    throw Object.assign(
+      new Error('Informe se o pagamento é à vista ou a prazo'),
+      { status: 400 },
+    );
+  }
+
+  const descricao = descricaoContaPagar(compra);
+  const aVista = forma === 'a_vista';
+  let parcelas: ParcelaCompra[];
+  if (opts.parcelas && opts.parcelas.length > 0) {
+    if (aVista) {
+      throw Object.assign(new Error('Pagamento à vista não deve ter parcelas'), { status: 400 });
+    }
+    const soma = arredondarDinheiro(opts.parcelas.reduce((acc, item) => acc + item.valor, 0));
+    if (Math.abs(soma - arredondarDinheiro(compra.total)) > 0.01) {
+      throw Object.assign(
+        new Error('A soma das parcelas deve ser igual ao total da compra'),
+        { status: 400 },
+      );
+    }
+    for (const parcela of opts.parcelas) {
+      if (!parcela.vencimento?.trim()) {
+        throw Object.assign(new Error('Informe o vencimento de cada parcela'), { status: 400 });
+      }
+    }
+    parcelas = opts.parcelas;
+  } else if (aVista) {
+    parcelas = [
+      {
+        vencimento: opts.vencimento ?? compra.vencimento ?? compra.data_emissao ?? new Date().toISOString().slice(0, 10),
+        valor: arredondarDinheiro(compra.total),
+      },
+    ];
+  } else {
+    const vencimento = opts.vencimento ?? compra.vencimento ?? null;
+    if (opts.exigirDados && !vencimento) {
+      throw Object.assign(
+        new Error('Informe o vencimento ou as parcelas da conta a prazo'),
+        { status: 400 },
+      );
+    }
+    parcelas = [{ vencimento: vencimento ?? '', valor: arredondarDinheiro(compra.total) }];
+  }
+
+  const inserir = db.prepare(
+    `INSERT INTO financeiro_lancamentos (
+       empresa_id, tipo, categoria_id, descricao, valor, status, vencimento, data_pagamento,
+       fornecedor_id, compra_id, parcela, observacoes
+     ) VALUES (
+       @empresa_id, 'pagar', @categoria_id, @descricao, @valor, @status, @vencimento, @data_pagamento,
+       @fornecedor_id, @compra_id, @parcela, @observacoes
+     )`,
+  );
+  const hoje = new Date().toISOString().slice(0, 10);
+  parcelas.forEach((parcela, indice) => {
+    const n = indice + 1;
+    const rotulo =
+      parcelas.length > 1 ? `${descricao} · parcela ${n}/${parcelas.length}` : descricao;
+    inserir.run({
+      empresa_id: compra.empresa_id,
+      categoria_id: categoriaComprasId(db),
+      descricao: rotulo,
+      valor: arredondarDinheiro(parcela.valor),
+      status: aVista ? 'pago' : 'pendente',
+      vencimento: parcela.vencimento || null,
+      data_pagamento: aVista ? hoje : null,
+      fornecedor_id: compra.fornecedor_id,
+      compra_id: compra.id,
+      parcela: n,
+      observacoes: aVista ? 'Pagamento à vista' : null,
+    });
+  });
+  return listarContasPagarCompra(db, compra.id);
+}
+
 export function sincronizarContaPagarCompra(
   db: AppDatabase,
-  compra: {
-    id: number;
-    codigo: string | null;
-    fornecedor_id: number;
-    total: number;
-    vencimento: string | null;
-    status: string;
-    empresa_id: number;
-  },
+  compra: CompraFinanceiro,
 ): void {
-  const atual = db
+  const atuais = db
     .prepare(
-      `SELECT * FROM financeiro_lancamentos WHERE compra_id = ? AND tipo = 'pagar'`,
+      `SELECT * FROM financeiro_lancamentos WHERE compra_id = ? AND tipo = 'pagar' ORDER BY id`,
     )
-    .get(compra.id) as FinanceiroLancamento | undefined;
+    .all(compra.id) as FinanceiroLancamento[];
 
   if (compra.status === 'cancelada' || compra.total <= 0) {
-    if (atual && atual.status === 'pendente') {
-      db.prepare(
-        `UPDATE financeiro_lancamentos
-            SET status = 'cancelado', atualizado_em = datetime('now')
-          WHERE id = ?`,
-      ).run(atual.id);
+    for (const atual of atuais) {
+      if (atual.status === 'pendente') {
+        db.prepare(
+          `UPDATE financeiro_lancamentos
+              SET status = 'cancelado', atualizado_em = datetime('now')
+            WHERE id = ?`,
+        ).run(atual.id);
+      }
     }
     return;
   }
 
   if (!['aberta', 'parcial', 'recebida'].includes(compra.status)) return;
 
-  if (atual) {
+  if (atuais.length === 1) {
+    const atual = atuais[0];
     if (atual.status === 'pendente' || atual.status === 'vencido') {
       db.prepare(
         `UPDATE financeiro_lancamentos
             SET valor = @valor, vencimento = @vencimento, fornecedor_id = @fornecedor_id,
-                descricao = @descricao, atualizado_em = datetime('now')
+                descricao = @descricao, parcela = @parcela, atualizado_em = datetime('now')
           WHERE id = @id`,
       ).run({
         id: atual.id,
         valor: arredondarDinheiro(compra.total),
         vencimento: compra.vencimento,
         fornecedor_id: compra.fornecedor_id,
-        descricao: `Compra ${compra.codigo ?? compra.id}`,
+        descricao: descricaoContaPagar(compra),
+        parcela: atual.parcela ?? 1,
       });
     }
     return;
   }
 
-  db.prepare(
-    `INSERT INTO financeiro_lancamentos (
-       empresa_id, tipo, categoria_id, descricao, valor, status, vencimento,
-       fornecedor_id, compra_id
-     ) VALUES (
-       @empresa_id, 'pagar', @categoria_id, @descricao, @valor, 'pendente', @vencimento,
-       @fornecedor_id, @compra_id
-     )`,
-  ).run({
-    empresa_id: compra.empresa_id,
-    categoria_id: categoriaComprasId(db),
-    descricao: `Compra ${compra.codigo ?? compra.id}`,
-    valor: arredondarDinheiro(compra.total),
-    vencimento: compra.vencimento,
-    fornecedor_id: compra.fornecedor_id,
-    compra_id: compra.id,
-  });
+  if (atuais.length > 1) return;
+  lancarContasPagarCompra(db, compra);
 }
 
 function mapLancamento(row: FinanceiroLancamento): FinanceiroLancamento {

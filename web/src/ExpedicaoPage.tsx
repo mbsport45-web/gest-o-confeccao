@@ -99,6 +99,9 @@ export function ExpedicaoPage() {
       await fn();
       await recarregar();
     } catch (e) {
+      // A recusa pode vir de mudança feita em outra tela (ex.: pedido cancelado). Recarregue antes
+      // de exibir o erro, porque recarregar() limpa a mensagem.
+      await recarregar();
       setErro((e as Error).message);
     } finally {
       setSalvando(null);

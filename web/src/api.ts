@@ -66,9 +66,38 @@ export interface OrdemProducao {
   cliente_id: number | null;
   produto_id: number | null;
   variante_id: number | null;
+  referencia: string | null;
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  grade?: CelulaGrade[];
+}
+
+export interface CelulaGrade {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
+export interface CorCadastro {
+  id: number | null;
+  nome: string;
+  codigo?: string | null;
+  hex?: string | null;
+  ja_existia?: boolean;
+}
+
+export type CorPayload = {
+  nome: string;
+  codigo?: string | null;
+  hex?: string | null;
+};
+
+export interface TamanhoCadastro {
+  id: number;
+  nome: string;
+  ordem: number;
+  ja_existia?: boolean;
 }
 
 export interface NovaOrdem {
@@ -85,7 +114,9 @@ export interface NovaOrdem {
   data_prevista?: string;
   observacoes?: string;
   responsavel?: string;
+  referencia?: string | null;
   requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
+  grade?: CelulaGrade[];
 }
 
 export interface ListaOrdens {
@@ -180,6 +211,98 @@ export async function removerOrdem(id: number): Promise<void> {
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
+export async function listarCores(busca = ''): Promise<CorCadastro[]> {
+  const params = new URLSearchParams();
+  if (busca.trim()) params.set('q', busca.trim());
+  const res = await apiFetch(`/api/ordens/cores?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarCor(dados: string | CorPayload): Promise<CorCadastro> {
+  const body = typeof dados === 'string' ? { nome: dados } : dados;
+  const res = await apiFetch('/api/ordens/cores', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarTamanhos(): Promise<TamanhoCadastro[]> {
+  const res = await apiFetch('/api/ordens/tamanhos');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarTamanho(nome: string): Promise<TamanhoCadastro> {
+  const res = await apiFetch('/api/ordens/tamanhos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export interface ItemCorteInfesto {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
+export interface CorteInfesto {
+  id: number;
+  ordem_id: number;
+  materia_prima_id: number;
+  cor: string;
+  quantidade_pecas: number;
+  camadas: number;
+  metragem: number;
+  peso_real: number;
+  quantidade_baixada: number;
+  unidade_baixa: string;
+  movimento_id: number | null;
+  concluido_em: string;
+  tecido: string;
+  unidade: string;
+  ordem_codigo: string | null;
+  cliente: string;
+  produto: string;
+  status_ordem: string;
+  itens: ItemCorteInfesto[];
+  avancou?: boolean;
+  ordem?: OrdemProducao;
+}
+
+export async function listarCortesInfesto(): Promise<CorteInfesto[]> {
+  const res = await apiFetch('/api/ordens/corte-infesto');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function concluirCorteInfesto(
+  ordemId: number,
+  dados: {
+    materia_prima_id: number;
+    cor: string;
+    camadas: number;
+    metragem?: number;
+    peso_real?: number;
+    itens: Array<{ tamanho: string; quantidade: number }>;
+    autorizar_excedente?: boolean;
+  },
+): Promise<CorteInfesto> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/corte-infesto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export const STATUS_PEDIDO = [
   'orcamento',
   'aberto',
@@ -239,6 +362,7 @@ export interface PedidoVenda {
   cliente?: string;
   produtos?: string | null;
   quantidade?: number;
+  expedicao_status?: StatusExpedicao | null;
   itens?: PedidoItemVenda[];
   ordens?: Array<{
     id: number;
@@ -1148,13 +1272,23 @@ export interface Fornecedor {
   id: number;
   codigo: string | null;
   nome: string;
+  tipo_pessoa?: 'juridica' | 'fisica' | null;
+  nome_fantasia?: string | null;
   cpf_cnpj: string | null;
+  inscricao_estadual?: string | null;
   contato: string | null;
   telefone: string | null;
+  whatsapp?: string | null;
   email: string | null;
+  endereco?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
   cidade: string | null;
   estado: string | null;
+  cep?: string | null;
   condicao_pagamento: string | null;
+  observacoes?: string | null;
   status: 'ativo' | 'inativo';
 }
 
@@ -1169,6 +1303,7 @@ export interface CompraItem {
   custo_unitario: number;
   total: number;
   unidade: string | null;
+  cor?: string | null;
   nome?: string | null;
   codigo?: string | null;
 }
@@ -1188,8 +1323,33 @@ export interface PedidoCompra {
   forma_pagamento: string | null;
   condicao_pagamento: string | null;
   vencimento: string | null;
+  documento_importado_id?: number | null;
+  documento_nome?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
   fornecedor?: string;
   itens?: CompraItem[];
+  confirmacao?: ConfirmacaoCompra;
+}
+
+export interface ConfirmacaoCompra {
+  estoque: Array<{
+    materia_prima_id: number | null;
+    nome: string | null;
+    quantidade: number;
+    unidade: string | null;
+    cor: string | null;
+    saldo: number;
+  }>;
+  financeiro: Array<{
+    id: number;
+    descricao: string;
+    valor: number;
+    status: string;
+    vencimento: string | null;
+    parcela?: number | null;
+  }>;
+  itens_ignorados: Array<{ descricao: string; aviso?: string }>;
 }
 
 export interface ListaPadrao<T> {
@@ -1215,18 +1375,37 @@ export async function listarFornecedores(
 
 export async function criarFornecedor(dados: {
   nome: string;
+  tipo_pessoa?: 'juridica' | 'fisica';
+  nome_fantasia?: string;
   cpf_cnpj?: string;
+  inscricao_estadual?: string;
   contato?: string;
   telefone?: string;
+  whatsapp?: string;
+  email?: string;
+  endereco?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
   cidade?: string;
   estado?: string;
+  cep?: string;
   condicao_pagamento?: string;
+  observacoes?: string;
 }): Promise<Fornecedor> {
   const res = await apiFetch('/api/fornecedores', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
   });
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({}));
+    const erro = new Error(body?.erro ?? 'Fornecedor já cadastrado (código ou CPF/CNPJ)') as Error & {
+      fornecedor?: Fornecedor;
+    };
+    if (body?.fornecedor?.id) erro.fornecedor = body.fornecedor as Fornecedor;
+    throw erro;
+  }
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1255,6 +1434,68 @@ export async function listarCompras(
   return res.json();
 }
 
+export type TipoDocumento = 'nota_fiscal' | 'pedido_compra' | 'outro';
+
+export interface ItemDocumento {
+  descricao: string;
+  quantidade: number | null;
+  unidade: string | null;
+  valor_unitario: number | null;
+  total: number | null;
+  materia_prima_id: number | null;
+  produto_id: number | null;
+  tecido_cor_id: number | null;
+  cor?: string | null;
+  nome_cadastro: string | null;
+  aviso: string | null;
+}
+
+export interface DocumentoProcessado {
+  id: number;
+  tipo: TipoDocumento;
+  nome_arquivo: string;
+  numero: string | null;
+  emitente: string | null;
+  cnpj: string | null;
+  cpf?: string | null;
+  tipo_pessoa?: 'juridica' | 'fisica' | null;
+  nome_fantasia?: string | null;
+  inscricao_estadual?: string | null;
+  telefone?: string | null;
+  whatsapp?: string | null;
+  email?: string | null;
+  cep?: string | null;
+  endereco?: string | null;
+  numero_endereco?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  estado?: string | null;
+  observacoes?: string | null;
+  texto?: string | null;
+  data_emissao: string | null;
+  total: number | null;
+  avisos: string[];
+  fornecedor: { id: number; nome: string } | null;
+  itens: ItemDocumento[];
+  ja_importado: boolean;
+  compra_existente: { id: number; codigo: string | null } | null;
+}
+
+export async function processarDocumento(dados: {
+  tipo: TipoDocumento;
+  nome_arquivo: string;
+  conteudo_base64: string;
+}): Promise<DocumentoProcessado> {
+  const res = await apiFetch('/api/compras/documentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function obterCompra(id: number): Promise<PedidoCompra> {
   const res = await apiFetch(`/api/compras/${id}`);
   if (!res.ok) return parseError(res);
@@ -1272,6 +1513,9 @@ export type CompraPayload = {
   forma_pagamento?: string;
   condicao_pagamento?: string;
   vencimento?: string;
+  documento_importado_id?: number;
+  confirmar?: boolean;
+  parcelas?: Array<{ vencimento: string; valor: number }>;
   itens?: Array<{
     materia_prima_id?: number;
     produto_id?: number;
@@ -1279,7 +1523,9 @@ export type CompraPayload = {
     quantidade: number;
     custo_unitario: number;
     unidade?: string;
+    cor?: string;
   }>;
+  itens_ignorados?: Array<{ descricao: string; aviso?: string }>;
 };
 
 export async function criarCompra(dados: CompraPayload): Promise<PedidoCompra> {
@@ -1365,6 +1611,7 @@ export interface FinanceiroLancamento {
   cliente_id: number | null;
   compra_id: number | null;
   pedido_id?: number | null;
+  parcela?: number | null;
   observacoes: string | null;
   categoria?: string | null;
   fornecedor?: string | null;
