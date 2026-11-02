@@ -5,6 +5,7 @@ import {
   atualizarCompra,
   criarCompra,
   criarFornecedor,
+  type ConfirmacaoCompra,
   criarMateriaPrima,
   listarAviamentos,
   listarCompras,
@@ -121,6 +122,10 @@ export function ComprasPage({
   const [fornecedorEscolhido, setFornecedorEscolhido] = useState(false);
   const [materiaNova, setMateriaNova] = useState<{ indice: number; nome: string } | null>(null);
   const [avisoFornecedor, setAvisoFornecedor] = useState<string | null>(null);
+  const [formaPagamento, setFormaPagamento] = useState<'' | 'a_vista' | 'a_prazo'>('');
+  const [vencimentoDoc, setVencimentoDoc] = useState('');
+  const [parcelasDoc, setParcelasDoc] = useState<Array<{ vencimento: string; valor: string }>>([]);
+  const [confirmacao, setConfirmacao] = useState<ConfirmacaoCompra | null>(null);
 
   const opcoes: OpcaoCompra[] = [
     ...materias.map((materia) => ({
@@ -346,6 +351,10 @@ export function ComprasPage({
       setFornecedorEscolhido(false);
       setMateriaNova(null);
       setAvisoFornecedor(null);
+      setFormaPagamento('');
+      setVencimentoDoc('');
+      setParcelasDoc([]);
+      setConfirmacao(null);
     } catch (err) {
       setErro((err as Error).message);
     } finally {
@@ -480,6 +489,17 @@ export function ComprasPage({
       setErro('Vincule os itens ao cadastro antes de confirmar a entrada no estoque');
       return;
     }
+    if (!formaPagamento) {
+      setErro('Informe se o pagamento é à vista ou a prazo');
+      return;
+    }
+    const parcelas = parcelasDoc
+      .filter((parcela) => parcela.vencimento && Number(parcela.valor) > 0)
+      .map((parcela) => ({ vencimento: parcela.vencimento, valor: Number(parcela.valor) }));
+    if (formaPagamento === 'a_prazo' && !vencimentoDoc && parcelas.length === 0) {
+      setErro('Informe o vencimento ou as parcelas da conta a prazo');
+      return;
+    }
     const itens = leitura.itens
       .filter((item) => item.quantidade && item.quantidade > 0)
       .map((item) => ({
@@ -508,9 +528,12 @@ export function ComprasPage({
         documento_importado_id: leitura.id,
         observacoes,
         confirmar: true,
+        forma_pagamento: formaPagamento,
+        vencimento: formaPagamento === 'a_prazo' ? vencimentoDoc || parcelas[0]?.vencimento : undefined,
+        parcelas: formaPagamento === 'a_prazo' && parcelas.length > 0 ? parcelas : undefined,
         itens,
       });
-      setModo(null);
+      setConfirmacao(compra.confirmacao ?? null);
       setErro(null);
       await recarregar();
       await abrirDetalhe(compra.id);
@@ -528,6 +551,10 @@ export function ComprasPage({
       setLeitura(null);
       setFornecedorDoc('');
       setAvisoFornecedor(null);
+      setFormaPagamento('');
+      setVencimentoDoc('');
+      setParcelasDoc([]);
+      setConfirmacao(null);
       setArrastandoPdf(false);
       setDetalhe(null);
       setModo('importar');
@@ -604,7 +631,7 @@ export function ComprasPage({
                   <td><span className={`pill pill--${c.status}`}>{STATUS_COMPRA_LABEL[c.status]}</span></td>
                   <td>{moeda.format(c.total)}</td>
                   <td className="acoes">
-                    <button type="button" onClick={() => void abrirDetalhe(c.id)}>Ver</button>
+                    <button type="button" onClick={() => { setConfirmacao(null); void abrirDetalhe(c.id); }}>Ver</button>
                     {c.status === 'rascunho' && (
                       <button type="button" className="btn-remover-texto" onClick={() => void removerCompra(c.id).then(recarregar).catch((e) => setErro(e.message))}>
                         Excluir
@@ -756,7 +783,8 @@ export function ComprasPage({
               <p className="dica">
                 {leitura.itens.filter(vinculoValido).length} vinculado(s),{' '}
                 {leitura.itens.filter((item) => !vinculoValido(item)).length} sem vínculo válido.
-                A entrada só confirma quando todos os itens estiverem vinculados na unidade do cadastro.
+                Processar o PDF apenas lê a nota. A entrada no estoque e o título financeiro só nascem
+                ao confirmar, com o pagamento informado.
               </p>
               {leitura.avisos.map((aviso) => (
                 <p key={aviso} className="dica">{aviso}</p>
@@ -877,6 +905,79 @@ export function ComprasPage({
                     })}
                   </tbody>
                 </table>
+              )}
+              <fieldset className="importar-tipo">
+                <legend>Pagamento da nota</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="forma-pagamento-nota"
+                    checked={formaPagamento === 'a_vista'}
+                    onChange={() => setFormaPagamento('a_vista')}
+                  />
+                  À vista
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="forma-pagamento-nota"
+                    checked={formaPagamento === 'a_prazo'}
+                    onChange={() => setFormaPagamento('a_prazo')}
+                  />
+                  A prazo
+                </label>
+              </fieldset>
+              {formaPagamento === 'a_prazo' && (
+                <div className="form">
+                  <label>
+                    Vencimento
+                    <input
+                      type="date"
+                      aria-label="Vencimento da nota"
+                      value={vencimentoDoc}
+                      onChange={(e) => setVencimentoDoc(e.target.value)}
+                    />
+                  </label>
+                  {parcelasDoc.map((parcela, indice) => (
+                    <div className="form__row" key={indice}>
+                      <label>
+                        Vencimento parcela {indice + 1}
+                        <input
+                          type="date"
+                          aria-label={`Vencimento da parcela ${indice + 1}`}
+                          value={parcela.vencimento}
+                          onChange={(e) => {
+                            const atual = [...parcelasDoc];
+                            atual[indice] = { ...parcela, vencimento: e.target.value };
+                            setParcelasDoc(atual);
+                          }}
+                        />
+                      </label>
+                      <label>
+                        Valor parcela {indice + 1}
+                        <input
+                          type="number"
+                          min={0.01}
+                          step={0.01}
+                          aria-label={`Valor da parcela ${indice + 1}`}
+                          value={parcela.valor}
+                          onChange={(e) => {
+                            const atual = [...parcelasDoc];
+                            atual[indice] = { ...parcela, valor: e.target.value };
+                            setParcelasDoc(atual);
+                          }}
+                        />
+                      </label>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="btn-secundario"
+                    onClick={() => setParcelasDoc([...parcelasDoc, { vencimento: '', valor: '' }])}
+                  >
+                    Adicionar parcela
+                  </button>
+                </div>
               )}
               <div className="documento-acoes">
                 <button
@@ -1011,6 +1112,61 @@ export function ComprasPage({
             <div><dt>Frete</dt><dd>{moeda.format(detalhe.frete)}</dd></div>
             <div><dt>Total</dt><dd>{moeda.format(detalhe.total)}</dd></div>
           </dl>
+          {confirmacao && (
+            <div className="confirmacao-nota">
+              <h3>Nota confirmada</h3>
+              <p className="dica">
+                A compra foi lançada. O material já está no estoque
+                {confirmacao.financeiro.length ? ' e o título foi enviado para Contas a Pagar.' : '.'}
+              </p>
+              {confirmacao.estoque.length > 0 && (
+                <table className="tabela tabela--compacta" aria-label="Entradas no estoque">
+                  <thead>
+                    <tr>
+                      <th>Material</th>
+                      <th>Cor</th>
+                      <th>Entrada</th>
+                      <th>Saldo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {confirmacao.estoque.map((item, indice) => (
+                      <tr key={`${item.materia_prima_id}-${indice}`}>
+                        <td>{item.nome}</td>
+                        <td>{item.cor || '—'}</td>
+                        <td>{item.quantidade} {item.unidade}</td>
+                        <td>{item.saldo} {item.unidade}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {confirmacao.financeiro.length > 0 && (
+                <table className="tabela tabela--compacta" aria-label="Contas a pagar">
+                  <thead>
+                    <tr>
+                      <th>Descrição</th>
+                      <th>Vencimento</th>
+                      <th>Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {confirmacao.financeiro.map((titulo) => (
+                      <tr key={titulo.id}>
+                        <td>{titulo.descricao}</td>
+                        <td>
+                          {titulo.vencimento
+                            ? titulo.vencimento.slice(0, 10).split('-').reverse().join('/')
+                            : '—'}
+                        </td>
+                        <td>{moeda.format(titulo.valor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
           <table className="tabela tabela--compacta">
             <thead>
               <tr>

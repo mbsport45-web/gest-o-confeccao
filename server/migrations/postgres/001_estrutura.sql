@@ -420,6 +420,7 @@ CREATE TABLE IF NOT EXISTS pedido_compra_itens (
   criado_em TEXT NOT NULL DEFAULT (to_char((CURRENT_TIMESTAMP AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:MI:SS')),
   empresa_id INTEGER NOT NULL DEFAULT 1,
   aviamento_variante_id INTEGER,
+  cor TEXT,
   CONSTRAINT pedido_compra_itens_fk_1 FOREIGN KEY (aviamento_variante_id) REFERENCES aviamento_variantes (id),
   CONSTRAINT pedido_compra_itens_fk_2 FOREIGN KEY (variante_id) REFERENCES produto_variantes (id),
   CONSTRAINT pedido_compra_itens_fk_3 FOREIGN KEY (produto_id) REFERENCES produtos (id),
@@ -573,6 +574,7 @@ CREATE TABLE IF NOT EXISTS financeiro_lancamentos (
   atualizado_em TEXT NOT NULL DEFAULT (to_char((CURRENT_TIMESTAMP AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:MI:SS')),
   pedido_id INTEGER,
   empresa_id INTEGER NOT NULL DEFAULT 1,
+  parcela INTEGER,
   CONSTRAINT financeiro_lancamentos_fk_1 FOREIGN KEY (pedido_id) REFERENCES pedidos (id),
   CONSTRAINT financeiro_lancamentos_fk_2 FOREIGN KEY (ordem_id) REFERENCES ordens_producao (id),
   CONSTRAINT financeiro_lancamentos_fk_3 FOREIGN KEY (compra_id) REFERENCES pedidos_compra (id),
@@ -743,8 +745,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_pedido_unique
       ON financeiro_lancamentos (pedido_id)
       WHERE pedido_id IS NOT NULL AND tipo = 'receber';
 
-CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_compra_unique
-      ON financeiro_lancamentos (compra_id)
+CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_compra_parcela
+      ON financeiro_lancamentos (compra_id, parcela)
       WHERE compra_id IS NOT NULL AND tipo = 'pagar';
 
 CREATE UNIQUE INDEX IF NOT EXISTS fornecedores_codigo_unique

@@ -290,6 +290,8 @@ describe('API de compras', () => {
       data_emissao: res.body.data_emissao,
       documento_importado_id: res.body.id,
       confirmar: true,
+      forma_pagamento: 'a_prazo',
+      vencimento: '2026-11-06',
       observacoes: 'Itens sem cadastro: Ziper nylon.',
       itens: [
         {
@@ -479,6 +481,7 @@ describe('API de compras', () => {
       data_emissao: lido.body.data_emissao,
       documento_importado_id: lido.body.id,
       confirmar: true,
+      forma_pagamento: 'a_vista',
       itens: [
         {
           materia_prima_id: materia.id,
@@ -650,6 +653,8 @@ describe('API de compras', () => {
       fornecedor_id: fornecedor.body.id,
       documento_importado_id: lido.body.id,
       confirmar: true,
+      forma_pagamento: 'a_prazo',
+      vencimento: '2026-11-20',
       itens: [
         {
           materia_prima_id: materia.body.id,
@@ -688,5 +693,107 @@ describe('API de compras', () => {
     expect(segunda.status).toBe(409);
     expect((await api.get('/api/compras')).body.total).toBe(1);
     expect((await api.get('/api/estoque/movimentos')).body.total).toBe(1);
+  });
+
+  it('confirma a nota com entrada de estoque, parcelas a pagar e recusa dados inventados', async () => {
+    const pdf = pdfComTexto([
+      'NF-e 7701',
+      'DANFE',
+      'CNPJ: 11.444.777/0001-61',
+      'Fiação Norte',
+      'Emissão 20/10/2026',
+      'Malha Compra 12,000 KG 20,00 240,00 PRETO',
+    ]);
+    const materia = await criarMateria();
+    const fornecedor = await criarFornecedor();
+    const lido = await api.post('/api/compras/documentos').send({
+      tipo: 'nota_fiscal',
+      nome_arquivo: 'nfe-7701.pdf',
+      conteudo_base64: pdf.toString('base64'),
+    });
+    expect(lido.status).toBe(201);
+    expect((await api.get('/api/estoque').query({ tipo: 'materia' })).body.total).toBe(0);
+    expect((await api.get('/api/financeiro/lancamentos').query({ tipo: 'pagar' })).body.total).toBe(0);
+
+    const semPagamento = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      documento_importado_id: lido.body.id,
+      confirmar: true,
+      itens: [{ materia_prima_id: materia.id, quantidade: 12, custo_unitario: 20, unidade: 'KG', cor: 'Preto' }],
+    });
+    expect(semPagamento.status).toBe(400);
+    expect(semPagamento.body.erro).toMatch(/à vista ou a prazo/i);
+    expect((await api.get('/api/estoque/movimentos')).body.total).toBe(0);
+
+    const semVencimento = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      documento_importado_id: lido.body.id,
+      confirmar: true,
+      forma_pagamento: 'a_prazo',
+      itens: [{ materia_prima_id: materia.id, quantidade: 12, custo_unitario: 20, unidade: 'KG', cor: 'Preto' }],
+    });
+    expect(semVencimento.status).toBe(400);
+    expect(semVencimento.body.erro).toMatch(/vencimento ou as parcelas/i);
+
+    const entrada = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      data_emissao: '2026-10-20',
+      documento_importado_id: lido.body.id,
+      confirmar: true,
+      forma_pagamento: 'a_prazo',
+      parcelas: [
+        { vencimento: '2026-11-20', valor: 120 },
+        { vencimento: '2026-12-20', valor: 120 },
+      ],
+      itens: [{ materia_prima_id: materia.id, quantidade: 12, custo_unitario: 20, unidade: 'KG', cor: 'Preto' }],
+      itens_ignorados: [{ descricao: 'Aviamento sem cadastro', aviso: 'Item não encontrado no cadastro' }],
+    });
+    expect(entrada.status).toBe(201);
+    expect(entrada.body.status).toBe('recebida');
+    expect(entrada.body.itens[0]).toMatchObject({
+      quantidade_recebida: 12,
+      unidade: 'KG',
+      cor: 'Preto',
+    });
+    expect(entrada.body.confirmacao.estoque).toEqual([
+      expect.objectContaining({
+        materia_prima_id: materia.id,
+        quantidade: 12,
+        unidade: 'KG',
+        cor: 'Preto',
+        saldo: 12,
+      }),
+    ]);
+    expect(entrada.body.confirmacao.financeiro).toHaveLength(2);
+    expect(entrada.body.confirmacao.itens_ignorados).toEqual([
+      { descricao: 'Aviamento sem cadastro', aviso: 'Item não encontrado no cadastro' },
+    ]);
+
+    const estoque = await api.get('/api/estoque').query({ tipo: 'materia' });
+    expect(estoque.body.data[0]).toMatchObject({ nome: 'Malha Compra', quantidade: 12, unidade: 'KG' });
+
+    const pagar = await api.get('/api/financeiro/lancamentos').query({ tipo: 'pagar' });
+    expect(pagar.body.total).toBe(2);
+    expect(pagar.body.data.map((l: { valor: number; status: string }) => l.valor).sort()).toEqual([120, 120]);
+    expect(pagar.body.data.every((l: { status: string }) => l.status === 'pendente')).toBe(true);
+    expect(pagar.body.data[0].descricao).toMatch(/NF 7701|NF-e 7701|7701/);
+
+    const relatorio = await api.get('/api/relatorios/financeiro');
+    expect(relatorio.status).toBe(200);
+    expect(relatorio.body.totais.pagar).toBe(240);
+    expect(relatorio.body.totais.pendente).toBe(240);
+    expect(relatorio.body.data.some((l: { descricao: string }) => /7701/.test(l.descricao))).toBe(true);
+
+    const repetida = await api.post('/api/compras').send({
+      fornecedor_id: fornecedor.id,
+      documento_importado_id: lido.body.id,
+      confirmar: true,
+      forma_pagamento: 'a_prazo',
+      vencimento: '2026-11-20',
+      itens: [{ materia_prima_id: materia.id, quantidade: 12, custo_unitario: 20, unidade: 'KG' }],
+    });
+    expect(repetida.status).toBe(409);
+    expect((await api.get('/api/estoque').query({ tipo: 'materia' })).body.data[0].quantidade).toBe(12);
+    expect((await api.get('/api/financeiro/lancamentos').query({ tipo: 'pagar' })).body.total).toBe(2);
   });
 });

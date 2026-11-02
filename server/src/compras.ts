@@ -2,8 +2,15 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
 import { registrarMovimentoAviamento } from './aviamentos.js';
-import { registrarMovimentoEstoque } from './estoque.js';
-import { arredondarDinheiro, sincronizarContaPagarCompra } from './financeiro.js';
+import { mapearSaldoEstoque, registrarMovimentoEstoque } from './estoque.js';
+import {
+  arredondarDinheiro,
+  inferirFormaPagamento,
+  lancarContasPagarCompra,
+  sincronizarContaPagarCompra,
+  type DadosPagamentoCompra,
+  type FinanceiroLancamento,
+} from './financeiro.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 import { entradaExistente, processarDocumentoCompra } from './documentosCompra.js';
 import { TIPOS_DOCUMENTO } from './leituraDocumento.js';
@@ -29,6 +36,7 @@ export interface CompraItem {
   custo_unitario: number;
   total: number;
   unidade: string | null;
+  cor: string | null;
   criado_em: string;
   nome?: string | null;
   codigo?: string | null;
@@ -77,6 +85,7 @@ const itemSchema = z
     quantidade: z.number().positive('quantidade deve ser maior que zero'),
     custo_unitario: z.number().min(0, 'custo não pode ser negativo'),
     unidade: textoOpcional,
+    cor: textoOpcional,
   })
   .refine(
     (item) => {
@@ -111,11 +120,27 @@ const compraBaseSchema = z.object({
   vencimento: textoOpcional,
   documento_importado_id: z.number().int().positive().optional(),
   confirmar: z.boolean().optional(),
+  parcelas: z
+    .array(
+      z.object({
+        vencimento: z.string().trim().min(1, 'Informe o vencimento da parcela'),
+        valor: z.number().positive('valor da parcela deve ser maior que zero'),
+      }),
+    )
+    .optional(),
   itens: z.array(itemSchema).optional(),
+  itens_ignorados: z
+    .array(
+      z.object({
+        descricao: z.string().trim().min(1),
+        aviso: z.string().trim().min(1).optional(),
+      }),
+    )
+    .optional(),
 });
 
 const atualizarCompraSchema = compraBaseSchema
-  .omit({ confirmar: true, documento_importado_id: true })
+  .omit({ confirmar: true, documento_importado_id: true, parcelas: true, itens_ignorados: true })
   .partial()
   .extend({
     fornecedor_id: z.number().int().positive().optional(),
@@ -273,10 +298,10 @@ export function createComprasRouter(db: AppDatabase): Router {
       .prepare(
         `INSERT INTO pedido_compra_itens (
            empresa_id, compra_id, materia_prima_id, produto_id, variante_id, aviamento_variante_id,
-           quantidade, quantidade_recebida, custo_unitario, total, unidade
+           quantidade, quantidade_recebida, custo_unitario, total, unidade, cor
          ) VALUES (
            @empresa_id, @compra_id, @materia_prima_id, @produto_id, @variante_id, @aviamento_variante_id,
-           @quantidade, 0, @custo_unitario, @total, @unidade
+           @quantidade, 0, @custo_unitario, @total, @unidade, @cor
          )`,
       )
       .run({
@@ -290,6 +315,7 @@ export function createComprasRouter(db: AppDatabase): Router {
         custo_unitario: item.custo_unitario,
         total,
         unidade: item.unidade ?? null,
+        cor: item.cor ?? null,
       });
     return Number(info.lastInsertRowid);
   }
@@ -297,6 +323,7 @@ export function createComprasRouter(db: AppDatabase): Router {
   function receberItens(
     compra: PedidoCompra,
     pedidos: Array<{ item_id: number; quantidade: number }>,
+    financeiro?: DadosPagamentoCompra,
   ) {
     const itens = compra.itens ?? [];
     for (const pedido of pedidos) {
@@ -313,7 +340,14 @@ export function createComprasRouter(db: AppDatabase): Router {
         ? `Documento ${compra.documento_numero ?? ''} (${compra.documento_nome})`.replace(/\s+/g, ' ').trim()
         : '';
       const motivo = `Compra ${compra.codigo ?? compra.id}`;
-      const observacoes = [`Recebimento item ${item.id}`, documento].filter(Boolean).join('. ');
+      const observacoes = [
+        `Recebimento item ${item.id}`,
+        documento,
+        item.cor ? `Cor ${item.cor}` : '',
+        item.unidade ? `Unidade ${item.unidade}` : '',
+      ]
+        .filter(Boolean)
+        .join('. ');
       const mov = item.aviamento_variante_id
         ? registrarMovimentoAviamento(db, compra.empresa_id, {
             tipo: 'entrada',
@@ -351,7 +385,46 @@ export function createComprasRouter(db: AppDatabase): Router {
         WHERE id = @id AND empresa_id = @empresa_id`,
     ).run({ id: compra.id, empresa_id: compra.empresa_id, status });
     const after = mapCompra(compra.id, compra.empresa_id);
-    if (after) sincronizarContaPagarCompra(db, after);
+    if (!after) return;
+    if (financeiro) lancarContasPagarCompra(db, after, financeiro);
+    else sincronizarContaPagarCompra(db, after);
+  }
+
+  function resumoConfirmacao(
+    compra: PedidoCompra,
+    ignorados: Array<{ descricao: string; aviso?: string }> = [],
+  ) {
+    const financeiro = db
+      .prepare(
+        `SELECT * FROM financeiro_lancamentos
+          WHERE compra_id = ? AND empresa_id = ? AND tipo = 'pagar'
+          ORDER BY ifnull(parcela, id), id`,
+      )
+      .all(compra.id, compra.empresa_id) as FinanceiroLancamento[];
+    const estoque = (compra.itens ?? [])
+      .filter((item) => item.quantidade_recebida > 0 && item.materia_prima_id)
+      .map((item) => {
+        const saldo = db
+          .prepare(
+            `SELECT id FROM estoque_saldos
+              WHERE empresa_id = ? AND materia_prima_id = ?`,
+          )
+          .get(compra.empresa_id, item.materia_prima_id) as { id: number } | undefined;
+        const mapeado = saldo ? mapearSaldoEstoque(db, saldo.id, compra.empresa_id) : undefined;
+        return {
+          materia_prima_id: item.materia_prima_id,
+          nome: item.nome ?? mapeado?.nome ?? null,
+          quantidade: item.quantidade_recebida,
+          unidade: item.unidade ?? mapeado?.unidade ?? null,
+          cor: item.cor,
+          saldo: mapeado?.quantidade ?? 0,
+        };
+      });
+    return {
+      estoque,
+      financeiro,
+      itens_ignorados: ignorados,
+    };
   }
 
   router.get('/', (req, res) => {
@@ -501,6 +574,29 @@ export function createComprasRouter(db: AppDatabase): Router {
     if (data.confirmar && (!data.itens || data.itens.length === 0)) {
       return res.status(400).json({ erro: 'Confirme a compra com ao menos um item reconhecido' });
     }
+    let pagamento: DadosPagamentoCompra | undefined;
+    if (data.confirmar && data.documento_importado_id) {
+      pagamento = {
+        forma: inferirFormaPagamento(data.forma_pagamento),
+        vencimento: data.vencimento ?? null,
+        parcelas: data.parcelas,
+        exigirDados: true,
+      };
+      if (!pagamento.forma) {
+        return res.status(400).json({
+          erro: 'Informe se o pagamento é à vista ou a prazo antes de confirmar a nota',
+        });
+      }
+      if (
+        pagamento.forma === 'a_prazo' &&
+        !pagamento.vencimento &&
+        !(pagamento.parcelas && pagamento.parcelas.length)
+      ) {
+        return res.status(400).json({
+          erro: 'Informe o vencimento ou as parcelas da conta a prazo',
+        });
+      }
+    }
 
     try {
       const criar = db.transaction(() => {
@@ -526,7 +622,8 @@ export function createComprasRouter(db: AppDatabase): Router {
             frete: data.frete ?? 0,
             forma_pagamento: data.forma_pagamento ?? null,
             condicao_pagamento: data.condicao_pagamento ?? null,
-            vencimento: data.vencimento ?? data.data_prevista ?? null,
+            vencimento:
+              data.vencimento ?? data.parcelas?.[0]?.vencimento ?? data.data_prevista ?? null,
             documento_importado_id: data.documento_importado_id ?? null,
           });
         const id = Number(info.lastInsertRowid);
@@ -549,12 +646,20 @@ export function createComprasRouter(db: AppDatabase): Router {
           receberItens(
             compra,
             compra.itens.map((item) => ({ item_id: item.id, quantidade: item.quantidade })),
+            pagamento,
           );
         }
         return id;
       });
       const id = criar();
-      res.status(201).json(mapCompra(id, empresaId, true));
+      const criada = mapCompra(id, empresaId, true);
+      if (data.confirmar && criada) {
+        return res.status(201).json({
+          ...criada,
+          confirmacao: resumoConfirmacao(criada, data.itens_ignorados ?? []),
+        });
+      }
+      res.status(201).json(criada);
     } catch (err) {
       const status = (err as { status?: number }).status ?? 400;
       if (err instanceof Error && /UNIQUE/i.test(err.message)) {

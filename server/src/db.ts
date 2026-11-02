@@ -504,6 +504,7 @@ export function createDatabase(location: string) {
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
+  aplicarConfirmacaoNota(db);
 
   return db;
 }
@@ -551,6 +552,21 @@ function tabelaExiste(db: AppDatabase, nome: string): boolean {
 function colunaExiste(db: AppDatabase, tabela: string, coluna: string): boolean {
   const cols = db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[];
   return cols.some((col) => col.name === coluna);
+}
+
+function aplicarConfirmacaoNota(db: AppDatabase) {
+  if (tabelaExiste(db, 'pedido_compra_itens') && !colunaExiste(db, 'pedido_compra_itens', 'cor')) {
+    db.exec('ALTER TABLE pedido_compra_itens ADD COLUMN cor TEXT');
+  }
+  if (tabelaExiste(db, 'financeiro_lancamentos') && !colunaExiste(db, 'financeiro_lancamentos', 'parcela')) {
+    db.exec('ALTER TABLE financeiro_lancamentos ADD COLUMN parcela INTEGER');
+  }
+  db.exec(`
+    DROP INDEX IF EXISTS financeiro_lancamentos_compra_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_compra_parcela
+      ON financeiro_lancamentos (compra_id, parcela)
+      WHERE compra_id IS NOT NULL AND tipo = 'pagar';
+  `);
 }
 
 function aplicarDocumentosImportados(db: AppDatabase) {

@@ -1738,6 +1738,8 @@ export type CompraPayload = {
   vencimento?: string;
   documento_importado_id?: number;
   confirmar?: boolean;
+  parcelas?: Array<{ vencimento: string; valor: number }>;
+  itens_ignorados?: Array<{ descricao: string; aviso?: string }>;
   itens?: Array<{
     materia_prima_id?: number;
     produto_id?: number;
@@ -1746,10 +1748,33 @@ export type CompraPayload = {
     quantidade: number;
     custo_unitario: number;
     unidade?: string;
+    cor?: string;
   }>;
 };
 
-export async function criarCompra(dados: CompraPayload): Promise<PedidoCompra> {
+export type ConfirmacaoCompra = {
+  estoque: Array<{
+    materia_prima_id: number | null;
+    nome: string | null;
+    quantidade: number;
+    unidade: string | null;
+    cor: string | null;
+    saldo: number;
+  }>;
+  financeiro: Array<{
+    id: number;
+    descricao: string;
+    valor: number;
+    status: string;
+    vencimento: string | null;
+    parcela: number | null;
+  }>;
+  itens_ignorados: Array<{ descricao: string; aviso?: string }>;
+};
+
+export type CompraCriada = PedidoCompra & { confirmacao?: ConfirmacaoCompra };
+
+export async function criarCompra(dados: CompraPayload): Promise<CompraCriada> {
   const res = await apiFetch('/api/compras', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
