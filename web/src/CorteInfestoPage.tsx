@@ -19,7 +19,7 @@ import {
   totalGeral,
   totalTamanho,
   type GradeValor,
-} from './gradeOrdem';
+} from './regrasGradeOrdem';
 
 const PODE_CORTAR = new Set(['planejada', 'pendente', 'corte']);
 

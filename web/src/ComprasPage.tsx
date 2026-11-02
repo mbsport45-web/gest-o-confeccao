@@ -27,7 +27,7 @@ import {
   type TipoDocumento,
 } from './api';
 import { FornecedorImportacao } from './FornecedorImportacao';
-import type { PayloadFornecedorImportacao } from './fornecedorImportacao';
+import type { PayloadFornecedorImportacao } from './regrasFornecedorImportacao';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 

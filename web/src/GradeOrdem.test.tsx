@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GradeOrdem } from './GradeOrdem';
-import { gradeVazia, type GradeValor } from './gradeOrdem';
+import { gradeVazia, type GradeValor } from './regrasGradeOrdem';
 
 function Harness({
   inicial = gradeVazia([]),

@@ -15,7 +15,7 @@ import {
   totalCor,
   totalGeral,
   totalTamanho,
-} from './gradeOrdem';
+} from './regrasGradeOrdem';
 
 describe('grade da ordem de produção', () => {
   it('soma 75 pretas e 75 brancas e exige o total da ordem', () => {

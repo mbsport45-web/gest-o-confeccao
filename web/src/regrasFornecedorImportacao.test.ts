@@ -4,7 +4,7 @@ import {
   dadosParaCadastro,
   formularioFornecedorDaLeitura,
   preencherFormularioSemSobrescrever,
-} from './fornecedorImportacao';
+} from './regrasFornecedorImportacao';
 
 function leitura(parcial: Partial<DocumentoProcessado> = {}): DocumentoProcessado {
   return {

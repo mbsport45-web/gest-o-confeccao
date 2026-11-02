@@ -17,7 +17,7 @@ import {
   type GradeValor,
   chaveGrade,
   gradeDaOrdem,
-} from './gradeOrdem';
+} from './regrasGradeOrdem';
 
 type NovaCorGrade = {
   nome: string;

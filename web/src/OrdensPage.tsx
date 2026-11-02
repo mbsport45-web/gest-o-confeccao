@@ -41,7 +41,7 @@ import {
   gradeVazia,
   mensagemGrade,
   type GradeValor,
-} from './gradeOrdem';
+} from './regrasGradeOrdem';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
 

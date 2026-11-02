@@ -6,7 +6,7 @@ import {
   preencherFormularioSemSobrescrever,
   type FormFornecedorImportacao,
   type PayloadFornecedorImportacao,
-} from './fornecedorImportacao';
+} from './regrasFornecedorImportacao';
 
 type Props = {
   leitura: DocumentoProcessado;
