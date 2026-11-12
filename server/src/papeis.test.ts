@@ -74,6 +74,8 @@ describe('papéis e permissões por módulo', () => {
 
   it('mapeia rota e método HTTP para módulo e ação CRUD', () => {
     expect(moduloDaRota('/api/clientes')).toBe('clientes');
+    expect(moduloDaRota('/api/estampas')).toBe('clientes');
+    expect(moduloDaRota('/api/estampas/completar')).toBe('clientes');
     expect(moduloDaRota('/api/materias-primas/3')).toBe('materiais');
     expect(moduloDaRota('/api/membros/1')).toBe('equipe');
     expect(moduloDaRota('/api/convites')).toBe('equipe');

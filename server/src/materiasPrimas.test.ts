@@ -61,6 +61,7 @@ describe('API de matérias-primas', () => {
       estoque_minimo: 15,
       ncm: '60041000',
       status: 'ativo',
+      estoque_atual: 0,
     });
     expect(res.body.id).toBeGreaterThan(0);
     expect(res.body.criado_em).toBeTruthy();
@@ -221,5 +222,78 @@ describe('API de matérias-primas', () => {
   it('retorna 404 para matéria-prima inexistente', async () => {
     const res = await api.get('/api/materias-primas/9999');
     expect(res.status).toBe(404);
+  });
+
+  it('lista cor e saldo reais por tecido, sem misturar cores nem unidades', async () => {
+    const preto = await api.post('/api/materias-primas').send({
+      codigo: 'MALHA-PRETO',
+      nome: 'Malha Colorida',
+      descricao: 'PV para polo',
+      tipo: 'tecido',
+      cor: 'Preto',
+      unidade: 'KG',
+      custo: 28.5,
+    });
+    const branco = await api.post('/api/materias-primas').send({
+      codigo: 'MALHA-BRANCO',
+      nome: 'Malha Colorida',
+      tipo: 'tecido',
+      cor: 'Branco',
+      unidade: 'KG',
+      custo: 27,
+    });
+    const verdeMt = await api.post('/api/materias-primas').send({
+      codigo: 'TELA-VERDE',
+      nome: 'Tela Colorida',
+      tipo: 'tecido',
+      cor: 'Verde',
+      unidade: 'MT',
+      custo: 12.4,
+    });
+
+    await api.post('/api/estoque/movimentos').send({
+      tipo: 'entrada',
+      quantidade: 10,
+      materia_prima_id: preto.body.id,
+    });
+    await api.post('/api/estoque/movimentos').send({
+      tipo: 'entrada',
+      quantidade: 4,
+      materia_prima_id: branco.body.id,
+    });
+    await api.post('/api/estoque/movimentos').send({
+      tipo: 'entrada',
+      quantidade: 20,
+      materia_prima_id: verdeMt.body.id,
+    });
+
+    const lista = await api.get('/api/materias-primas').query({ q: 'Colorida', por_pagina: 10 });
+    expect(lista.status).toBe(200);
+    const porCodigo = Object.fromEntries(
+      (lista.body.data as Array<{ codigo: string; cor: string; unidade: string; estoque_atual: number }>).map(
+        (item) => [item.codigo, item],
+      ),
+    );
+    expect(porCodigo['MALHA-PRETO']).toMatchObject({ cor: 'Preto', unidade: 'KG', estoque_atual: 10 });
+    expect(porCodigo['MALHA-BRANCO']).toMatchObject({ cor: 'Branco', unidade: 'KG', estoque_atual: 4 });
+    expect(porCodigo['TELA-VERDE']).toMatchObject({ cor: 'Verde', unidade: 'MT', estoque_atual: 20 });
+
+    const saida = await api.post('/api/estoque/movimentos').send({
+      tipo: 'saida',
+      quantidade: 2.5,
+      materia_prima_id: preto.body.id,
+    });
+    expect(saida.status).toBe(201);
+
+    const depois = await api.get(`/api/materias-primas/${preto.body.id}`);
+    expect(depois.body).toMatchObject({
+      cor: 'Preto',
+      unidade: 'KG',
+      estoque_atual: 7.5,
+    });
+    const brancoDepois = await api.get(`/api/materias-primas/${branco.body.id}`);
+    expect(brancoDepois.body.estoque_atual).toBe(4);
+    const verdeDepois = await api.get(`/api/materias-primas/${verdeMt.body.id}`);
+    expect(verdeDepois.body.estoque_atual).toBe(20);
   });
 });

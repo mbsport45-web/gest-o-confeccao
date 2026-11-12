@@ -9,6 +9,7 @@ import {
   podeVerHistoricoAssinatura,
   temPermissao,
   LIMITE_LABEL,
+  limiteAtingido,
   type AcaoAssinatura,
   type AssinaturaEmpresa,
   type ChaveLimite,
@@ -96,7 +97,9 @@ export function PlanoPage({
     }
   }
 
-  const algumAtingido = Object.values(atual.uso ?? {}).some((item) => item.atingido);
+  const algumAtingido = (Object.keys(atual.uso ?? {}) as ChaveLimite[]).some((chave) =>
+    limiteAtingido(atual, chave),
+  );
   const acoes = atual.politica?.acoes ?? [];
   const acoesPrincipais = acoes.filter((acao) => acao !== 'marcar_atraso' && acao !== 'expirar');
   const acoesSimulacao = acoes.filter((acao) => acao === 'marcar_atraso' || acao === 'expirar');
@@ -261,10 +264,14 @@ export function PlanoPage({
               return (
                 <li
                   key={chave}
-                  className={item.atingido ? 'plano__uso-item plano__uso-item--atingido' : 'plano__uso-item'}
+                  className={
+                    limiteAtingido(atual, chave)
+                      ? 'plano__uso-item plano__uso-item--atingido'
+                      : 'plano__uso-item'
+                  }
                 >
                   {LIMITE_LABEL[chave]}: {formatarUso(item.atual, item.maximo)}
-                  {item.atingido ? ' — limite atingido' : ''}
+                  {limiteAtingido(atual, chave) ? ' — limite atingido' : ''}
                 </li>
               );
             })}

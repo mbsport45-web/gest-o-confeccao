@@ -3,9 +3,14 @@ import {
   STATUS_EXPEDICAO_LABEL,
   STATUS_PEDIDO_LABEL,
   type ExpedicaoItem,
+  type ExpedicaoOcItem,
   type ExpedicaoResumo,
+  type StatusExpedicao,
   type StatusPedido,
+  entregarOcExpedicao,
+  expedirOcExpedicao,
   listarExpedicao,
+  listarExpedicaoOrdensCorte,
   marcarEntrega,
   marcarProntoEnvio,
   obterResumoExpedicao,
@@ -42,6 +47,18 @@ function hojeIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function formatarDataHora(valor: string | null | undefined): string {
+  if (!valor) return '—';
+  const m = valor.trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+  if (!m) return valor;
+  const data = `${m[3]}/${m[2]}/${m[1]}`;
+  return m[4] && m[5] ? `${data} ${m[4]}:${m[5]}` : data;
+}
+
+function rotuloStatusOc(status: StatusExpedicao): string {
+  return STATUS_EXPEDICAO_LABEL[status] ?? status;
+}
+
 export function ExpedicaoPage() {
   const [fila, setFila] = useState<Fila>('prontos');
   const [q, setQ] = useState('');
@@ -50,6 +67,7 @@ export function ExpedicaoPage() {
   const [totalPaginas, setTotalPaginas] = useState(1);
   const [total, setTotal] = useState(0);
   const [itens, setItens] = useState<ExpedicaoItem[]>([]);
+  const [ocs, setOcs] = useState<ExpedicaoOcItem[]>([]);
   const [resumo, setResumo] = useState<ExpedicaoResumo | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -72,14 +90,16 @@ export function ExpedicaoPage() {
   const recarregar = useCallback(async () => {
     try {
       setCarregando(true);
-      const [lista, r] = await Promise.all([
+      const [lista, r, listaOc] = await Promise.all([
         listarExpedicao({ q: qDebounced, fila, pagina, por_pagina: 10 }),
         obterResumoExpedicao(),
+        listarExpedicaoOrdensCorte({ fila }),
       ]);
       setItens(lista.data);
       setTotal(lista.total);
       setTotalPaginas(lista.total_paginas);
       setResumo(r);
+      setOcs(listaOc.data);
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
@@ -171,6 +191,75 @@ export function ExpedicaoPage() {
         </div>
 
         {erro && <p className="erro">{erro}</p>}
+        <h3>Ordens de corte</h3>
+        {carregando ? (
+          <p className="vazio">Carregando expedição…</p>
+        ) : ocs.length === 0 ? (
+          <p className="vazio">Nenhuma ordem de corte nesta fila.</p>
+        ) : (
+          <table className="tabela" aria-label="Ordens de corte na expedição">
+            <thead>
+              <tr>
+                <th>OC</th>
+                <th>Oficina</th>
+                <th>Costureiro</th>
+                <th>Modelo</th>
+                <th>Referência</th>
+                <th>Peças</th>
+                <th>Encaminhamento</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {ocs.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.codigo_oc}</td>
+                  <td>{item.oficina || '—'}</td>
+                  <td>{item.costureiro || '—'}</td>
+                  <td>{item.modelo || '—'}</td>
+                  <td>{item.referencia || '—'}</td>
+                  <td>
+                    {item.pecas_expedicao ?? item.pecas_conferidas ?? item.pecas}
+                    {item.pecas_conferidas != null && item.pecas_conferidas !== item.pecas ? (
+                      <span className="liberacao-conferencia__original"> · enviadas {item.pecas}</span>
+                    ) : null}
+                  </td>
+                  <td>{formatarDataHora(item.encaminhado_em)}</td>
+                  <td>
+                    <span className={`pill pill--${item.status}`}>{rotuloStatusOc(item.status)}</span>
+                  </td>
+                  <td className="acoes">
+                    {item.status === 'pronto_envio' || item.status === 'conferido' ? (
+                      <button
+                        type="button"
+                        disabled={salvando === item.ordem_id}
+                        onClick={() =>
+                          void acao(item.ordem_id, () =>
+                            expedirOcExpedicao(item.ordem_id, { data_expedicao: hojeIso() }),
+                          )
+                        }
+                      >
+                        Registrar expedição
+                      </button>
+                    ) : null}
+                    {item.status === 'expedido' ? (
+                      <button
+                        type="button"
+                        disabled={salvando === item.ordem_id}
+                        onClick={() => void acao(item.ordem_id, () => entregarOcExpedicao(item.ordem_id))}
+                      >
+                        Marcar entregue
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <h3>Pedidos</h3>
         {carregando ? (
           <p className="vazio">Carregando expedição…</p>
         ) : itens.length === 0 ? (

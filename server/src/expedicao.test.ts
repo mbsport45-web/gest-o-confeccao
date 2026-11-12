@@ -155,4 +155,17 @@ describe('API de expedição', () => {
     expect(expedir.body.expedicao_status).toBe('expedido');
     expect(expedir.body.codigo).toBe('PV-0001');
   });
+
+  it('lista ordens de corte da expedição sem misturar com pedidos', async () => {
+    const vazia = await api.get('/api/expedicao/ordens-corte');
+    expect(vazia.status).toBe(200);
+    expect(vazia.body).toMatchObject({ data: [], total: 0 });
+
+    const { pedido } = await pedidoFaturado();
+    await api.post(`/api/expedicao/${pedido.id}/pronto-envio`).send({});
+    const soPedidos = await api.get('/api/expedicao/ordens-corte');
+    expect(soPedidos.body.total).toBe(0);
+    const filaPedidos = await api.get('/api/expedicao');
+    expect(filaPedidos.body.total).toBe(1);
+  });
 });

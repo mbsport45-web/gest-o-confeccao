@@ -1,6 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import {
+  registrarEventoLancamento,
+  registrarHistoricoPagamentoOc,
+  saldoPagamentoOficina,
+  statusPagamentoOficina,
+  valorPagoEfetivo,
+} from './pagamentoOficina.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const TIPOS_LANCAMENTO = ['pagar', 'receber'] as const;
@@ -12,6 +19,24 @@ export const STATUS_LANCAMENTO = [
   'cancelado',
 ] as const;
 export const TIPOS_CATEGORIA = ['pagar', 'receber', 'ambos'] as const;
+
+export const INDICADORES_CONTAS_PAGAR = [
+  { chave: 'tecidos', nome: 'Tecidos', label: 'Tecidos a pagar' },
+  { chave: 'costureiros', nome: 'Costureiros', label: 'Costureiros a pagar' },
+  { chave: 'funcionarios', nome: 'Funcionários', label: 'Funcionários a pagar' },
+  { chave: 'alugueis', nome: 'Aluguéis', label: 'Aluguéis a pagar' },
+  { chave: 'luz', nome: 'Conta de luz', label: 'Conta de luz a pagar' },
+  { chave: 'agua', nome: 'Contas de água', label: 'Contas de água a pagar' },
+  { chave: 'iptu', nome: 'IPTU', label: 'IPTU a pagar' },
+] as const;
+
+export type ChaveIndicadorPagar = (typeof INDICADORES_CONTAS_PAGAR)[number]['chave'];
+
+export type IndicadorContaPagar = {
+  valor: number;
+  quantidade: number;
+  categoria_id: number | null;
+};
 
 export interface FinanceiroCategoria {
   id: number;
@@ -31,11 +56,17 @@ export interface FinanceiroLancamento {
   status: (typeof STATUS_LANCAMENTO)[number];
   vencimento: string | null;
   data_pagamento: string | null;
+  valor_pago?: number;
+  valor_pago_efetivo?: number;
+  saldo?: number;
+  status_pagamento?: 'pendente' | 'parcial' | 'pago';
   fornecedor_id: number | null;
   cliente_id: number | null;
   compra_id: number | null;
   ordem_id: number | null;
+  ordem_corte_id?: number | null;
   pedido_id: number | null;
+  parcela: number | null;
   observacoes: string | null;
   criado_em: string;
   atualizado_em: string;
@@ -68,6 +99,7 @@ const lancamentoBase = z.object({
   status: z.enum(STATUS_LANCAMENTO).optional(),
   vencimento: textoOpcional,
   data_pagamento: textoOpcional,
+  valor_pago: z.number().min(0).optional(),
   fornecedor_id: z.number().int().positive().optional().nullable(),
   cliente_id: z.number().int().positive().optional().nullable(),
   compra_id: z.number().int().positive().optional().nullable(),
@@ -221,6 +253,178 @@ export function sincronizarContaReceberPedido(
     .get(Number(info.lastInsertRowid)) as FinanceiroLancamento;
 }
 
+const moedaOficina = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+export function categoriaCostureirosId(db: AppDatabase): number | null {
+  const row = db
+    .prepare(
+      `SELECT id FROM financeiro_categorias WHERE nome = 'Costureiros' AND status = 'ativo' LIMIT 1`,
+    )
+    .get() as { id: number } | undefined;
+  return row?.id ?? null;
+}
+
+export type DadosContaPagarOficina = {
+  empresa_id: number;
+  ordem_id: number;
+  ordem_corte_id: number;
+  codigo_oc: string;
+  oficina: string;
+  costureiro: string;
+  modelo: string;
+  referencia: string;
+  pecas: number;
+  valor_peca: number;
+  entregue_em: string;
+};
+
+export function pecasContaPagarOficina(gradeSoma: number, quantidade: number): number {
+  return gradeSoma > 0 ? gradeSoma : quantidade || 0;
+}
+
+export function descricaoContaPagarOficina(dados: DadosContaPagarOficina): string {
+  const modeloRef = [dados.modelo, dados.referencia].map((item) => item.trim()).filter(Boolean).join(' ');
+  return [
+    dados.codigo_oc.trim() || `OC ${dados.ordem_corte_id}`,
+    dados.oficina.trim() || null,
+    dados.costureiro.trim() || null,
+    modeloRef || null,
+    `${dados.pecas} pç × ${moedaOficina.format(dados.valor_peca)}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+export function observacoesContaPagarOficina(dados: DadosContaPagarOficina): string {
+  const total = arredondarDinheiro(dados.pecas * dados.valor_peca);
+  return [
+    `OC: ${dados.codigo_oc.trim() || dados.ordem_corte_id}`,
+    `Oficina: ${dados.oficina.trim() || '—'}`,
+    `Costureiro: ${dados.costureiro.trim() || '—'}`,
+    `Modelo: ${dados.modelo.trim() || '—'}`,
+    `Referência: ${dados.referencia.trim() || '—'}`,
+    `Quantidade de peças: ${dados.pecas}`,
+    `Valor por peça: ${moedaOficina.format(dados.valor_peca)}`,
+    `Valor total: ${moedaOficina.format(total)}`,
+    `Data da confirmação da entrega: ${dados.entregue_em}`,
+  ].join('\n');
+}
+
+export function lancarContaPagarOficina(
+  db: AppDatabase,
+  dados: DadosContaPagarOficina,
+): FinanceiroLancamento | undefined {
+  const valor = arredondarDinheiro(dados.pecas * dados.valor_peca);
+  const descricao = descricaoContaPagarOficina(dados);
+  const observacoes = observacoesContaPagarOficina(dados);
+  const vencimento = dados.entregue_em.slice(0, 10) || null;
+  const categoriaId = categoriaCostureirosId(db);
+  const atual = db
+    .prepare(
+      `SELECT * FROM financeiro_lancamentos
+        WHERE empresa_id = ? AND tipo = 'pagar' AND ordem_corte_id = ?`,
+    )
+    .get(dados.empresa_id, dados.ordem_corte_id) as FinanceiroLancamento | undefined;
+
+  if (atual) {
+    if (atual.status !== 'pendente' && atual.status !== 'vencido') return atual;
+    if (valorPagoEfetivo(atual) > 0) return atual;
+    db.prepare(
+      `UPDATE financeiro_lancamentos
+          SET descricao = @descricao,
+              valor = @valor,
+              vencimento = @vencimento,
+              observacoes = @observacoes,
+              categoria_id = @categoria_id,
+              ordem_id = @ordem_id,
+              atualizado_em = datetime('now')
+        WHERE id = @id AND empresa_id = @empresa_id AND status IN ('pendente', 'vencido')`,
+    ).run({
+      id: atual.id,
+      empresa_id: dados.empresa_id,
+      descricao,
+      valor,
+      vencimento,
+      observacoes,
+      categoria_id: categoriaId,
+      ordem_id: dados.ordem_id,
+    });
+    return db.prepare(`SELECT * FROM financeiro_lancamentos WHERE id = ?`).get(atual.id) as FinanceiroLancamento;
+  }
+
+  const info = db
+    .prepare(
+      `INSERT INTO financeiro_lancamentos (
+         empresa_id, tipo, categoria_id, descricao, valor, status, vencimento,
+         ordem_id, ordem_corte_id, observacoes
+       ) VALUES (
+         @empresa_id, 'pagar', @categoria_id, @descricao, @valor, 'pendente', @vencimento,
+         @ordem_id, @ordem_corte_id, @observacoes
+       )`,
+    )
+    .run({
+      empresa_id: dados.empresa_id,
+      categoria_id: categoriaId,
+      descricao,
+      valor,
+      vencimento,
+      ordem_id: dados.ordem_id,
+      ordem_corte_id: dados.ordem_corte_id,
+      observacoes,
+    });
+  return db
+    .prepare(`SELECT * FROM financeiro_lancamentos WHERE id = ?`)
+    .get(Number(info.lastInsertRowid)) as FinanceiroLancamento;
+}
+
+export function sincronizarContasPagarOficinasEntregues(db: AppDatabase): number {
+  const cols = db.prepare(`PRAGMA table_info(financeiro_lancamentos)`).all() as { name: string }[];
+  if (!cols.some((col) => col.name === 'ordem_corte_id')) return 0;
+  const rows = db
+    .prepare(
+      `SELECT l.empresa_id, l.ordem_id, l.ordem_corte_id, l.codigo_oc, l.oficina, l.costureiro,
+              l.valor_peca, l.entregue_em, oc.codigo AS oc_codigo, oc.quantidade, oc.modelo, oc.referencia,
+              (SELECT ifnull(SUM(quantidade), 0) FROM ordem_corte_grade g WHERE g.ordem_corte_id = oc.id) AS pecas_grade
+         FROM ordem_corte_liberacoes l
+         JOIN ordens_corte oc ON oc.id = l.ordem_corte_id AND oc.empresa_id = l.empresa_id
+        WHERE l.entregue_em IS NOT NULL AND trim(l.entregue_em) != ''`,
+    )
+    .all() as Array<{
+    empresa_id: number;
+    ordem_id: number;
+    ordem_corte_id: number;
+    codigo_oc: string;
+    oficina: string;
+    costureiro: string;
+    valor_peca: number;
+    entregue_em: string;
+    oc_codigo: string;
+    quantidade: number;
+    modelo: string;
+    referencia: string;
+    pecas_grade: number;
+  }>;
+  const aplicar = db.transaction(() => {
+    for (const row of rows) {
+      lancarContaPagarOficina(db, {
+        empresa_id: row.empresa_id,
+        ordem_id: row.ordem_id,
+        ordem_corte_id: row.ordem_corte_id,
+        codigo_oc: String(row.codigo_oc || row.oc_codigo || '').trim(),
+        oficina: row.oficina ?? '',
+        costureiro: row.costureiro ?? '',
+        modelo: row.modelo ?? '',
+        referencia: row.referencia ?? '',
+        pecas: pecasContaPagarOficina(Number(row.pecas_grade) || 0, Number(row.quantidade) || 0),
+        valor_peca: Number(row.valor_peca) || 0,
+        entregue_em: row.entregue_em,
+      });
+    }
+  });
+  aplicar();
+  return rows.length;
+}
+
 export function categoriaComprasId(db: AppDatabase): number | null {
   const row = db
     .prepare(
@@ -230,79 +434,258 @@ export function categoriaComprasId(db: AppDatabase): number | null {
   return row?.id ?? null;
 }
 
-export function sincronizarContaPagarCompra(
+export type ParcelaCompra = { vencimento: string; valor: number };
+
+export type DadosPagamentoCompra = {
+  forma?: 'a_vista' | 'a_prazo' | null;
+  vencimento?: string | null;
+  parcelas?: ParcelaCompra[];
+  exigirDados?: boolean;
+};
+
+type CompraFinanceiro = {
+  id: number;
+  codigo: string | null;
+  fornecedor_id: number;
+  total: number;
+  vencimento: string | null;
+  status: string;
+  empresa_id: number;
+  data_emissao?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
+  forma_pagamento?: string | null;
+};
+
+export function descricaoContaPagar(compra: CompraFinanceiro): string {
+  const codigo = compra.codigo ?? compra.id;
+  const numero = compra.documento_numero?.trim();
+  if (!numero) return `Compra ${codigo}`;
+  const tipo = compra.documento_tipo === 'pedido_compra' ? 'Pedido' : 'NF';
+  return `Compra ${codigo} · ${tipo} ${numero}`;
+}
+
+export function inferirFormaPagamento(forma?: string | null): 'a_vista' | 'a_prazo' | null {
+  if (!forma) return null;
+  const n = forma
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .trim()
+    .toLowerCase();
+  if (['a_vista', 'avista', 'a vista', 'dinheiro', 'pix', 'debito', 'cartao'].includes(n)) {
+    return 'a_vista';
+  }
+  if (['a_prazo', 'aprazo', 'a prazo', 'boleto', 'prazo', 'parcelado'].includes(n)) {
+    return 'a_prazo';
+  }
+  return null;
+}
+
+function listarContasPagarCompra(db: AppDatabase, compraId: number): FinanceiroLancamento[] {
+  return (
+    db
+      .prepare(
+        `SELECT * FROM financeiro_lancamentos
+          WHERE compra_id = ? AND tipo = 'pagar'
+          ORDER BY ifnull(parcela, id), id`,
+      )
+      .all(compraId) as FinanceiroLancamento[]
+  ).map(mapLancamento);
+}
+
+export function lancarContasPagarCompra(
   db: AppDatabase,
-  compra: {
-    id: number;
-    codigo: string | null;
-    fornecedor_id: number;
-    total: number;
-    vencimento: string | null;
-    status: string;
-    empresa_id: number;
-  },
-): void {
-  const atual = db
+  compra: CompraFinanceiro,
+  opts: DadosPagamentoCompra = {},
+): FinanceiroLancamento[] {
+  const existentes = listarContasPagarCompra(db, compra.id);
+  if (existentes.length > 0) {
+    const substituiveis =
+      opts.exigirDados &&
+      existentes.every((titulo) => titulo.status === 'pendente' || titulo.status === 'vencido');
+    if (!substituiveis) return existentes;
+    db.prepare(
+      `DELETE FROM financeiro_lancamentos
+        WHERE compra_id = ? AND tipo = 'pagar' AND status IN ('pendente', 'vencido')`,
+    ).run(compra.id);
+  }
+
+  const forma = opts.forma ?? inferirFormaPagamento(compra.forma_pagamento);
+  if (opts.exigirDados && !forma) {
+    throw Object.assign(new Error('Informe se o pagamento é à vista ou a prazo'), { status: 400 });
+  }
+
+  const descricao = descricaoContaPagar(compra);
+  const aVista = forma === 'a_vista';
+  let parcelas: ParcelaCompra[];
+  if (opts.parcelas && opts.parcelas.length > 0) {
+    if (aVista) {
+      throw Object.assign(new Error('Pagamento à vista não deve ter parcelas'), { status: 400 });
+    }
+    const soma = arredondarDinheiro(opts.parcelas.reduce((acc, item) => acc + item.valor, 0));
+    if (Math.abs(soma - arredondarDinheiro(compra.total)) > 0.01) {
+      throw Object.assign(new Error('A soma das parcelas deve ser igual ao total da compra'), {
+        status: 400,
+      });
+    }
+    for (const parcela of opts.parcelas) {
+      if (!parcela.vencimento?.trim()) {
+        throw Object.assign(new Error('Informe o vencimento de cada parcela'), { status: 400 });
+      }
+    }
+    parcelas = opts.parcelas;
+  } else if (aVista) {
+    parcelas = [
+      {
+        vencimento:
+          opts.vencimento ?? compra.vencimento ?? compra.data_emissao ?? new Date().toISOString().slice(0, 10),
+        valor: arredondarDinheiro(compra.total),
+      },
+    ];
+  } else {
+    const vencimento = opts.vencimento ?? compra.vencimento ?? null;
+    if (opts.exigirDados && !vencimento) {
+      throw Object.assign(new Error('Informe o vencimento ou as parcelas da conta a prazo'), {
+        status: 400,
+      });
+    }
+    parcelas = [{ vencimento: vencimento ?? '', valor: arredondarDinheiro(compra.total) }];
+  }
+
+  const inserir = db.prepare(
+    `INSERT INTO financeiro_lancamentos (
+       empresa_id, tipo, categoria_id, descricao, valor, status, vencimento, data_pagamento,
+       fornecedor_id, compra_id, parcela, observacoes
+     ) VALUES (
+       @empresa_id, 'pagar', @categoria_id, @descricao, @valor, @status, @vencimento, @data_pagamento,
+       @fornecedor_id, @compra_id, @parcela, @observacoes
+     )`,
+  );
+  const hoje = new Date().toISOString().slice(0, 10);
+  parcelas.forEach((parcela, indice) => {
+    const n = indice + 1;
+    const rotulo = parcelas.length > 1 ? `${descricao} · parcela ${n}/${parcelas.length}` : descricao;
+    inserir.run({
+      empresa_id: compra.empresa_id,
+      categoria_id: categoriaComprasId(db),
+      descricao: rotulo,
+      valor: arredondarDinheiro(parcela.valor),
+      status: aVista ? 'pago' : 'pendente',
+      vencimento: parcela.vencimento || null,
+      data_pagamento: aVista ? hoje : null,
+      fornecedor_id: compra.fornecedor_id,
+      compra_id: compra.id,
+      parcela: n,
+      observacoes: aVista ? 'Pagamento à vista' : null,
+    });
+  });
+  return listarContasPagarCompra(db, compra.id);
+}
+
+export function sincronizarContaPagarCompra(db: AppDatabase, compra: CompraFinanceiro): void {
+  const atuais = db
     .prepare(
-      `SELECT * FROM financeiro_lancamentos WHERE compra_id = ? AND tipo = 'pagar'`,
+      `SELECT * FROM financeiro_lancamentos WHERE compra_id = ? AND tipo = 'pagar' ORDER BY id`,
     )
-    .get(compra.id) as FinanceiroLancamento | undefined;
+    .all(compra.id) as FinanceiroLancamento[];
 
   if (compra.status === 'cancelada' || compra.total <= 0) {
-    if (atual && atual.status === 'pendente') {
-      db.prepare(
-        `UPDATE financeiro_lancamentos
-            SET status = 'cancelado', atualizado_em = datetime('now')
-          WHERE id = ?`,
-      ).run(atual.id);
+    for (const atual of atuais) {
+      if (atual.status === 'pendente') {
+        db.prepare(
+          `UPDATE financeiro_lancamentos
+              SET status = 'cancelado', atualizado_em = datetime('now')
+            WHERE id = ?`,
+        ).run(atual.id);
+      }
     }
     return;
   }
 
   if (!['aberta', 'parcial', 'recebida'].includes(compra.status)) return;
 
-  if (atual) {
+  if (atuais.length === 1) {
+    const atual = atuais[0];
     if (atual.status === 'pendente' || atual.status === 'vencido') {
       db.prepare(
         `UPDATE financeiro_lancamentos
             SET valor = @valor, vencimento = @vencimento, fornecedor_id = @fornecedor_id,
-                descricao = @descricao, atualizado_em = datetime('now')
+                descricao = @descricao, parcela = @parcela, atualizado_em = datetime('now')
           WHERE id = @id`,
       ).run({
         id: atual.id,
         valor: arredondarDinheiro(compra.total),
         vencimento: compra.vencimento,
         fornecedor_id: compra.fornecedor_id,
-        descricao: `Compra ${compra.codigo ?? compra.id}`,
+        descricao: descricaoContaPagar(compra),
+        parcela: atual.parcela ?? 1,
       });
     }
     return;
   }
 
-  db.prepare(
-    `INSERT INTO financeiro_lancamentos (
-       empresa_id, tipo, categoria_id, descricao, valor, status, vencimento,
-       fornecedor_id, compra_id
-     ) VALUES (
-       @empresa_id, 'pagar', @categoria_id, @descricao, @valor, 'pendente', @vencimento,
-       @fornecedor_id, @compra_id
-     )`,
-  ).run({
-    empresa_id: compra.empresa_id,
-    categoria_id: categoriaComprasId(db),
-    descricao: `Compra ${compra.codigo ?? compra.id}`,
-    valor: arredondarDinheiro(compra.total),
-    vencimento: compra.vencimento,
-    fornecedor_id: compra.fornecedor_id,
-    compra_id: compra.id,
-  });
+  if (atuais.length > 1) return;
+  lancarContasPagarCompra(db, compra);
 }
 
 function mapLancamento(row: FinanceiroLancamento): FinanceiroLancamento {
+  const status = statusEfetivoLancamento(row.status, row.vencimento);
+  const mapped = { ...row, status };
   return {
-    ...row,
-    status: statusEfetivoLancamento(row.status, row.vencimento),
-  };
+    ...mapped,
+    valor_pago: Number(row.valor_pago) || 0,
+    valor_pago_efetivo: valorPagoEfetivo(mapped),
+    saldo: saldoPagamentoOficina(mapped),
+    status_pagamento: statusPagamentoOficina(mapped),
+  } as FinanceiroLancamento;
+}
+
+export function resumoContasPagarPorCategoria(
+  db: AppDatabase,
+  empresaId: number,
+): Record<ChaveIndicadorPagar, IndicadorContaPagar> {
+  const vazio = (): IndicadorContaPagar => ({ valor: 0, quantidade: 0, categoria_id: null });
+  const saida = Object.fromEntries(INDICADORES_CONTAS_PAGAR.map((item) => [item.chave, vazio()])) as Record<
+    ChaveIndicadorPagar,
+    IndicadorContaPagar
+  >;
+  const nomes = INDICADORES_CONTAS_PAGAR.map((item) => item.nome);
+  const placeholders = nomes.map(() => '?').join(', ');
+  const categorias = db
+    .prepare(`SELECT id, nome FROM financeiro_categorias WHERE nome IN (${placeholders})`)
+    .all(...nomes) as Array<{ id: number; nome: string }>;
+  const porNome = new Map(categorias.map((item) => [item.nome, item]));
+  const ids = categorias.map((item) => item.id);
+  const totais =
+    ids.length === 0
+      ? []
+      : (db
+          .prepare(
+            `SELECT categoria_id,
+                    ifnull(SUM(CASE
+                      WHEN valor > ifnull(valor_pago, 0) THEN valor - ifnull(valor_pago, 0)
+                      ELSE 0
+                    END), 0) AS valor,
+                    COUNT(DISTINCT id) AS quantidade
+               FROM financeiro_lancamentos
+              WHERE empresa_id = ?
+                AND tipo = 'pagar'
+                AND status = 'pendente'
+                AND categoria_id IN (${ids.map(() => '?').join(', ')})
+              GROUP BY categoria_id`,
+          )
+          .all(empresaId, ...ids) as Array<{ categoria_id: number; valor: number; quantidade: number }>);
+  const porCategoria = new Map(totais.map((item) => [item.categoria_id, item]));
+  for (const item of INDICADORES_CONTAS_PAGAR) {
+    const categoria = porNome.get(item.nome);
+    const total = categoria ? porCategoria.get(categoria.id) : undefined;
+    saida[item.chave] = {
+      valor: arredondarDinheiro(total?.valor ?? 0),
+      quantidade: total?.quantidade ?? 0,
+      categoria_id: categoria?.id ?? null,
+    };
+  }
+  return saida;
 }
 
 export function createFinanceiroRouter(db: AppDatabase): Router {
@@ -382,7 +765,10 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       ).n ?? 0;
 
     const pagarAberto = soma(
-      `SELECT ifnull(SUM(valor),0) AS n FROM financeiro_lancamentos
+      `SELECT ifnull(SUM(CASE
+          WHEN valor > ifnull(valor_pago, 0) THEN valor - ifnull(valor_pago, 0)
+          ELSE 0
+        END),0) AS n FROM financeiro_lancamentos
         WHERE empresa_id = @empresa_id AND tipo = 'pagar' AND status = 'pendente'`,
     );
     const receberAberto = soma(
@@ -403,7 +789,10 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
         ${filtroPag} AND tipo = 'receber'`,
     );
     const previstoPagar = soma(
-      `SELECT ifnull(SUM(valor),0) AS n FROM financeiro_lancamentos
+      `SELECT ifnull(SUM(CASE
+          WHEN valor > ifnull(valor_pago, 0) THEN valor - ifnull(valor_pago, 0)
+          ELSE 0
+        END),0) AS n FROM financeiro_lancamentos
         WHERE empresa_id = @empresa_id AND tipo = 'pagar' AND status = 'pendente'`,
     );
     const previstoReceber = soma(
@@ -440,6 +829,7 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       realizado: arredondarDinheiro(realizadoReceber - realizadoPagar),
       realizado_pagar: arredondarDinheiro(realizadoPagar),
       realizado_receber: arredondarDinheiro(realizadoReceber),
+      a_pagar: resumoContasPagarPorCategoria(db, empresaId),
       fluxo: fluxo.reverse().map((f) => ({
         ...f,
         saldo: arredondarDinheiro((f.entradas ?? 0) - (f.saidas ?? 0)),
@@ -477,6 +867,8 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
     }
     if (status === 'vencido') {
       where.push(`l.status = 'pendente' AND l.vencimento IS NOT NULL AND date(l.vencimento) < date('now')`);
+    } else if (status === 'aberto') {
+      where.push(`l.status = 'pendente'`);
     } else if ((STATUS_LANCAMENTO as readonly string[]).includes(status)) {
       if (status === 'pendente') {
         where.push(
@@ -621,7 +1013,7 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       return res.status(404).json({ erro: 'Fornecedor não encontrado' });
     }
     const tipo = data.tipo ?? atual.tipo;
-    const status = data.status ?? atual.status;
+    let status = data.status ?? atual.status;
     if (tipo === 'pagar' && status === 'recebido') {
       return res.status(400).json({ erro: 'Conta a pagar não usa status recebido' });
     }
@@ -633,13 +1025,56 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
         erro: 'Não altere o valor de um lançamento de compra já baixado',
       });
     }
+    const valor = arredondarDinheiro(data.valor ?? atual.valor);
+    let valorPago = Number(atual.valor_pago) || 0;
     let dataPagamento = data.data_pagamento !== undefined ? data.data_pagamento ?? null : atual.data_pagamento;
-    if ((status === 'pago' || status === 'recebido') && !dataPagamento) {
-      dataPagamento = new Date().toISOString().slice(0, 10);
+    let evento: { acao: string; resumo: string } | null = null;
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    if (data.valor_pago !== undefined) {
+      const informado = arredondarDinheiro(data.valor_pago);
+      if (informado > valor) {
+        return res.status(400).json({ erro: 'O valor pago não pode ser maior que o total da conta' });
+      }
+      if (informado <= 0) {
+        status = tipo === 'receber' ? (status === 'recebido' ? 'pendente' : status) : 'pendente';
+        if (tipo === 'pagar') status = 'pendente';
+        valorPago = 0;
+        dataPagamento = null;
+        evento = { acao: 'pagamento_estornado', resumo: `Estornou o pagamento de ${atual.descricao}` };
+      } else if (informado >= valor) {
+        status = tipo === 'receber' ? 'recebido' : 'pago';
+        dataPagamento = dataPagamento || hoje;
+        evento = { acao: 'pagamento_confirmado', resumo: `Confirmou o pagamento integral de ${atual.descricao}` };
+      } else {
+        status = tipo === 'pagar' ? 'pendente' : status === 'recebido' ? 'pendente' : status;
+        if (tipo === 'pagar') status = 'pendente';
+        valorPago = informado;
+        dataPagamento = dataPagamento || hoje;
+        evento = {
+          acao: 'pagamento_parcial',
+          resumo: `Registrou pagamento parcial de ${informado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} em ${atual.descricao}`,
+        };
+      }
+    } else {
+      if ((status === 'pago' || status === 'recebido') && !dataPagamento) {
+        dataPagamento = hoje;
+      }
+      if (
+        data.status === 'pendente' &&
+        (atual.status !== 'pendente' || valorPagoEfetivo(atual) > 0)
+      ) {
+        dataPagamento = null;
+        valorPago = 0;
+        evento = { acao: 'pagamento_estornado', resumo: `Estornou o pagamento de ${atual.descricao}` };
+      } else if (
+        (status === 'pago' || status === 'recebido') &&
+        atual.status !== status
+      ) {
+        evento = { acao: 'pagamento_confirmado', resumo: `Confirmou o pagamento integral de ${atual.descricao}` };
+      }
     }
-    if (status === 'pendente' && atual.status !== 'pendente') {
-      dataPagamento = null;
-    }
+
     db.prepare(
       `UPDATE financeiro_lancamentos SET
          tipo = @tipo,
@@ -649,6 +1084,7 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
          status = @status,
          vencimento = @vencimento,
          data_pagamento = @data_pagamento,
+         valor_pago = @valor_pago,
          fornecedor_id = @fornecedor_id,
          cliente_id = @cliente_id,
          observacoes = @observacoes,
@@ -660,15 +1096,43 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
       tipo,
       categoria_id: data.categoria_id !== undefined ? data.categoria_id : atual.categoria_id,
       descricao: data.descricao ?? atual.descricao,
-      valor: arredondarDinheiro(data.valor ?? atual.valor),
+      valor,
       status,
       vencimento: data.vencimento !== undefined ? data.vencimento ?? null : atual.vencimento,
       data_pagamento: dataPagamento,
+      valor_pago: valorPago,
       fornecedor_id: fornecedorId,
       cliente_id: clienteId,
       observacoes: data.observacoes !== undefined ? data.observacoes ?? null : atual.observacoes,
     });
-    res.json(mapLancamento(getLancamento.get(id, empresaId) as FinanceiroLancamento));
+    const atualizado = mapLancamento(getLancamento.get(id, empresaId) as FinanceiroLancamento);
+    if (evento) {
+      const usuarioId = (req as { usuario?: { id?: number } }).usuario?.id ?? null;
+      registrarEventoLancamento(
+        db,
+        empresaId,
+        id,
+        usuarioId,
+        evento.acao,
+        atualizado.valor_pago_efetivo ?? 0,
+        atualizado.saldo ?? 0,
+        evento.resumo,
+        {
+          status: atualizado.status,
+          valor: atualizado.valor,
+          valor_pago: atualizado.valor_pago,
+          data_pagamento: atualizado.data_pagamento,
+        },
+      );
+      registrarHistoricoPagamentoOc(db, empresaId, atualizado, usuarioId, evento.acao, evento.resumo, {
+        lancamento_id: id,
+        status: atualizado.status,
+        valor: atualizado.valor,
+        valor_pago: atualizado.valor_pago_efetivo,
+        saldo: atualizado.saldo,
+      });
+    }
+    res.json(atualizado);
   });
 
   router.delete('/lancamentos/:id', (req, res) => {
@@ -686,6 +1150,11 @@ export function createFinanceiroRouter(db: AppDatabase): Router {
     if ((atual as FinanceiroLancamento & { pedido_id?: number | null }).pedido_id) {
       return res.status(409).json({
         erro: 'Lançamento gerado pelo pedido; cancele o pedido ou o lançamento',
+      });
+    }
+    if (atual.ordem_corte_id) {
+      return res.status(409).json({
+        erro: 'Lançamento gerado pela entrega da oficina; baixe o pagamento ou cancele o lançamento',
       });
     }
     if (atual.status === 'pago' || atual.status === 'recebido') {

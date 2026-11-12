@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { createDatabase, type AppDatabase } from './db.js';
-import { autenticar, type TestApi } from './httpTest.js';
+import { autenticar, autenticarNovaEmpresa, type TestApi } from './httpTest.js';
 
 describe('API de ordens de produção', () => {
   let db: AppDatabase;
@@ -331,6 +331,63 @@ describe('API de ordens de produção', () => {
     expect(ainda.body.status).toBe('planejada');
   });
 
+  it('cria OP e OC com tecido sem saldo e não movimenta estoque', async () => {
+    const materia = await api.post('/api/materias-primas').send({
+      codigo: 'PV-ZERADO',
+      nome: 'Malha Sem Saldo',
+      tipo: 'tecido',
+      unidade: 'KG',
+      composicao: '48% algodao 52% poliester',
+    });
+    const produto = await api.post('/api/produtos').send({
+      sku: 'CAM-ZERO',
+      nome: 'Camiseta Zero',
+    });
+    const movimentosAntes = db.prepare('SELECT COUNT(*) AS n FROM estoque_movimentos').get() as { n: number };
+
+    const op = await api.post('/api/ordens').send({
+      cliente: 'Loja Zero',
+      produto_id: produto.body.id,
+      quantidade: 8,
+      status: 'planejada',
+      requisitos: [{ materia_prima_id: materia.body.id, quantidade: 1 }],
+      grade: [
+        { cor: 'Preto', tamanho: 'M', quantidade: 5 },
+        { cor: 'Preto', tamanho: 'G', quantidade: 3 },
+      ],
+    });
+    expect(op.status).toBe(201);
+    expect(op.body.requisitos[0]).toMatchObject({
+      materia_prima_id: materia.body.id,
+      estoque_disponivel: 0,
+      suficiente: false,
+    });
+
+    const opCorte = await api.post('/api/ordens').send({
+      cliente: 'Loja Corte Zero',
+      produto: 'Peca Corte',
+      quantidade: 2,
+      status: 'corte',
+      requisitos: [{ materia_prima_id: materia.body.id, quantidade: 2 }],
+      grade: [{ cor: 'Preto', tamanho: 'M', quantidade: 2 }],
+    });
+    expect(opCorte.status).toBe(201);
+    expect(opCorte.body.status).toBe('corte');
+
+    const oc = await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+    expect(oc.status).toBe(201);
+    expect(oc.body.materia_prima_id).toBe(materia.body.id);
+    expect(oc.body.composicao).toBe('48% algodao 52% poliester');
+
+    const movimentosDepois = db.prepare('SELECT COUNT(*) AS n FROM estoque_movimentos').get() as { n: number };
+    expect(movimentosDepois.n).toBe(movimentosAntes.n);
+    const saldo = await api.get('/api/estoque').query({ tipo: 'materia' });
+    const item = (
+      saldo.body.data as Array<{ materia_prima_id: number; quantidade: number }>
+    ).find((row) => row.materia_prima_id === materia.body.id);
+    expect(item?.quantidade ?? 0).toBe(0);
+  });
+
   it('impede transição a partir de status terminal e exclusão em produção', async () => {
     const criada = await api.post('/api/ordens').send({
       cliente: 'Loja Fim',
@@ -399,5 +456,297 @@ describe('API de ordens de produção', () => {
     expect(mov.status).toBe(201);
     const listaEstoque = await api.get('/api/estoque');
     expect(listaEstoque.status).toBe(200);
+  });
+
+  function gradeBermuda() {
+    const cores = [
+      { cor: 'Preto', quantidades: { P: 15, M: 20, G: 20, GG: 10, G1: 5, G2: 5, G3: 0 } },
+      { cor: 'Branco', quantidades: { P: 10, M: 20, G: 25, GG: 10, G1: 5, G2: 5, G3: 0 } },
+    ];
+    const tamanhos = ['P', 'M', 'G', 'GG', 'G1', 'G2', 'G3'];
+    return cores.flatMap((linha) =>
+      tamanhos.map((tamanho) => ({
+        cor: linha.cor,
+        tamanho,
+        quantidade: linha.quantidades[tamanho as keyof typeof linha.quantidades],
+      })),
+    );
+  }
+
+  it('grava a grade, recusa soma divergente e reabre a mesma distribuição', async () => {
+    const cliente = await api.post('/api/clientes').send({ nome: 'Loja Bermuda' });
+    const produto = await api.post('/api/produtos').send({
+      sku: 'BER-150',
+      nome: 'Bermuda',
+      cores: ['Preto', 'Branco'],
+      tamanhos: ['P', 'M', 'G', 'GG', 'G1', 'G2', 'G3'],
+    });
+    const grade = gradeBermuda();
+    const divergente = await api.post('/api/ordens').send({
+      cliente_id: cliente.body.id,
+      produto_id: produto.body.id,
+      quantidade: 149,
+      grade,
+      status: 'planejada',
+    });
+    expect(divergente.status).toBe(400);
+    expect(divergente.body.erro).toBe('A soma da grade (150) difere da quantidade da ordem (149)');
+
+    const criada = await api.post('/api/ordens').send({
+      cliente_id: cliente.body.id,
+      produto_id: produto.body.id,
+      quantidade: 150,
+      prioridade: 'alta',
+      data_prevista: '2026-11-02',
+      responsavel: 'Corte 1',
+      observacoes: 'Lote 150',
+      grade,
+      status: 'planejada',
+    });
+    expect(criada.status).toBe(201);
+    expect(criada.body.referencia).toBe('BER-150');
+    expect(criada.body.variante_id).toBeNull();
+    expect(criada.body.grade).toEqual(grade);
+    const preto = (criada.body.grade as Array<{ cor: string; quantidade: number }>)
+      .filter((celula) => celula.cor === 'Preto')
+      .reduce((soma, celula) => soma + celula.quantidade, 0);
+    expect(preto).toBe(75);
+
+    const reaberta = await api.get(`/api/ordens/${criada.body.id}`);
+    expect(reaberta.body.grade).toEqual(grade);
+
+    const editada = await api.patch(`/api/ordens/${criada.body.id}`).send({
+      grade: grade.map((celula) =>
+        celula.cor === 'Preto' && celula.tamanho === 'P' ? { ...celula, quantidade: 10 } : celula,
+      ),
+      quantidade: 145,
+    });
+    expect(editada.status).toBe(200);
+    expect(editada.body.quantidade).toBe(145);
+    expect(
+      (editada.body.grade as Array<{ cor: string; tamanho: string; quantidade: number }>).find(
+        (celula) => celula.cor === 'Preto' && celula.tamanho === 'P',
+      )?.quantidade,
+    ).toBe(10);
+  });
+
+  it('cadastra cores sem duplicar e mantém os tamanhos padrão por empresa', async () => {
+    const primeira = await api.post('/api/ordens/cores').send({ nome: 'Preto' });
+    const repetida = await api.post('/api/ordens/cores').send({ nome: ' preto ' });
+    expect(primeira.status).toBe(201);
+    expect(repetida.status).toBe(200);
+    expect(repetida.body.id).toBe(primeira.body.id);
+    expect(repetida.body.ja_existia).toBe(true);
+
+    const tamanhos = await api.get('/api/ordens/tamanhos');
+    expect(tamanhos.body.map((item: { nome: string }) => item.nome)).toEqual([
+      'P',
+      'M',
+      'G',
+      'GG',
+      'G1',
+      'G2',
+      'G3',
+    ]);
+    const extra = await api.post('/api/ordens/tamanhos').send({ nome: 'G4' });
+    expect(extra.status).toBe(201);
+    const deNovo = await api.post('/api/ordens/tamanhos').send({ nome: 'g4' });
+    expect(deNovo.body.ja_existia).toBe(true);
+    expect(deNovo.body.id).toBe(extra.body.id);
+  });
+
+  it('cadastra cor e tamanho novos ao salvar a ordem e reabre a mesma ordem das colunas', async () => {
+    const produto = await api.post('/api/produtos').send({ sku: 'LIVRE-1', nome: 'Peça livre' });
+    const grade = [
+      { cor: 'Verde Musgo', tamanho: '42', quantidade: 4 },
+      { cor: 'Verde Musgo', tamanho: '44', quantidade: 2 },
+    ];
+    const criada = await api.post('/api/ordens').send({
+      cliente: 'Loja Livre',
+      produto_id: produto.body.id,
+      quantidade: 6,
+      status: 'planejada',
+      grade,
+    });
+    expect(criada.status).toBe(201);
+    expect(criada.body.grade).toEqual(grade);
+
+    const cores = await api.get('/api/ordens/cores').query({ q: 'musgo' });
+    expect(cores.body).toEqual([expect.objectContaining({ nome: 'Verde Musgo' })]);
+    const tamanhos = await api.get('/api/ordens/tamanhos');
+    const nomes = tamanhos.body.map((item: { nome: string }) => item.nome);
+    expect(nomes).toContain('42');
+    expect(nomes).toContain('44');
+
+    const repetida = await api.post('/api/ordens').send({
+      cliente: 'Loja Livre',
+      produto_id: produto.body.id,
+      quantidade: 1,
+      status: 'planejada',
+      grade: [{ cor: ' verde musgo ', tamanho: '42', quantidade: 1 }],
+    });
+    expect(repetida.status).toBe(201);
+    const coresDepois = await api.get('/api/ordens/cores').query({ q: 'musgo' });
+    expect(coresDepois.body).toHaveLength(1);
+    const tamanhosDepois = await api.get('/api/ordens/tamanhos');
+    expect(
+      tamanhosDepois.body.filter((item: { nome: string }) => item.nome.toLocaleLowerCase('pt-BR') === '42'),
+    ).toHaveLength(1);
+
+    const reaberta = await api.get(`/api/ordens/${criada.body.id}`);
+    expect(reaberta.body.grade).toEqual(grade);
+  });
+
+  it('cria uma ordem de corte com a grade planejada e não duplica', async () => {
+    const produto = await api.post('/api/produtos').send({ sku: 'BER-OC', nome: 'Bermuda OC' });
+    const grade = gradeBermuda();
+    const op = await api.post('/api/ordens').send({
+      cliente: 'Loja Corte OC',
+      produto_id: produto.body.id,
+      quantidade: 150,
+      responsavel: 'Sala de corte',
+      grade,
+      status: 'planejada',
+    });
+    const movimentosAntes = db.prepare('SELECT COUNT(*) AS n FROM estoque_movimentos').get() as { n: number };
+
+    const corte = await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+    expect(corte.status).toBe(201);
+    expect(corte.body.codigo).toBe('OC-01');
+    expect(corte.body.criada).toBe(true);
+    expect(corte.body.grade).toEqual(grade);
+    expect(corte.body.produto).toBe('Bermuda OC');
+    expect(corte.body.responsavel).toBe('Sala de corte');
+
+    const repetida = await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+    expect(repetida.status).toBe(200);
+    expect(repetida.body.id).toBe(corte.body.id);
+    expect(repetida.body.codigo).toBe('OC-01');
+    expect(repetida.body.criada).toBe(false);
+
+    const opDepois = await api.get(`/api/ordens/${op.body.id}`);
+    expect(opDepois.body.status).toBe('planejada');
+    expect(opDepois.body.ordem_corte.codigo).toBe('OC-01');
+    const movimentosDepois = db.prepare('SELECT COUNT(*) AS n FROM estoque_movimentos').get() as { n: number };
+    expect(movimentosDepois.n).toBe(movimentosAntes.n);
+    const totalCortes = db.prepare('SELECT COUNT(*) AS n FROM ordens_corte').get() as { n: number };
+    expect(totalCortes.n).toBe(1);
+
+    const segunda = await api.post('/api/ordens').send({
+      cliente: 'Loja Corte OC',
+      produto_id: produto.body.id,
+      quantidade: 150,
+      grade,
+      status: 'planejada',
+    });
+    const corte2 = await api.post(`/api/ordens/${segunda.body.id}/ordem-corte`).send({});
+    expect(corte2.body.codigo).toBe('OC-02');
+
+    const exclusao = await api.delete(`/api/ordens/${op.body.id}`);
+    expect(exclusao.status).toBe(409);
+  });
+
+  it('isola cores, tamanhos e ordem de corte entre empresas', async () => {
+    const app = createApp(db);
+    const { api: outra } = await autenticarNovaEmpresa(app);
+    await api.post('/api/ordens/cores').send({ nome: 'Vinho' });
+    await api.post('/api/ordens/tamanhos').send({ nome: 'G4' });
+    const produto = await api.post('/api/produtos').send({ sku: 'ISO-OP', nome: 'Peça isolada' });
+    const op = await api.post('/api/ordens').send({
+      cliente: 'Cliente Isolado',
+      produto_id: produto.body.id,
+      quantidade: 2,
+      grade: [
+        { cor: 'Vinho', tamanho: 'M', quantidade: 1 },
+        { cor: 'Vinho', tamanho: 'G', quantidade: 1 },
+      ],
+      status: 'planejada',
+    });
+    await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+
+    const cor = await api.get('/api/ordens/cores').query({ q: 'vinho' });
+    const edicaoAlheia = await outra.patch(`/api/ordens/cores/${cor.body[0].id}`).send({ nome: 'Outra' });
+    expect(edicaoAlheia.status).toBe(404);
+    const exclusaoAlheia = await outra.delete(`/api/ordens/cores/${cor.body[0].id}`);
+    expect(exclusaoAlheia.status).toBe(404);
+
+    const coresOutra = await outra.get('/api/ordens/cores');
+    expect(coresOutra.body.map((item: { nome: string }) => item.nome)).not.toContain('Vinho');
+    const tamanhosOutra = await outra.get('/api/ordens/tamanhos');
+    expect(tamanhosOutra.body.map((item: { nome: string }) => item.nome)).not.toContain('G4');
+    expect(tamanhosOutra.body.map((item: { nome: string }) => item.nome)).toEqual([
+      'P', 'M', 'G', 'GG', 'G1', 'G2', 'G3',
+    ]);
+    const leitura = await outra.get(`/api/ordens/${op.body.id}`);
+    expect(leitura.status).toBe(404);
+    const corte = await outra.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+    expect(corte.status).toBe(404);
+  });
+
+  it('pesquisa, edita e preserva a cor na ordem, e bloqueia exclusão em uso', async () => {
+    const criada = await api.post('/api/ordens/cores').send({
+      nome: 'Preto fosco',
+      codigo: 'PT-F',
+      hex: '#111',
+    });
+    expect(criada.status).toBe(201);
+    expect(criada.body.hex).toBe('#111111');
+    expect(criada.body.codigo).toBe('PT-F');
+
+    const porCodigo = await api.get('/api/ordens/cores').query({ q: 'pt-f' });
+    expect(porCodigo.body).toEqual([
+      expect.objectContaining({ id: criada.body.id, nome: 'Preto fosco', codigo: 'PT-F' }),
+    ]);
+
+    const produto = await api.post('/api/produtos').send({ sku: 'COR-1', nome: 'Peça cor' });
+    const op = await api.post('/api/ordens').send({
+      cliente: 'Loja Cor',
+      produto_id: produto.body.id,
+      quantidade: 3,
+      status: 'planejada',
+      grade: [{ cor: 'Preto fosco', tamanho: 'M', quantidade: 3 }],
+    });
+    expect(op.status).toBe(201);
+    await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+
+    const editada = await api.patch(`/api/ordens/cores/${criada.body.id}`).send({
+      nome: 'Preto carvão',
+      codigo: 'PT-C',
+      hex: '#222222',
+    });
+    expect(editada.status).toBe(200);
+    expect(editada.body.nome).toBe('Preto carvão');
+
+    const reaberta = await api.get(`/api/ordens/${op.body.id}`);
+    expect(reaberta.body.grade[0].cor).toBe('Preto carvão');
+    expect(reaberta.body.ordem_corte.grade[0].cor).toBe('Preto carvão');
+
+    const exclusao = await api.delete(`/api/ordens/cores/${criada.body.id}`);
+    expect(exclusao.status).toBe(409);
+    expect(exclusao.body.erro).toBe('Esta cor está em uso e não pode ser excluída');
+
+    const livre = await api.post('/api/ordens/cores').send({ nome: 'Areia', codigo: 'AR' });
+    expect(livre.status).toBe(201);
+    const repetido = await api.post('/api/ordens/cores').send({ nome: 'Areia clara', codigo: 'ar' });
+    expect(repetido.status).toBe(409);
+    expect(repetido.body.erro).toBe('Código já cadastrado');
+    const invalida = await api.post('/api/ordens/cores').send({ nome: 'Rosa', hex: 'vermelho' });
+    expect(invalida.status).toBe(400);
+
+    const removida = await api.delete(`/api/ordens/cores/${livre.body.id}`);
+    expect(removida.status).toBe(204);
+    const lista = await api.get('/api/ordens/cores').query({ q: 'areia' });
+    expect(lista.body).toEqual([]);
+
+    const produtoPreto = await api.post('/api/produtos').send({
+      sku: 'COR-PROD',
+      nome: 'Produto com cor',
+      cores: ['Lavanda'],
+      tamanhos: ['M'],
+    });
+    expect(produtoPreto.status).toBe(201);
+    const lavanda = await api.post('/api/ordens/cores').send({ nome: 'Lavanda' });
+    const bloqueio = await api.delete(`/api/ordens/cores/${lavanda.body.id}`);
+    expect(bloqueio.status).toBe(409);
   });
 });

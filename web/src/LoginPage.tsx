@@ -7,6 +7,7 @@ import {
   type ConvitePublico,
   type SessaoAtual,
 } from './api';
+import { LogoMarca } from './LogoMarca';
 
 type Modo = 'entrar' | 'criar';
 
@@ -67,8 +68,11 @@ export function LoginPage({ onEntrou }: { onEntrou: (sessao: SessaoAtual) => voi
     <div className="login">
       <section className="card login__card">
         <div className="login__marca">
-          <strong>Gestão de Confecção</strong>
-          <p>Entre para acessar o chão de fábrica</p>
+          <LogoMarca className="shell__logo--login" />
+          <div>
+            <strong>Gestão Confecção</strong>
+            <p>ERP industrial de produção</p>
+          </div>
         </div>
         <div className="nav" aria-label="Acesso">
           <button

@@ -69,7 +69,228 @@ export interface OrdemProducao {
   criado_em: string;
   atualizado_em: string | null;
   requisitos?: OrdemRequisito[];
+  grade?: CelulaGrade[];
+  referencia?: string | null;
+  etapa_linha?: string | null;
+  ordem_corte?: (Pick<OrdemCorte, 'id' | 'codigo' | 'quantidade' | 'grade'> & {
+    status_processo?: StatusProcessoOc;
+    enviado_enfesto_em?: string | null;
+    referencia?: string;
+  }) | null;
 }
+
+export interface CelulaGrade {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
+export interface CorCadastro {
+  id: number | null;
+  nome: string;
+  codigo?: string | null;
+  hex?: string | null;
+  ja_existia?: boolean;
+}
+
+export type CorPayload = {
+  nome: string;
+  codigo?: string | null;
+  hex?: string | null;
+};
+
+export interface TamanhoCadastro {
+  id: number;
+  nome: string;
+  ordem: number;
+  ja_existia?: boolean;
+}
+
+export interface OrdemCorteLinha {
+  cor: string;
+  detalhes: string;
+}
+
+export interface OrdemCorteAviamento {
+  id?: number;
+  aviamento_id: number | null;
+  descricao: string;
+  quantidade: number;
+  unidade: string;
+  observacoes: string;
+}
+
+export interface OrdemCorteOficina {
+  id?: number;
+  oficina: string;
+  costureiro: string;
+  observacoes: string;
+}
+
+export interface OrdemCorteHistorico {
+  id: number;
+  usuario_id: number | null;
+  usuario_nome: string | null;
+  acao: string;
+  resumo: string;
+  payload?: unknown;
+  criado_em: string;
+}
+
+export interface OrdemCorteMaterial {
+  materia_prima_id: number;
+  nome: string;
+  codigo: string | null;
+  quantidade_total: number;
+  unidade: string | null;
+  estoque_disponivel: number;
+  suficiente: boolean;
+}
+
+export const STATUS_PROCESSO_OC = [
+  'em_preenchimento',
+  'aguardando_enfesto',
+  'em_enfesto',
+  'em_corte',
+  'corte_concluido',
+  'encaminhado',
+  'entregue',
+  'expedicao',
+] as const;
+export type StatusProcessoOc = (typeof STATUS_PROCESSO_OC)[number];
+export const STATUS_PROCESSO_OC_LABEL: Record<StatusProcessoOc, string> = {
+  em_preenchimento: 'Em preenchimento',
+  aguardando_enfesto: 'Aguardando enfesto e corte',
+  em_enfesto: 'Em enfesto',
+  em_corte: 'Em corte',
+  corte_concluido: 'Corte concluído',
+  encaminhado: 'Encaminhado para próxima etapa',
+  entregue: 'Entregue pela oficina',
+  expedicao: 'Em expedição',
+};
+
+export interface OrdemCorte {
+  id: number;
+  codigo: string;
+  ordem_id: number;
+  cliente: string;
+  produto: string;
+  quantidade: number;
+  prioridade: string | null;
+  data_prevista: string | null;
+  responsavel: string | null;
+  observacoes: string | null;
+  cliente_id: number | null;
+  produto_id: number | null;
+  criado_em: string;
+  modelo?: string;
+  composicao?: string;
+  referencia?: string;
+  informacoes_oficina?: string;
+  data_retirada?: string | null;
+  informacoes_costureiros?: string;
+  informacoes_acabamento?: string;
+  atualizado_em?: string;
+  status_processo?: StatusProcessoOc;
+  ordem_codigo?: string | null;
+  ordem_status?: string | null;
+  tecido_nome?: string | null;
+  tecido_unidade?: string | null;
+  tecido_cor?: string | null;
+  tecido_largura_cm?: number | null;
+  tecido_largura_unidade?: string | null;
+  tecido_gramatura?: number | null;
+  tecido_numero_rolo?: string | null;
+  tecido_composicao?: string | null;
+  materia_prima_id?: number | null;
+  enviado_enfesto_em?: string | null;
+  enviado_enfesto_por?: number | null;
+  enviado_por_nome?: string | null;
+  iniciado_enfesto_em?: string | null;
+  iniciado_enfesto_por?: number | null;
+  iniciado_enfesto_por_nome?: string | null;
+  iniciado_corte_em?: string | null;
+  iniciado_corte_por?: number | null;
+  iniciado_corte_por_nome?: string | null;
+  concluido_corte_em?: string | null;
+  concluido_corte_por?: number | null;
+  concluido_corte_por_nome?: string | null;
+  consumo_real?: number | null;
+  consumo_unidade?: string | null;
+  quantidade_cortada?: number | null;
+  perdas?: number | null;
+  observacoes_corte?: string | null;
+  consumos_cores?: Array<{
+    cor: string;
+    camadas: number;
+    peso_folha: number;
+    consumo_total: number;
+    unidade: string;
+    movimento_id: number | null;
+    baixado_em: string | null;
+  }>;
+  tamanhos?: string[];
+  linhas?: OrdemCorteLinha[];
+  aviamentos?: OrdemCorteAviamento[];
+  oficinas?: OrdemCorteOficina[];
+  materiais?: OrdemCorteMaterial[];
+  grade: CelulaGrade[];
+  criada?: boolean;
+}
+
+export type FichaOrdemCortePayload = {
+  codigo?: string;
+  cliente?: string;
+  cliente_id?: number | null;
+  produto_id?: number | null;
+  modelo?: string;
+  composicao?: string;
+  referencia?: string;
+  tecido_nome?: string;
+  tecido_cor?: string;
+  tecido_largura_cm?: number | null;
+  tecido_largura_unidade?: string;
+  tecido_gramatura?: number | null;
+  tecido_unidade?: string;
+  tecido_numero_rolo?: string;
+  informacoes_oficina?: string;
+  data_retirada?: string | null;
+  informacoes_costureiros?: string;
+  informacoes_acabamento?: string;
+  observacoes?: string | null;
+  materia_prima_id?: number | null;
+  tamanhos?: string[];
+  grade?: CelulaGrade[];
+  linhas?: OrdemCorteLinha[];
+  aviamentos?: Array<Omit<OrdemCorteAviamento, 'id'>>;
+  oficinas?: Array<Omit<OrdemCorteOficina, 'id'>>;
+  consumos_cores?: Array<{
+    cor: string;
+    camadas?: number;
+    peso_folha?: number;
+    consumo_total?: number;
+    unidade?: string;
+  }>;
+};
+
+export type ApontamentoOrdemCortePayload = {
+  acao: 'iniciar_enfesto' | 'iniciar_corte' | 'concluir_corte' | 'encaminhar';
+  consumo_real?: number;
+  consumo_unidade?: string;
+  quantidade_cortada?: number;
+  perdas?: number;
+  metragem_risco?: number;
+  camadas?: number;
+  observacoes_corte?: string;
+  materia_prima_id?: number | null;
+  consumos_cores?: Array<{
+    cor: string;
+    camadas?: number;
+    peso_folha?: number;
+    consumo_total?: number;
+    unidade?: string;
+  }>;
+};
 
 export interface NovaOrdem {
   cliente?: string;
@@ -86,6 +307,7 @@ export interface NovaOrdem {
   observacoes?: string;
   responsavel?: string;
   requisitos?: Array<{ materia_prima_id: number; quantidade: number }>;
+  grade?: CelulaGrade[];
 }
 
 export interface ListaOrdens {
@@ -104,15 +326,32 @@ export interface FiltrosOrdens {
   por_pagina?: number;
 }
 
-async function parseError(res: Response): Promise<never> {
-  let mensagem = `Erro ${res.status}`;
-  try {
-    const body = await res.json();
-    if (body?.erro) mensagem = body.erro;
-  } catch {
-    // resposta sem corpo JSON
+export function mensagemErroApi(body: unknown, status = 0): string {
+  if (body && typeof body === 'object') {
+    const detalhes = (body as { detalhes?: unknown }).detalhes;
+    if (detalhes && typeof detalhes === 'object') {
+      for (const valor of Object.values(detalhes as Record<string, unknown>)) {
+        if (!Array.isArray(valor)) continue;
+        const texto = valor.find((item) => typeof item === 'string' && item);
+        if (typeof texto === 'string') return texto;
+      }
+    }
+    const erro = (body as { erro?: unknown }).erro;
+    if (typeof erro === 'string' && erro) return erro;
   }
-  throw new Error(mensagem);
+  return status ? `Erro ${status}` : 'Erro ao salvar';
+}
+
+async function parseError(res: Response): Promise<never> {
+  try {
+    const body: unknown = await res.json();
+    throw new Error(mensagemErroApi(body, res.status));
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error(`Erro ${res.status}`);
+    }
+    throw err;
+  }
 }
 
 function apiFetch(input: string, init: RequestInit = {}) {
@@ -135,6 +374,26 @@ export async function listarOrdensPaginado(
   if (filtros.pagina) params.set('pagina', String(filtros.pagina));
   if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
   const res = await apiFetch(`/api/ordens?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export type EtapaPainel = 'corte' | 'costura' | 'acabamento' | 'estamparia' | 'expedicao';
+
+export type PainelProducao = {
+  totais: { cadastradas: number; andamento: number; entregues: number };
+  por_etapa: Record<EtapaPainel, number>;
+  etapa: EtapaPainel | null;
+  andamento: OrdemProducao[];
+};
+
+export async function obterPainelProducao(
+  filtros: { etapa?: EtapaPainel | string } = {},
+): Promise<PainelProducao> {
+  const params = new URLSearchParams();
+  if (filtros.etapa) params.set('etapa', filtros.etapa);
+  const qs = params.toString();
+  const res = await apiFetch(`/api/ordens/producao${qs ? `?${qs}` : ''}`);
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -178,6 +437,297 @@ export async function atualizarStatus(
 export async function removerOrdem(id: number): Promise<void> {
   const res = await apiFetch(`/api/ordens/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function listarCores(busca = ''): Promise<CorCadastro[]> {
+  const params = new URLSearchParams();
+  if (busca.trim()) params.set('q', busca.trim());
+  const res = await apiFetch(`/api/ordens/cores?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarCor(dados: string | CorPayload): Promise<CorCadastro> {
+  const body = typeof dados === 'string' ? { nome: dados } : dados;
+  const res = await apiFetch('/api/ordens/cores', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarCor(id: number, dados: CorPayload): Promise<CorCadastro> {
+  const res = await apiFetch(`/api/ordens/cores/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerCor(id: number): Promise<void> {
+  const res = await apiFetch(`/api/ordens/cores/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function listarTamanhos(): Promise<TamanhoCadastro[]> {
+  const res = await apiFetch('/api/ordens/tamanhos');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarTamanho(nome: string): Promise<TamanhoCadastro> {
+  const res = await apiFetch('/api/ordens/tamanhos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export interface ItemCorteInfesto {
+  cor: string;
+  tamanho: string;
+  quantidade: number;
+}
+
+export interface CorteInfesto {
+  id: number;
+  ordem_id: number;
+  materia_prima_id: number;
+  cor: string;
+  quantidade_pecas: number;
+  camadas: number;
+  metragem: number;
+  peso_real: number;
+  peso_folha?: number;
+  quantidade_baixada: number;
+  unidade_baixa: string;
+  movimento_id: number | null;
+  autorizado_excedente?: boolean;
+  autorizado_por?: number | null;
+  autorizado_por_nome?: string | null;
+  usuario_id?: number | null;
+  registrado_por_nome?: string | null;
+  concluido_em: string;
+  tecido: string;
+  unidade: string;
+  ordem_codigo: string | null;
+  cliente: string;
+  produto: string;
+  status_ordem: string;
+  itens: ItemCorteInfesto[];
+  avancou?: boolean;
+  ordem?: OrdemProducao;
+}
+
+export type SaldoCorte = {
+  cor: string;
+  tamanho: string;
+  planejado: number;
+  cortado: number;
+  restante: number;
+};
+
+export type ResumoCorteInfesto = {
+  grade: Array<{ cor: string; tamanho: string; quantidade: number }>;
+  execucoes: CorteInfesto[];
+  saldos: SaldoCorte[];
+  concluido: boolean;
+};
+
+export async function listarCortesInfesto(): Promise<CorteInfesto[]> {
+  const res = await apiFetch('/api/ordens/corte-infesto');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterResumoCorteInfesto(ordemId: number): Promise<ResumoCorteInfesto> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/corte-infesto`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function concluirCorteInfesto(
+  ordemId: number,
+  dados: {
+    materia_prima_id: number;
+    cor: string;
+    camadas: number;
+    metragem?: number;
+    peso_real?: number;
+    peso_folha?: number;
+    itens: Array<{ tamanho: string; quantidade: number }>;
+    autorizar_excedente?: boolean;
+  },
+): Promise<CorteInfesto> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/corte-infesto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarOrdemCorte(ordemId: number, codigo?: string): Promise<OrdemCorte> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(codigo?.trim() ? { codigo: codigo.trim() } : {}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterOrdemCorte(ordemId: number): Promise<OrdemCorte> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarOrdemCorte(
+  ordemId: number,
+  dados: FichaOrdemCortePayload,
+): Promise<OrdemCorte> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarHistoricoOrdemCorte(ordemId: number): Promise<OrdemCorteHistorico[]> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte/historico`);
+  if (!res.ok) return parseError(res);
+  const corpo = (await res.json()) as { data: OrdemCorteHistorico[] };
+  return corpo.data;
+}
+
+export async function confirmarCorOrdemCorte(ordemId: number, cor: string): Promise<OrdemCorteHistorico[]> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte/confirmar-cor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cor }),
+  });
+  if (!res.ok) return parseError(res);
+  const corpo = (await res.json()) as { data: OrdemCorteHistorico[] };
+  return corpo.data;
+}
+
+export function urlImpressaoOrdemCorte(ordemId: number): string {
+  return `/api/ordens/${ordemId}/ordem-corte/impressao`;
+}
+
+export function urlPdfOrdemCorte(ordemId: number): string {
+  return `/api/ordens/${ordemId}/ordem-corte/pdf`;
+}
+
+export async function listarFilaEnfestoCorte(): Promise<OrdemCorte[]> {
+  const res = await apiFetch('/api/ordens/ordem-corte/fila-enfesto');
+  if (!res.ok) return parseError(res);
+  const corpo = (await res.json()) as { data: OrdemCorte[] };
+  return corpo.data;
+}
+
+export async function enviarOrdemCorteEnfesto(ordemId: number): Promise<OrdemCorte> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte/enviar-enfesto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export type SugestaoFichaCorte = {
+  id: string;
+  rotulo: string;
+  produto_id: number | null;
+  nome: string;
+  sku: string;
+  modelo: string;
+  referencia: string;
+  imagem?: string | null;
+};
+
+export async function listarSugestoesFichaCorte(): Promise<{
+  modelos: SugestaoFichaCorte[];
+  referencias: SugestaoFichaCorte[];
+}> {
+  const res = await apiFetch('/api/ordens/ordem-corte/sugestoes');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterRascunhoFichaCorte(): Promise<{ payload: unknown; atualizado_em: string | null }> {
+  const res = await apiFetch('/api/ordens/ordem-corte/rascunho');
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function salvarRascunhoFichaCorte(payload: unknown): Promise<void> {
+  const res = await apiFetch('/api/ordens/ordem-corte/rascunho', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  });
+  if (!res.ok) return parseError(res);
+}
+
+export async function apagarRascunhoFichaCorte(): Promise<void> {
+  const res = await apiFetch('/api/ordens/ordem-corte/rascunho', { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function publicarFichaNova(entrada: {
+  cliente: string;
+  cliente_id?: number;
+  ficha: FichaOrdemCortePayload;
+}): Promise<{ ordem: OrdemProducao; corte: OrdemCorte }> {
+  const grade = (entrada.ficha.grade ?? []).filter((celula) => Number(celula.quantidade) > 0);
+  const quantidade = grade.reduce((soma, celula) => soma + Number(celula.quantidade || 0), 0);
+  const ordem = await criarOrdem({
+    cliente: entrada.cliente.trim(),
+    cliente_id: entrada.cliente_id,
+    produto: (entrada.ficha.modelo ?? '').trim(),
+    produto_id: entrada.ficha.produto_id ?? undefined,
+    quantidade,
+    status: 'planejada',
+    grade,
+    data_prevista: entrada.ficha.data_retirada || undefined,
+    observacoes: entrada.ficha.observacoes || undefined,
+    requisitos:
+      entrada.ficha.materia_prima_id != null
+        ? [{ materia_prima_id: entrada.ficha.materia_prima_id, quantidade: 1 }]
+        : undefined,
+  });
+  await criarOrdemCorte(ordem.id, entrada.ficha.codigo);
+  const ficha = { ...entrada.ficha };
+  delete ficha.codigo;
+  await atualizarOrdemCorte(ordem.id, ficha);
+  const corte = await enviarOrdemCorteEnfesto(ordem.id);
+  await apagarRascunhoFichaCorte().catch(() => undefined);
+  return { ordem: await obterOrdem(ordem.id), corte };
+}
+
+export async function registrarApontamentoOrdemCorte(
+  ordemId: number,
+  dados: ApontamentoOrdemCortePayload,
+): Promise<OrdemCorte> {
+  const res = await apiFetch(`/api/ordens/${ordemId}/ordem-corte/apontamento`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
 }
 
 export const STATUS_PEDIDO = [
@@ -526,6 +1076,102 @@ export async function removerCliente(id: number): Promise<void> {
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
+export type OcDisponivelEstampa = {
+  id: number;
+  origem: 'oc' | 'manual';
+  ordem_corte_id: number | null;
+  ordem_id: number | null;
+  codigo_oc: string;
+  tipo: 'amostra' | 'corte';
+  modelo: string;
+  referencia: string;
+  peca: string;
+  tipo_peca: string;
+  quantidade: number;
+  cores: string[];
+  tamanhos: string[];
+  grade: Array<{ cor: string; tamanho: string; quantidade: number }>;
+  costureiro: string;
+  oficina: string;
+  produto_id: number | null;
+  imagem: string | null;
+  categoria: string | null;
+  observacoes: string;
+  entregue_em: string | null;
+  atualizado_em: string;
+};
+
+export type DadosAmostraManual = {
+  modelo: string;
+  referencia?: string;
+  tipo_peca?: string;
+  cor?: string;
+  tamanho?: string;
+  quantidade?: number;
+  observacoes?: string;
+  imagem?: string | null;
+};
+
+export async function listarOcsDisponiveisEstampas(
+  filtros: { q?: string; tipo?: string } = {},
+): Promise<{ data: OcDisponivelEstampa[]; totais: { disponiveis: number } }> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.tipo) params.set('tipo', filtros.tipo);
+  const res = await apiFetch(`/api/estampas?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function completarOcsDisponiveisEstampas(): Promise<{
+  importados: number;
+  atualizados: number;
+  disponiveis: number;
+}> {
+  const res = await apiFetch('/api/estampas/completar', { method: 'POST' });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarFotoOcDisponivel(
+  id: number,
+  imagem: string,
+  origem: OcDisponivelEstampa['origem'] = 'oc',
+): Promise<OcDisponivelEstampa> {
+  const caminho =
+    origem === 'manual' ? `/api/estampas/amostras/${id}/imagem` : `/api/estampas/${id}/imagem`;
+  const res = await apiFetch(caminho, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imagem }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarAmostraManual(dados: DadosAmostraManual): Promise<OcDisponivelEstampa> {
+  const res = await apiFetch('/api/estampas/amostras', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarAmostraManual(
+  id: number,
+  dados: Partial<DadosAmostraManual>,
+): Promise<OcDisponivelEstampa> {
+  const res = await apiFetch(`/api/estampas/amostras/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export const STATUS_PRODUTO = ['ativo', 'inativo'] as const;
 export type StatusProduto = (typeof STATUS_PRODUTO)[number];
 
@@ -663,6 +1309,68 @@ export async function criarProduto(dados: ProdutoPayload): Promise<Produto> {
   return res.json();
 }
 
+export type AcaoImportacaoProduto = 'criar' | 'atualizar' | 'ignorar';
+
+export type VarianteImportacaoProduto = {
+  cor: string;
+  tamanho: string;
+  sku?: string;
+};
+
+export type LinhaImportacaoProduto = {
+  linha: number;
+  sku: string;
+  nome: string;
+  categoria: string;
+  marca: string;
+  preco_venda: number | null;
+  descricao: string;
+  cores: string[];
+  tamanhos: string[];
+  variantes: VarianteImportacaoProduto[];
+  existente: { id: number; sku: string; nome: string } | null;
+  acao_sugerida: AcaoImportacaoProduto;
+  erros: string[];
+};
+
+export type ResultadoImportacaoProdutos = {
+  importados: number;
+  atualizados: number;
+  ignorados: number;
+  erros: Array<{ linha: number; sku: string; erro: string }>;
+};
+
+export async function analisarImportacaoProdutos(dados: {
+  nome_arquivo?: string;
+  conteudo_base64?: string;
+  produtos?: Array<Partial<LinhaImportacaoProduto>>;
+}): Promise<{ linhas: LinhaImportacaoProduto[]; erros: ResultadoImportacaoProdutos['erros'] }> {
+  const res = await apiFetch('/api/produtos/importacao/analisar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function importarProdutos(
+  itens: Array<
+    Pick<
+      LinhaImportacaoProduto,
+      'linha' | 'sku' | 'nome' | 'categoria' | 'marca' | 'preco_venda' | 'descricao' | 'cores' | 'tamanhos' | 'variantes'
+    > & { acao: AcaoImportacaoProduto }
+  >,
+): Promise<ResultadoImportacaoProdutos> {
+  const res = await apiFetch('/api/produtos/importacao', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itens }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function atualizarProduto(
   id: number,
   dados: Partial<ProdutoPayload>,
@@ -762,6 +1470,7 @@ export interface MateriaPrima {
   unidade: string;
   custo: number;
   estoque_minimo: number;
+  estoque_atual: number;
   fornecedor: string | null;
   referencia_fornecedor: string | null;
   ncm: string | null;
@@ -872,6 +1581,191 @@ export async function atualizarStatusMateriaPrima(
 export async function removerMateriaPrima(id: number): Promise<void> {
   const res = await apiFetch(`/api/materias-primas/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export const CATEGORIAS_AVIAMENTO = [
+  'cadarco',
+  'saquinho',
+  'tag',
+  'etiqueta_tamanho',
+  'adesivo',
+] as const;
+export type CategoriaAviamento = (typeof CATEGORIAS_AVIAMENTO)[number];
+
+export const CATEGORIA_AVIAMENTO_LABEL: Record<CategoriaAviamento, string> = {
+  cadarco: 'Cadarço',
+  saquinho: 'Saquinho de embalagem',
+  tag: 'Tag',
+  etiqueta_tamanho: 'Etiqueta de tamanho',
+  adesivo: 'Adesivo',
+};
+
+export const UNIDADES_AVIAMENTO = ['UN', 'PC', 'MT', 'KG', 'ROLO', 'CX', 'PAR'] as const;
+
+export interface AviamentoVariante {
+  id: number;
+  aviamento_id: number;
+  cor: string | null;
+  tamanho: string | null;
+  status: StatusMateria;
+  saldo_id: number | null;
+  quantidade: number;
+  abaixo_minimo: boolean;
+}
+
+export interface Aviamento {
+  id: number;
+  codigo: string | null;
+  categoria: CategoriaAviamento;
+  nome: string;
+  modelo: string | null;
+  marca: string | null;
+  unidade: string;
+  consumo_por_peca: number | null;
+  estoque_minimo: number;
+  status: StatusMateria;
+  observacoes: string | null;
+  criado_em: string;
+  atualizado_em: string;
+  variantes: AviamentoVariante[];
+}
+
+export interface AviamentoMovimento {
+  id: number;
+  variante_id: number;
+  tipo: 'entrada' | 'saida' | 'ajuste';
+  quantidade: number;
+  saldo_anterior: number;
+  saldo_posterior: number;
+  motivo: string | null;
+  observacoes: string | null;
+  criado_em: string;
+  cor?: string | null;
+  tamanho?: string | null;
+  nome?: string;
+  categoria?: CategoriaAviamento;
+  unidade?: string;
+}
+
+export type AviamentoPayload = {
+  codigo?: string;
+  categoria: CategoriaAviamento;
+  nome: string;
+  modelo?: string;
+  marca?: string;
+  unidade?: string;
+  consumo_por_peca?: number | null;
+  estoque_minimo?: number;
+  status?: StatusMateria;
+  observacoes?: string;
+  variantes?: Array<{ cor?: string; tamanho?: string; status?: StatusMateria }>;
+};
+
+export async function listarAviamentos(
+  filtros: { q?: string; status?: StatusMateria | ''; categoria?: string; pagina?: number; por_pagina?: number } = {},
+): Promise<ListaPadrao<Aviamento>> {
+  const params = new URLSearchParams();
+  if (filtros.q) params.set('q', filtros.q);
+  if (filtros.status) params.set('status', filtros.status);
+  if (filtros.categoria) params.set('categoria', filtros.categoria);
+  if (filtros.pagina) params.set('pagina', String(filtros.pagina));
+  if (filtros.por_pagina) params.set('por_pagina', String(filtros.por_pagina));
+  const res = await apiFetch(`/api/aviamentos?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function obterAviamento(id: number): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function criarAviamento(dados: AviamentoPayload): Promise<Aviamento> {
+  const res = await apiFetch('/api/aviamentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarAviamento(
+  id: number,
+  dados: Partial<Omit<AviamentoPayload, 'variantes'>>,
+): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarStatusAviamento(id: number, status: StatusMateria): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function adicionarVarianteAviamento(
+  id: number,
+  dados: { cor?: string; tamanho?: string },
+): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}/variantes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function atualizarVarianteAviamento(
+  id: number,
+  varianteId: number,
+  dados: { cor?: string | null; tamanho?: string | null },
+): Promise<Aviamento> {
+  const res = await apiFetch(`/api/aviamentos/${id}/variantes/${varianteId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarMovimentosAviamento(id: number): Promise<{ data: AviamentoMovimento[] }> {
+  const res = await apiFetch(`/api/aviamentos/${id}/movimentos`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function removerAviamento(id: number): Promise<void> {
+  const res = await apiFetch(`/api/aviamentos/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+export async function registrarMovimentoAviamento(dados: {
+  variante_id: number;
+  tipo: 'entrada' | 'saida' | 'ajuste';
+  quantidade: number;
+  motivo?: string;
+  observacoes?: string;
+}): Promise<AviamentoMovimento> {
+  const res = await apiFetch('/api/aviamentos/movimentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
 }
 
 export const TIPOS_MOVIMENTO = ['entrada', 'saida', 'ajuste'] as const;
@@ -1128,6 +2022,166 @@ export async function removerEtapa(id: number): Promise<void> {
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
+export interface LiberacaoFichaRegistro {
+  costureiro: string;
+  valor_peca: number;
+  referencia: string;
+  tipo_peca: string;
+  oficina: string;
+  oficina_id?: number | null;
+  data_liberacao: string | null;
+  data_retirada?: string | null;
+  codigo_oc: string;
+  liberado_em: string;
+  liberado_por: number | null;
+  liberado_por_nome: string | null;
+  entregue_em?: string | null;
+  entregue_por?: number | null;
+  entregue_por_nome?: string | null;
+}
+
+export type StatusPagamentoOficina = 'pendente' | 'parcial' | 'pago';
+
+export type PagamentoOficinaFicha = {
+  lancamento_id: number | null;
+  valor: number;
+  valor_pago: number;
+  saldo: number;
+  status: StatusPagamentoOficina;
+  data_pagamento: string | null;
+};
+
+export type FichaLiberacao = OrdemCorte & {
+  valor_peca_sugerido: number | null;
+  costureiros: string[];
+  oficinas_opcoes: string[];
+  liberacao: LiberacaoFichaRegistro | null;
+  expedicao?: ExpedicaoOcItem | null;
+  pagamento?: PagamentoOficinaFicha | null;
+};
+
+export type OficinaPixCadastro = {
+  id: number;
+  nome: string;
+  chave_pix: string;
+};
+
+export async function listarFichasLiberacao(): Promise<{
+  data: FichaLiberacao[];
+  liberadas: FichaLiberacao[];
+  oficinas: string[];
+  oficinas_pix: OficinaPixCadastro[];
+}> {
+  const res = await apiFetch('/api/etapas/liberacao');
+  if (!res.ok) return parseError(res);
+  const corpo = (await res.json()) as {
+    data: FichaLiberacao[];
+    liberadas?: FichaLiberacao[];
+    oficinas?: string[];
+    oficinas_pix?: OficinaPixCadastro[];
+  };
+  return {
+    data: corpo.data,
+    liberadas: corpo.liberadas ?? [],
+    oficinas: corpo.oficinas ?? [],
+    oficinas_pix: corpo.oficinas_pix ?? [],
+  };
+}
+
+export async function cadastrarOficinaLiberacao(nome: string): Promise<{ nome: string; ja_existia: boolean }> {
+  const res = await apiFetch('/api/etapas/liberacao/oficinas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function salvarChavePixOficina(
+  nome: string,
+  chavePix: string,
+): Promise<OficinaPixCadastro> {
+  const res = await apiFetch('/api/etapas/liberacao/oficinas/pix', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nome, chave_pix: chavePix }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function salvarAviamentosLiberacaoFicha(
+  ordemId: number,
+  aviamentos: Array<{ descricao: string; quantidade: number | string; unidade?: string }>,
+): Promise<FichaLiberacao> {
+  const res = await apiFetch(`/api/etapas/liberacao/${ordemId}/aviamentos`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ aviamentos }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function confirmarLiberacaoFicha(
+  ordemId: number,
+  dados: {
+    costureiro: string;
+    valor_peca: number | string;
+    oficina: string;
+    data_liberacao: string;
+    data_retirada?: string;
+  },
+): Promise<FichaLiberacao> {
+  const res = await apiFetch(`/api/etapas/liberacao/${ordemId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function confirmarEntregaLiberacaoFicha(ordemId: number): Promise<FichaLiberacao> {
+  const res = await apiFetch(`/api/etapas/liberacao/${ordemId}/entrega`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function encaminharOcExpedicao(ordemId: number): Promise<FichaLiberacao> {
+  const res = await apiFetch(`/api/etapas/liberacao/${ordemId}/expedicao`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function salvarConferenciaExpedicao(
+  ordemId: number,
+  pecasConferidas: number,
+): Promise<FichaLiberacao> {
+  const res = await apiFetch(`/api/etapas/liberacao/${ordemId}/conferencia`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pecas_conferidas: pecasConferidas }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export function urlPdfLiberacaoFicha(ordemId: number): string {
+  return `/api/etapas/liberacao/${ordemId}/pdf`;
+}
+
+export function urlImpressaoLiberacaoFicha(ordemId: number): string {
+  return `/api/etapas/liberacao/${ordemId}/impressao`;
+}
+
 export const STATUS_COMPRA = [
   'rascunho',
   'aberta',
@@ -1148,13 +2202,23 @@ export interface Fornecedor {
   id: number;
   codigo: string | null;
   nome: string;
+  tipo_pessoa?: 'juridica' | 'fisica' | null;
+  nome_fantasia?: string | null;
   cpf_cnpj: string | null;
+  inscricao_estadual?: string | null;
   contato: string | null;
   telefone: string | null;
+  whatsapp?: string | null;
   email: string | null;
+  endereco?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
   cidade: string | null;
   estado: string | null;
+  cep?: string | null;
   condicao_pagamento: string | null;
+  observacoes?: string | null;
   status: 'ativo' | 'inativo';
 }
 
@@ -1164,6 +2228,7 @@ export interface CompraItem {
   materia_prima_id: number | null;
   produto_id: number | null;
   variante_id: number | null;
+  aviamento_variante_id?: number | null;
   quantidade: number;
   quantidade_recebida: number;
   custo_unitario: number;
@@ -1188,6 +2253,10 @@ export interface PedidoCompra {
   forma_pagamento: string | null;
   condicao_pagamento: string | null;
   vencimento: string | null;
+  documento_importado_id?: number | null;
+  documento_nome?: string | null;
+  documento_numero?: string | null;
+  documento_tipo?: string | null;
   fornecedor?: string;
   itens?: CompraItem[];
 }
@@ -1215,18 +2284,37 @@ export async function listarFornecedores(
 
 export async function criarFornecedor(dados: {
   nome: string;
+  tipo_pessoa?: 'juridica' | 'fisica';
+  nome_fantasia?: string;
   cpf_cnpj?: string;
+  inscricao_estadual?: string;
   contato?: string;
   telefone?: string;
+  whatsapp?: string;
+  email?: string;
+  endereco?: string;
+  numero?: string;
+  complemento?: string;
+  bairro?: string;
   cidade?: string;
   estado?: string;
+  cep?: string;
   condicao_pagamento?: string;
+  observacoes?: string;
 }): Promise<Fornecedor> {
   const res = await apiFetch('/api/fornecedores', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
   });
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({}));
+    const erro = new Error(body?.erro ?? 'Fornecedor já cadastrado (código ou CPF/CNPJ)') as Error & {
+      fornecedor?: Fornecedor;
+    };
+    if (body?.fornecedor?.id) erro.fornecedor = body.fornecedor as Fornecedor;
+    throw erro;
+  }
   if (!res.ok) return parseError(res);
   return res.json();
 }
@@ -1255,6 +2343,68 @@ export async function listarCompras(
   return res.json();
 }
 
+export type TipoDocumento = 'nota_fiscal' | 'pedido_compra' | 'outro';
+
+export interface ItemDocumento {
+  descricao: string;
+  quantidade: number | null;
+  unidade: string | null;
+  valor_unitario: number | null;
+  total: number | null;
+  materia_prima_id: number | null;
+  produto_id: number | null;
+  aviamento_variante_id?: number | null;
+  tecido_cor_id: number | null;
+  nome_cadastro: string | null;
+  aviso: string | null;
+}
+
+export interface DocumentoProcessado {
+  id: number;
+  tipo: TipoDocumento;
+  nome_arquivo: string;
+  numero: string | null;
+  emitente: string | null;
+  cnpj: string | null;
+  cpf?: string | null;
+  tipo_pessoa?: 'juridica' | 'fisica' | null;
+  nome_fantasia?: string | null;
+  inscricao_estadual?: string | null;
+  telefone?: string | null;
+  whatsapp?: string | null;
+  email?: string | null;
+  cep?: string | null;
+  endereco?: string | null;
+  numero_endereco?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  estado?: string | null;
+  observacoes?: string | null;
+  texto?: string | null;
+  data_emissao: string | null;
+  total: number | null;
+  avisos: string[];
+  fornecedor: { id: number; nome: string } | null;
+  itens: ItemDocumento[];
+  ja_importado: boolean;
+  compra_existente: { id: number; codigo: string | null } | null;
+}
+
+export async function processarDocumento(dados: {
+  tipo: TipoDocumento;
+  nome_arquivo: string;
+  conteudo_base64: string;
+}): Promise<DocumentoProcessado> {
+  const res = await apiFetch('/api/compras/documentos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
 export async function obterCompra(id: number): Promise<PedidoCompra> {
   const res = await apiFetch(`/api/compras/${id}`);
   if (!res.ok) return parseError(res);
@@ -1272,17 +2422,45 @@ export type CompraPayload = {
   forma_pagamento?: string;
   condicao_pagamento?: string;
   vencimento?: string;
+  documento_importado_id?: number;
+  confirmar?: boolean;
+  parcelas?: Array<{ vencimento: string; valor: number }>;
+  itens_ignorados?: Array<{ descricao: string; aviso?: string }>;
   itens?: Array<{
     materia_prima_id?: number;
     produto_id?: number;
     variante_id?: number;
+    aviamento_variante_id?: number;
     quantidade: number;
     custo_unitario: number;
     unidade?: string;
+    cor?: string;
   }>;
 };
 
-export async function criarCompra(dados: CompraPayload): Promise<PedidoCompra> {
+export type ConfirmacaoCompra = {
+  estoque: Array<{
+    materia_prima_id: number | null;
+    nome: string | null;
+    quantidade: number;
+    unidade: string | null;
+    cor: string | null;
+    saldo: number;
+  }>;
+  financeiro: Array<{
+    id: number;
+    descricao: string;
+    valor: number;
+    status: string;
+    vencimento: string | null;
+    parcela: number | null;
+  }>;
+  itens_ignorados: Array<{ descricao: string; aviso?: string }>;
+};
+
+export type CompraCriada = PedidoCompra & { confirmacao?: ConfirmacaoCompra };
+
+export async function criarCompra(dados: CompraPayload): Promise<CompraCriada> {
   const res = await apiFetch('/api/compras', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1344,6 +2522,11 @@ export const STATUS_LANCAMENTO_LABEL: Record<StatusLancamento, string> = {
   vencido: 'Vencido',
   cancelado: 'Cancelado',
 };
+export const STATUS_PAGAMENTO_OFICINA_LABEL: Record<'pendente' | 'parcial' | 'pago', string> = {
+  pendente: 'PENDENTE',
+  parcial: 'PARCIAL',
+  pago: 'PAGO',
+};
 
 export interface FinanceiroCategoria {
   id: number;
@@ -1361,6 +2544,11 @@ export interface FinanceiroLancamento {
   status: StatusLancamento;
   vencimento: string | null;
   data_pagamento: string | null;
+  valor_pago?: number;
+  valor_pago_efetivo?: number;
+  saldo?: number;
+  status_pagamento?: 'pendente' | 'parcial' | 'pago';
+  ordem_corte_id?: number | null;
   fornecedor_id: number | null;
   cliente_id: number | null;
   compra_id: number | null;
@@ -1373,6 +2561,24 @@ export interface FinanceiroLancamento {
   pedido_codigo?: string | null;
 }
 
+export const INDICADORES_CONTAS_PAGAR = [
+  { chave: 'tecidos', nome: 'Tecidos', label: 'Tecidos a pagar' },
+  { chave: 'costureiros', nome: 'Costureiros', label: 'Costureiros a pagar' },
+  { chave: 'funcionarios', nome: 'Funcionários', label: 'Funcionários a pagar' },
+  { chave: 'alugueis', nome: 'Aluguéis', label: 'Aluguéis a pagar' },
+  { chave: 'luz', nome: 'Conta de luz', label: 'Conta de luz a pagar' },
+  { chave: 'agua', nome: 'Contas de água', label: 'Contas de água a pagar' },
+  { chave: 'iptu', nome: 'IPTU', label: 'IPTU a pagar' },
+] as const;
+
+export type ChaveIndicadorPagar = (typeof INDICADORES_CONTAS_PAGAR)[number]['chave'];
+
+export type IndicadorContaPagar = {
+  valor: number;
+  quantidade: number;
+  categoria_id: number | null;
+};
+
 export interface FinanceiroResumo {
   saldo: number;
   contas_pagar: number;
@@ -1382,6 +2588,7 @@ export interface FinanceiroResumo {
   realizado: number;
   realizado_pagar: number;
   realizado_receber: number;
+  a_pagar?: Record<ChaveIndicadorPagar, IndicadorContaPagar>;
   fluxo: Array<{ mes: string; entradas: number; saidas: number; saldo: number }>;
   recentes: FinanceiroLancamento[];
 }
@@ -1445,7 +2652,7 @@ export async function criarLancamento(dados: {
 
 export async function atualizarLancamento(
   id: number,
-  dados: Partial<{ status: StatusLancamento; valor: number; descricao: string }>,
+  dados: Partial<{ status: StatusLancamento; valor: number; descricao: string; valor_pago: number }>,
 ): Promise<FinanceiroLancamento> {
   const res = await apiFetch(`/api/financeiro/lancamentos/${id}`, {
     method: 'PATCH',
@@ -1474,10 +2681,11 @@ export function urlRelatorioCsv(tipo: string, filtros: Record<string, string | u
   return `/api/relatorios/${tipo}?${params.toString()}`;
 }
 
-export const STATUS_EXPEDICAO = ['pronto_envio', 'expedido', 'entregue'] as const;
+export const STATUS_EXPEDICAO = ['pronto_envio', 'conferido', 'expedido', 'entregue'] as const;
 export type StatusExpedicao = (typeof STATUS_EXPEDICAO)[number];
 export const STATUS_EXPEDICAO_LABEL: Record<StatusExpedicao, string> = {
   pronto_envio: 'Pronto para envio',
+  conferido: 'Conferido',
   expedido: 'Expedido',
   entregue: 'Entregue',
 };
@@ -1495,6 +2703,28 @@ export interface ExpedicaoItem {
   expedicao_status: StatusExpedicao | null;
   status: string;
   data_pronta: string | null;
+  data_expedicao: string | null;
+  data_entrega: string | null;
+  observacoes: string | null;
+}
+
+export interface ExpedicaoOcItem {
+  id: number;
+  ordem_id: number;
+  ordem_corte_id: number;
+  codigo_oc: string;
+  oficina: string;
+  costureiro: string;
+  modelo: string;
+  referencia: string;
+  pecas: number;
+  pecas_conferidas?: number | null;
+  pecas_expedicao?: number;
+  conferido_em?: string | null;
+  conferido_por?: number | null;
+  conferido_por_nome?: string | null;
+  status: StatusExpedicao;
+  encaminhado_em: string;
   data_expedicao: string | null;
   data_entrega: string | null;
   observacoes: string | null;
@@ -1553,6 +2783,42 @@ export async function marcarEntrega(
   dados: { data_entrega?: string } = {},
 ): Promise<ExpedicaoItem> {
   const res = await apiFetch(`/api/expedicao/${pedidoId}/entregar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function listarExpedicaoOrdensCorte(
+  filtros: { fila?: string } = {},
+): Promise<{ data: ExpedicaoOcItem[]; total: number }> {
+  const params = new URLSearchParams();
+  if (filtros.fila) params.set('fila', filtros.fila);
+  const res = await apiFetch(`/api/expedicao/ordens-corte?${params.toString()}`);
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function expedirOcExpedicao(
+  ordemId: number,
+  dados: { data_expedicao?: string; observacoes?: string } = {},
+): Promise<ExpedicaoOcItem> {
+  const res = await apiFetch(`/api/expedicao/ordens-corte/${ordemId}/expedir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json();
+}
+
+export async function entregarOcExpedicao(
+  ordemId: number,
+  dados: { data_entrega?: string; observacoes?: string } = {},
+): Promise<ExpedicaoOcItem> {
+  const res = await apiFetch(`/api/expedicao/ordens-corte/${ordemId}/entregar`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dados),
@@ -1633,10 +2899,19 @@ export const LIMITE_LABEL: Record<ChaveLimite, string> = {
   ordens_mes: 'Ordens / mês',
 };
 
+/**
+ * MODO DE TESTES — limite mensal de ordens (OCs/OPs).
+ *
+ * `true`  = some o aviso e libera criar OC/OP além de 20/20 no Básico.
+ * `false` = reativa o bloqueio na tela. Espelhar `server/src/planos.ts`.
+ */
+export const LIBERAR_LIMITE_ORDENS_MES_TESTES = true;
+
 export function limiteAtingido(
   assinatura: AssinaturaEmpresa | undefined,
   chave: ChaveLimite,
 ): boolean {
+  if (chave === 'ordens_mes' && LIBERAR_LIMITE_ORDENS_MES_TESTES) return false;
   return Boolean(assinatura?.uso?.[chave]?.atingido);
 }
 
@@ -1644,6 +2919,7 @@ export function mensagemLimitePlano(
   assinatura: AssinaturaEmpresa,
   chave: ChaveLimite,
 ): string | null {
+  if (chave === 'ordens_mes' && LIBERAR_LIMITE_ORDENS_MES_TESTES) return null;
   const item = assinatura.uso?.[chave];
   if (!item?.atingido || item.maximo === null) return null;
   return `Limite do plano ${assinatura.plano.nome} atingido: ${LIMITE_LABEL[chave]} (${item.atual}/${item.maximo}). Faça upgrade do plano para continuar.`;

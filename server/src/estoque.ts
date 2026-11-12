@@ -119,6 +119,7 @@ export type MovimentoEstoqueInput = {
   materia_prima_id?: number;
   motivo?: string | null;
   observacoes?: string | null;
+  permitir_saldo_negativo?: boolean;
 };
 
 export type ResultadoMovimentoEstoque =
@@ -235,7 +236,7 @@ export function registrarMovimentoEstoque(
   else if (data.tipo === 'saida') posterior = anterior - data.quantidade;
   else posterior = data.quantidade;
 
-  if (posterior < 0) {
+  if (posterior < 0 && !data.permitir_saldo_negativo) {
     return { ok: false, status: 409, erro: 'Estoque insuficiente para a saída' };
   }
 

@@ -26,8 +26,8 @@ Isso instala as dependências dos dois workspaces (`server` e `web`).
 npm run dev
 ```
 
-- API: http://localhost:3001 (health check em `/api/health`)
-- Web: http://localhost:5173 (proxy de `/api` → API)
+- API: http://127.0.0.1:3002 (health check em `/api/health`)
+- Web: http://127.0.0.1:5173 (proxy de `/api` → http://127.0.0.1:3002)
 
 Também é possível rodar cada parte separadamente:
 
@@ -35,6 +35,18 @@ Também é possível rodar cada parte separadamente:
 npm run dev:server
 npm run dev:web
 ```
+
+## Publicar o sistema (link que abre o ERP)
+
+O GitHub Pages (`github.io`) **não executa** o servidor Node nem o SQLite — por isso aquele endereço só mostra o README.
+
+Para o sistema abrir na internet, publique este repositório no Render (Web Service Docker, branch `recuperacao-segura`, disco persistente em `/data`):
+
+1. Abra https://render.com/deploy?repo=https://github.com/mbsport45-web/gest-o-confeccao
+2. Entre com a conta GitHub `mbsport45-web`.
+3. Confirme o blueprint (`gestao-confeccao`, disco SQLite).
+
+O Render gera um link `https://….onrender.com` com a tela de login. Esse ambiente nasce com banco vazio (não envia o SQLite do Mac). No primeiro acesso, crie o cadastro da empresa.
 
 ## Scripts úteis
 
@@ -173,6 +185,10 @@ Há integração **somente sandbox** com o Asaas (`AsaasPaymentGateway`), desaco
 Cada empresa tem um **histórico comercial imutável** (criação, início/fim do trial, upgrade, downgrade, cancelamento, reativação, mudanças de status e eventos de pagamento sandbox) com data, empresa, usuário responsável quando existir, plano anterior/novo, status e referência externa do Asaas. Só proprietário e administrador leem o histórico; usuários comuns não alteram os eventos. Trocar o plano (proprietário/administrador) só vale em `trial` ou `ativa`. Os dados continuam isolados pela empresa da sessão.
 
 Os limites são **aplicados de verdade** na API (e refletidos na interface). Criar além do teto responde **409** com `codigo: "limite_plano"`, o uso atual, o máximo e um aviso de upgrade. A contagem usa só a empresa da sessão — `empresa_id` no body não contorna o limite. Convites pendentes ocupam vaga de usuário. Pedidos e OPs contam no mês calendário (`criado_em`). PostgreSQL/RLS ainda não entra nesta etapa.
+
+### Modo de testes — limite mensal de ordens
+
+O bloqueio de **20 OCs/OPs por mês** no plano Básico está temporariamente desligado (`LIBERAR_LIMITE_ORDENS_MES_TESTES = true` em `server/src/planos.ts` e `web/src/api.ts`). Os demais limites do plano continuam ativos. Para reativar depois dos testes, volte as duas constantes para `false`.
 
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

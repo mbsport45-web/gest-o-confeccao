@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  INDICADORES_CONTAS_PAGAR,
   STATUS_LANCAMENTO,
   STATUS_LANCAMENTO_LABEL,
+  STATUS_PAGAMENTO_OFICINA_LABEL,
   TIPOS_LANCAMENTO,
   TIPO_LANCAMENTO_LABEL,
   atualizarLancamento,
@@ -11,15 +13,38 @@ import {
   listarFornecedores,
   listarLancamentos,
   obterResumoFinanceiro,
+  type ChaveIndicadorPagar,
   type Cliente,
   type FinanceiroCategoria,
   type FinanceiroLancamento,
   type FinanceiroResumo,
   type Fornecedor,
+  type IndicadorContaPagar,
   type TipoLancamento,
 } from './api';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+const INDICADOR_VAZIO: IndicadorContaPagar = { valor: 0, quantidade: 0, categoria_id: null };
+
+function indicadorDe(resumo: FinanceiroResumo | null, chave: ChaveIndicadorPagar): IndicadorContaPagar {
+  return resumo?.a_pagar?.[chave] ?? INDICADOR_VAZIO;
+}
+
+function formatarDataBr(valor: string | null | undefined): string {
+  const iso = String(valor ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
+  const [ano, mes, dia] = iso.split('-');
+  return `${dia}/${mes}/${ano}`;
+}
+
+function rotuloStatusLancamento(l: FinanceiroLancamento): string {
+  if (l.status_pagamento === 'parcial') return STATUS_PAGAMENTO_OFICINA_LABEL.parcial;
+  if ((Number(l.valor_pago) || 0) > 0 && l.status !== 'pago' && l.status !== 'recebido' && l.status !== 'cancelado') {
+    return STATUS_PAGAMENTO_OFICINA_LABEL.parcial;
+  }
+  return STATUS_LANCAMENTO_LABEL[l.status];
+}
 
 export function FinanceiroPage() {
   const [resumo, setResumo] = useState<FinanceiroResumo | null>(null);
@@ -48,6 +73,9 @@ export function FinanceiroPage() {
     cliente_id: '',
   });
   const [salvando, setSalvando] = useState(false);
+  const [indicadorAberto, setIndicadorAberto] = useState<ChaveIndicadorPagar | null>(null);
+  const [lancamentosIndicador, setLancamentosIndicador] = useState<FinanceiroLancamento[]>([]);
+  const [parcial, setParcial] = useState<{ id: number; valor: string } | null>(null);
 
   useEffect(() => {
     listarCategoriasFinanceiro().then((l) => setCategorias(l.data)).catch(() => undefined);
@@ -75,13 +103,30 @@ export function FinanceiroPage() {
       setLancamentos(lista.data);
       setTotal(lista.total);
       setTotalPaginas(lista.total_paginas);
+      if (indicadorAberto) {
+        const categoriaId = r.a_pagar?.[indicadorAberto]?.categoria_id;
+        if (categoriaId) {
+          const abertos = await listarLancamentos({
+            tipo: 'pagar',
+            status: 'aberto',
+            categoria_id: categoriaId,
+            pagina: 1,
+            por_pagina: 100,
+          });
+          setLancamentosIndicador(abertos.data);
+        } else {
+          setLancamentosIndicador([]);
+        }
+      } else {
+        setLancamentosIndicador([]);
+      }
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setCarregando(false);
     }
-  }, [q, tipo, status, categoriaId, de, ate, pagina]);
+  }, [q, tipo, status, categoriaId, de, ate, pagina, indicadorAberto]);
 
   useEffect(() => {
     void recarregar();
@@ -113,10 +158,78 @@ export function FinanceiroPage() {
   async function baixar(l: FinanceiroLancamento) {
     try {
       await atualizarLancamento(l.id, { status: l.tipo === 'pagar' ? 'pago' : 'recebido' });
+      setParcial(null);
       await recarregar();
     } catch (err) {
       setErro((err as Error).message);
     }
+  }
+
+  async function estornar(l: FinanceiroLancamento) {
+    try {
+      await atualizarLancamento(l.id, { status: 'pendente', valor_pago: 0 });
+      setParcial(null);
+      await recarregar();
+    } catch (err) {
+      setErro((err as Error).message);
+    }
+  }
+
+  async function pagarParcial(l: FinanceiroLancamento, bruto: string) {
+    const valor = Number(String(bruto).replace(',', '.'));
+    if (!Number.isFinite(valor) || valor <= 0) {
+      setErro('Informe o valor parcial pago');
+      return;
+    }
+    try {
+      await atualizarLancamento(l.id, { valor_pago: valor });
+      setParcial(null);
+      await recarregar();
+    } catch (err) {
+      setErro((err as Error).message);
+    }
+  }
+
+  function acoesPagamento(l: FinanceiroLancamento) {
+    const aberto = l.status === 'pendente' || l.status === 'vencido';
+    const temPagamento = l.status === 'pago' || l.status === 'recebido' || (Number(l.valor_pago) || 0) > 0;
+    return (
+      <td className="acoes">
+        {aberto ? (
+          <>
+            <button type="button" onClick={() => void baixar(l)}>
+              {l.tipo === 'pagar' ? 'Pagar' : 'Receber'}
+            </button>
+            {l.tipo === 'pagar' ? (
+              parcial?.id === l.id ? (
+                <span className="financeiro-parcial">
+                  <input
+                    aria-label={`Valor parcial ${l.descricao}`}
+                    type="number"
+                    min={0.01}
+                    step="0.01"
+                    value={parcial.valor}
+                    onChange={(e) => setParcial({ id: l.id, valor: e.target.value })}
+                  />
+                  <button type="button" onClick={() => void pagarParcial(l, parcial.valor)}>
+                    Confirmar parcial
+                  </button>
+                </span>
+              ) : (
+                <button type="button" onClick={() => setParcial({ id: l.id, valor: '' })}>
+                  Pagar parcial
+                </button>
+              )
+            ) : null}
+          </>
+        ) : null}
+        {temPagamento ? (
+          <button type="button" onClick={() => void estornar(l)}>
+            Estornar
+          </button>
+        ) : null}
+      </td>
+    );
   }
 
   return (
@@ -130,6 +243,67 @@ export function FinanceiroPage() {
           <div className="kpi"><span className="kpi__label">Previsto</span><strong className="kpi__valor">{moeda.format(resumo?.previsto ?? 0)}</strong></div>
           <div className="kpi"><span className="kpi__label">Realizado</span><strong className="kpi__valor">{moeda.format(resumo?.realizado ?? 0)}</strong></div>
         </section>
+        <section className="kpi-grid financeiro-kpis-pagar" aria-label="Contas a pagar por categoria">
+          {INDICADORES_CONTAS_PAGAR.map((item) => {
+            const dados = indicadorDe(resumo, item.chave);
+            return (
+              <button
+                key={item.chave}
+                type="button"
+                className={indicadorAberto === item.chave ? 'kpi kpi--ativa' : 'kpi'}
+                aria-label={item.label}
+                onClick={() => setIndicadorAberto((atual) => (atual === item.chave ? null : item.chave))}
+              >
+                <span className="kpi__label">{item.label}</span>
+                <strong className="kpi__valor">{carregando ? '—' : moeda.format(dados.valor)}</strong>
+                <span className="kpi__dica">
+                  {carregando ? '—' : `${dados.quantidade} em aberto`}
+                </span>
+              </button>
+            );
+          })}
+        </section>
+        {indicadorAberto ? (
+          <section className="card" aria-label={`Lançamentos de ${INDICADORES_CONTAS_PAGAR.find((item) => item.chave === indicadorAberto)?.label}`}>
+            <h3>{INDICADORES_CONTAS_PAGAR.find((item) => item.chave === indicadorAberto)?.label}</h3>
+            {carregando ? (
+              <p className="vazio">Carregando…</p>
+            ) : lancamentosIndicador.length === 0 ? (
+              <p className="vazio">Nenhuma conta em aberto nesta categoria.</p>
+            ) : (
+              <div className="liberacao-andamento__tabela">
+                <table className="tabela" aria-label="Lançamentos da categoria">
+                  <thead>
+                    <tr>
+                      <th>Descrição</th>
+                      <th>Fornecedor / beneficiário</th>
+                      <th>Vencimento</th>
+                      <th>Valor</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lancamentosIndicador.map((l) => (
+                      <tr key={l.id} aria-label={`Lançamento ${l.descricao}`}>
+                        <td>{l.descricao}</td>
+                        <td>{l.fornecedor || l.cliente || '—'}</td>
+                        <td>{formatarDataBr(l.vencimento)}</td>
+                        <td>{moeda.format(l.valor)}</td>
+                        <td>
+                          <span className={`pill pill--${l.status_pagamento === 'parcial' ? 'parcial' : l.status}`}>
+                            {rotuloStatusLancamento(l)}
+                          </span>
+                        </td>
+                        {acoesPagamento(l)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ) : null}
 
         {resumo && resumo.fluxo.length > 0 && (
           <section className="card">
@@ -198,14 +372,12 @@ export function FinanceiroPage() {
                   <td>{l.categoria ?? '—'}</td>
                   <td>{l.vencimento ? l.vencimento.slice(0, 10).split('-').reverse().join('/') : '—'}</td>
                   <td>{moeda.format(l.valor)}</td>
-                  <td><span className={`pill pill--${l.status}`}>{STATUS_LANCAMENTO_LABEL[l.status]}</span></td>
-                  <td className="acoes">
-                    {(l.status === 'pendente' || l.status === 'vencido') && (
-                      <button type="button" onClick={() => void baixar(l)}>
-                        {l.tipo === 'pagar' ? 'Pagar' : 'Receber'}
-                      </button>
-                    )}
+                  <td>
+                    <span className={`pill pill--${l.status_pagamento === 'parcial' ? 'parcial' : l.status}`}>
+                      {rotuloStatusLancamento(l)}
+                    </span>
                   </td>
+                  {acoesPagamento(l)}
                 </tr>
               ))}
             </tbody>

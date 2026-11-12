@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: gestao-confeccao
+    runtime: docker
+    plan: starter
+    region: ohio
+    branch: recuperacao-segura
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /data/gestao-confeccao.sqlite
+    disk:
+      name: gestao-sqlite
+      mountPath: /data
+      sizeGB: 1

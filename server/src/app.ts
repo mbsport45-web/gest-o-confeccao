@@ -3,13 +3,16 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { createOrdensRouter } from './ordens.js';
 import { createClientesRouter } from './clientes.js';
+import { createEstampasRouter } from './estampas.js';
 import { createProdutosRouter } from './produtos.js';
 import { createMateriasPrimasRouter } from './materiasPrimas.js';
+import { createAviamentosRouter } from './aviamentos.js';
 import { createEstoqueRouter } from './estoque.js';
 import { createEtapasRouter } from './etapas.js';
 import { createFornecedoresRouter } from './fornecedores.js';
 import { createComprasRouter } from './compras.js';
-import { createFinanceiroRouter } from './financeiro.js';
+import { createFinanceiroRouter, sincronizarContasPagarOficinasEntregues } from './financeiro.js';
+import { sincronizarOrdensEntreguesOficina } from './liberacaoFichas.js';
 import { createRelatoriosRouter } from './relatorios.js';
 import { createPedidosRouter } from './pedidos.js';
 import { createExpedicaoRouter } from './expedicao.js';
@@ -44,9 +47,10 @@ export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
   const webhookToken =
     opcoes.webhookToken ?? (process.env.VITEST ? '' : process.env.ASAAS_WEBHOOK_TOKEN ?? '');
 
+  app.set('trust proxy', 1);
   app.use(cors({ origin: true, credentials: true }));
-  // 2mb: imagens de produto podem ir como data URL no cadastro.
-  app.use(express.json({ limit: '2mb' }));
+  // PDFs de nota e pedido seguem em base64; imagens de produto também passam por JSON.
+  app.use(express.json({ limit: '12mb' }));
   app.use(cookieParser());
 
   app.get('/api/health', (_req, res) => {
@@ -92,8 +96,10 @@ export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
   );
   app.use('/api/assinatura', createPagamentoAssinaturaRouter(db, gateway));
   app.use('/api/clientes', createClientesRouter(db));
+  app.use('/api/estampas', createEstampasRouter(db));
   app.use('/api/produtos', createProdutosRouter(db));
   app.use('/api/materias-primas', createMateriasPrimasRouter(db));
+  app.use('/api/aviamentos', createAviamentosRouter(db));
   app.use('/api/estoque', createEstoqueRouter(db));
   app.use('/api/pedidos', createPedidosRouter(db));
   app.use('/api/expedicao', createExpedicaoRouter(db));
@@ -103,6 +109,9 @@ export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
   app.use('/api/compras', createComprasRouter(db));
   app.use('/api/financeiro', createFinanceiroRouter(db));
   app.use('/api/relatorios', createRelatoriosRouter(db));
+
+  sincronizarContasPagarOficinasEntregues(db);
+  sincronizarOrdensEntreguesOficina(db);
 
   return app;
 }

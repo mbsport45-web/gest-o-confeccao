@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
-import { exigirLimite } from './planos.js';
+import {
+  ACOES_IMPORTACAO,
+  analisarProdutosImportacao,
+  lerArquivoProdutos,
+  type AcaoImportacao,
+  type ProdutoImportacao,
+} from './importacaoProdutos.js';
+import { avaliarLimite, exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const STATUS_PRODUTO = ['ativo', 'inativo'] as const;
@@ -177,6 +184,47 @@ const atualizarProdutoSchema = produtoBaseSchema.partial().refine(
 const atualizarStatusSchema = z.object({
   status: z.enum(STATUS_PRODUTO),
 });
+
+const analisarImportacaoSchema = z
+  .object({
+    nome_arquivo: z.string().trim().max(200).optional(),
+    conteudo_base64: z.string().max(9_000_000).optional(),
+    produtos: z.array(z.any()).optional(),
+  })
+  .refine((v) => Boolean(v.conteudo_base64) || Boolean(v.produtos?.length), {
+    message: 'Envie o arquivo ou a lista de produtos',
+  });
+
+const itemImportacaoSchema = z.object({
+  linha: z.number().int().positive().optional(),
+  sku: z.string().trim().max(80).optional().or(z.literal('')),
+  nome: z.string().trim().max(200).optional().or(z.literal('')),
+  categoria: z.string().trim().max(200).optional().or(z.literal('')),
+  marca: z.string().trim().max(200).optional().or(z.literal('')),
+  preco_venda: z.number().min(0).nullable().optional(),
+  descricao: z.string().trim().max(4000).optional().or(z.literal('')),
+  cores: z.array(z.string()).optional(),
+  tamanhos: z.array(z.string()).optional(),
+  variantes: z
+    .array(
+      z.object({
+        cor: z.string().trim().min(1).max(40),
+        tamanho: z.string().trim().min(1).max(40),
+        sku: z.string().trim().max(80).optional(),
+      }),
+    )
+    .optional(),
+  acao: z.enum(ACOES_IMPORTACAO),
+});
+
+const confirmarImportacaoSchema = z.object({
+  itens: z.array(itemImportacaoSchema).min(1).max(500),
+});
+
+function decodeBase64Arquivo(bruto: string): Buffer {
+  const t = bruto.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+  return Buffer.from(t, 'base64');
+}
 const criarVarianteSchema = varianteInputSchema;
 const atualizarVarianteSchema = varianteInputSchema.partial().refine(
   (body) => Object.keys(body).length > 0,
@@ -347,6 +395,230 @@ export function createProdutosRouter(db: AppDatabase): Router {
     return mapProduto(row, listVariantesStmt.all(id) as ProdutoVariante[]);
   }
 
+  function listaUnica(valores: string[]): string[] {
+    const unique: string[] = [];
+    for (const raw of valores) {
+      const item = raw.trim();
+      if (!item) continue;
+      if (!unique.some((u) => u.toLowerCase() === item.toLowerCase())) unique.push(item);
+    }
+    return unique;
+  }
+
+  function gravarNovoProduto(
+    empresaId: number,
+    data: z.infer<typeof criarProdutoSchema>,
+  ): number {
+    if (data.sku && skuUsado(db, empresaId, data.sku)) {
+      throw new ConflitoCadastro('SKU já cadastrado');
+    }
+    const row = camposProduto(data);
+    const info = db
+      .prepare(
+        `INSERT INTO produtos (
+           empresa_id, sku, nome, descricao, categoria, subcategoria, marca, genero, colecao,
+           cores, tamanhos, codigo_barras, unidade, preco_venda, preco_atacado,
+           preco_custo, status, estoque_minimo, imagem, observacoes
+         ) VALUES (
+           @empresa_id, @sku, @nome, @descricao, @categoria, @subcategoria, @marca, @genero, @colecao,
+           @cores, @tamanhos, @codigo_barras, @unidade, @preco_venda, @preco_atacado,
+           @preco_custo, @status, @estoque_minimo, @imagem, @observacoes
+         )`,
+      )
+      .run({ ...row, empresa_id: empresaId });
+    const id = Number(info.lastInsertRowid);
+    gerarVariantes(
+      id,
+      empresaId,
+      data.cores ?? [],
+      data.tamanhos ?? [],
+      data.sku || slug(data.nome),
+      data.codigo_barras,
+      data.variantes ?? [],
+    );
+    return id;
+  }
+
+  function payloadImportacao(item: z.infer<typeof itemImportacaoSchema>): z.infer<typeof criarProdutoSchema> {
+    const cores = listaUnica(item.cores ?? []);
+    const tamanhos = listaUnica(item.tamanhos ?? []);
+    return {
+      sku: item.sku || undefined,
+      nome: (item.nome || '').trim(),
+      descricao: item.descricao || undefined,
+      categoria: item.categoria || undefined,
+      marca: item.marca || undefined,
+      cores,
+      tamanhos,
+      preco_venda: item.preco_venda ?? 0,
+      variantes: item.variantes,
+    };
+  }
+
+  router.post('/importacao/analisar', (req, res) => {
+    const parsed = analisarImportacaoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Envie um arquivo Excel (.xlsx) ou CSV, ou a lista de produtos',
+        detalhes: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const empresaId = empresaDaSessao(req);
+    try {
+      let produtos: ProdutoImportacao[] = [];
+      let errosArquivo: Array<{ linha: number; sku: string; erro: string }> = [];
+      if (parsed.data.conteudo_base64) {
+        const lido = lerArquivoProdutos(
+          decodeBase64Arquivo(parsed.data.conteudo_base64),
+          parsed.data.nome_arquivo || 'produtos.csv',
+        );
+        produtos = lido.produtos;
+        errosArquivo = lido.erros;
+      } else {
+        const bruto = confirmarImportacaoSchema
+          .pick({ itens: true })
+          .safeParse({
+            itens: (parsed.data.produtos ?? []).map((item) => ({ ...item, acao: 'criar' })),
+          });
+        if (!bruto.success) {
+          return res.status(400).json({ erro: 'Lista de produtos inválida' });
+        }
+        produtos = bruto.data.itens.map((item, idx) => ({
+          linha: item.linha ?? idx + 2,
+          sku: item.sku ?? '',
+          nome: item.nome ?? '',
+          categoria: item.categoria ?? '',
+          marca: item.marca ?? '',
+          preco_venda: item.preco_venda ?? null,
+          descricao: item.descricao ?? '',
+          cores: item.cores ?? [],
+          tamanhos: item.tamanhos ?? [],
+          variantes: item.variantes ?? [],
+        }));
+      }
+      res.json({
+        linhas: analisarProdutosImportacao(db, empresaId, produtos),
+        erros: errosArquivo,
+      });
+    } catch (err) {
+      return res.status(400).json({ erro: (err as Error).message || 'Não foi possível ler o arquivo' });
+    }
+  });
+
+  router.post('/importacao', (req, res) => {
+    const parsed = confirmarImportacaoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Informe os produtos da importação',
+        detalhes: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const empresaId = empresaDaSessao(req);
+    let importados = 0;
+    let atualizados = 0;
+    let ignorados = 0;
+    const erros: Array<{ linha: number; sku: string; erro: string }> = [];
+    const buscarSku = db.prepare(
+      `SELECT id FROM produtos
+        WHERE empresa_id = ? AND sku IS NOT NULL AND sku != '' AND lower(sku) = lower(?)
+        LIMIT 1`,
+    );
+
+    const aplicar = db.transaction(() => {
+      for (const [indice, item] of parsed.data.itens.entries()) {
+        const linha = item.linha ?? indice + 1;
+        const sku = (item.sku ?? '').trim();
+        const acao: AcaoImportacao = item.acao;
+        if (acao === 'ignorar') {
+          ignorados += 1;
+          continue;
+        }
+        const nome = (item.nome ?? '').trim();
+        if (!nome) {
+          erros.push({ linha, sku, erro: 'Nome do produto é obrigatório' });
+          continue;
+        }
+        const existente = sku
+          ? (buscarSku.get(empresaId, sku) as { id: number } | undefined)
+          : undefined;
+        try {
+          if (acao === 'atualizar') {
+            if (!existente) {
+              erros.push({ linha, sku, erro: 'SKU não encontrado para atualizar' });
+              continue;
+            }
+            const atual = carregarProduto(existente.id, empresaId);
+            if (!atual) {
+              erros.push({ linha, sku, erro: 'Produto existente não encontrado' });
+              continue;
+            }
+            const cores = listaUnica([...atual.cores, ...(item.cores ?? [])]);
+            const tamanhos = listaUnica([...atual.tamanhos, ...(item.tamanhos ?? [])]);
+            const data = {
+              nome,
+              descricao: item.descricao || undefined,
+              categoria: item.categoria || undefined,
+              marca: item.marca || undefined,
+              cores,
+              tamanhos,
+              preco_venda: item.preco_venda ?? undefined,
+              variantes: item.variantes,
+            };
+            const row = camposProduto(data, true);
+            const sets = Object.keys(row)
+              .map((key) => `${key} = @${key}`)
+              .join(', ');
+            if (sets) {
+              db.prepare(
+                `UPDATE produtos SET ${sets}, atualizado_em = datetime('now')
+                  WHERE id = @id AND empresa_id = @empresa_id`,
+              ).run({ ...row, id: existente.id, empresa_id: empresaId });
+            }
+            const atualizado = carregarProduto(existente.id, empresaId)!;
+            gerarVariantes(
+              existente.id,
+              empresaId,
+              atualizado.cores,
+              atualizado.tamanhos,
+              atualizado.sku || slug(atualizado.nome),
+              atualizado.codigo_barras || undefined,
+              data.variantes,
+            );
+            atualizados += 1;
+            continue;
+          }
+          if (existente) {
+            erros.push({ linha, sku, erro: 'SKU já cadastrado' });
+            continue;
+          }
+          const limite = avaliarLimite(db, empresaId, 'produtos', 1);
+          if (!limite.ok) {
+            erros.push({ linha, sku, erro: limite.corpo.erro });
+            continue;
+          }
+          gravarNovoProduto(empresaId, payloadImportacao({ ...item, nome }));
+          importados += 1;
+        } catch (err) {
+          if (isConflito(err) || erroDuplicidade(err)) {
+            erros.push({ linha, sku, erro: (err as Error).message || 'SKU já cadastrado' });
+            continue;
+          }
+          throw err;
+        }
+      }
+    });
+
+    try {
+      aplicar();
+      res.json({ importados, atualizados, ignorados, erros });
+    } catch (err) {
+      if (isConflito(err)) {
+        return res.status(409).json({ erro: err.message });
+      }
+      throw err;
+    }
+  });
+
   function camposProduto(
     data: Partial<z.infer<typeof produtoBaseSchema>>,
     parciais = false,
@@ -497,7 +769,7 @@ export function createProdutosRouter(db: AppDatabase): Router {
   router.get('/', (req, res) => {
     const pagina = Math.max(1, Number(req.query.pagina ?? req.query.page ?? 1) || 1);
     const porPagina = Math.min(
-      100,
+      250,
       Math.max(1, Number(req.query.por_pagina ?? req.query.pageSize ?? 10) || 10),
     );
     const q = String(req.query.q ?? '').trim();
