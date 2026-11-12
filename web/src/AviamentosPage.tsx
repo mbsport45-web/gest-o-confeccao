@@ -76,10 +76,25 @@ function resumoVariante(variante: { cor: string | null; tamanho: string | null }
   return [variante.cor, variante.tamanho].filter(Boolean).join(' · ') || 'Única';
 }
 
+function textoReferenciaAviamento(item: Aviamento): string {
+  return item.codigo?.trim() || '—';
+}
+
+function textoCorAviamento(item: Aviamento): string {
+  const cores = [...new Set(item.variantes.map((variante) => variante.cor?.trim()).filter(Boolean))];
+  return cores.length > 0 ? cores.join(', ') : '—';
+}
+
+function classeEstoqueVariante(quantidade: number, abaixoMinimo: boolean): string {
+  if (quantidade <= 0) return 'pill pill--estoque-zerado';
+  if (abaixoMinimo) return 'pill pill--estoque-baixo';
+  return 'pill pill--estoque-ok';
+}
+
+const LISTA_TODAS = 100;
+
 export function AviamentosPage() {
   const [itens, setItens] = useState<Aviamento[]>([]);
-  const [pagina, setPagina] = useState(1);
-  const [totalPaginas, setTotalPaginas] = useState(1);
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState('');
   const [qDebounced, setQDebounced] = useState('');
@@ -102,37 +117,41 @@ export function AviamentosPage() {
   });
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setQDebounced(q);
-      setPagina(1);
-    }, 300);
+    const timer = setTimeout(() => setQDebounced(q), 300);
     return () => clearTimeout(timer);
   }, [q]);
-
-  useEffect(() => {
-    setPagina(1);
-  }, [statusFiltro, categoriaFiltro]);
 
   const recarregar = useCallback(async () => {
     try {
       setCarregando(true);
-      const lista = await listarAviamentos({
+      const filtros = {
         q: qDebounced,
         status: statusFiltro,
         categoria: categoriaFiltro,
-        pagina,
-        por_pagina: 8,
+      };
+      const primeira = await listarAviamentos({
+        ...filtros,
+        pagina: 1,
+        por_pagina: LISTA_TODAS,
       });
-      setItens(lista.data);
-      setTotal(lista.total);
-      setTotalPaginas(lista.total_paginas);
+      const todos = [...primeira.data];
+      for (let pagina = 2; pagina <= primeira.total_paginas; pagina += 1) {
+        const extra = await listarAviamentos({
+          ...filtros,
+          pagina,
+          por_pagina: LISTA_TODAS,
+        });
+        todos.push(...extra.data);
+      }
+      setItens(todos);
+      setTotal(primeira.total);
       setErro(null);
     } catch (err) {
       setErro((err as Error).message);
     } finally {
       setCarregando(false);
     }
-  }, [qDebounced, statusFiltro, categoriaFiltro, pagina]);
+  }, [qDebounced, statusFiltro, categoriaFiltro]);
 
   useEffect(() => {
     void recarregar();
@@ -312,38 +331,42 @@ export function AviamentosPage() {
       <section className="card card--wide">
         <div className="card__head">
           <h2>Matérias / Aviamentos</h2>
-          <button type="button" onClick={abrirCriar}>Novo aviamento</button>
         </div>
         <p className="dica">
           Cadarços, saquinhos, tags, etiquetas de tamanho e adesivos têm saldo próprio.
           O consumo por peça de saquinhos e etiquetas fica registrado e ainda não é debitado na expedição.
         </p>
-        <div className="filtros filtros--materias">
-          <input
-            value={q}
-            onChange={(event) => setQ(event.target.value)}
-            placeholder="Buscar nome, modelo, marca, cor, tamanho ou código"
-            aria-label="Buscar aviamentos"
-          />
-          <select
-            value={statusFiltro}
-            onChange={(event) => setStatusFiltro(event.target.value as StatusMateria | '')}
-            aria-label="Filtrar status do aviamento"
-          >
-            <option value="">Todos os status</option>
-            <option value="ativo">Ativo</option>
-            <option value="inativo">Inativo</option>
-          </select>
-          <select
-            value={categoriaFiltro}
-            onChange={(event) => setCategoriaFiltro(event.target.value)}
-            aria-label="Filtrar categoria do aviamento"
-          >
-            <option value="">Todas as categorias</option>
-            {CATEGORIAS_AVIAMENTO.map((categoria) => (
-              <option key={categoria} value={categoria}>{CATEGORIA_AVIAMENTO_LABEL[categoria]}</option>
-            ))}
-          </select>
+        <div className="materias-toolbar">
+          <div className="filtros filtros--materias">
+            <input
+              value={q}
+              onChange={(event) => setQ(event.target.value)}
+              placeholder="Buscar nome, modelo, marca, cor, tamanho ou código"
+              aria-label="Buscar aviamentos"
+            />
+            <select
+              value={statusFiltro}
+              onChange={(event) => setStatusFiltro(event.target.value as StatusMateria | '')}
+              aria-label="Filtrar status do aviamento"
+            >
+              <option value="">Todos os status</option>
+              <option value="ativo">Ativo</option>
+              <option value="inativo">Inativo</option>
+            </select>
+            <select
+              value={categoriaFiltro}
+              onChange={(event) => setCategoriaFiltro(event.target.value)}
+              aria-label="Filtrar categoria do aviamento"
+            >
+              <option value="">Todas as categorias</option>
+              {CATEGORIAS_AVIAMENTO.map((categoria) => (
+                <option key={categoria} value={categoria}>{CATEGORIA_AVIAMENTO_LABEL[categoria]}</option>
+              ))}
+            </select>
+          </div>
+          <button type="button" className="btn-secundario materias-toolbar__acao" onClick={abrirCriar}>
+            Novo aviamento
+          </button>
         </div>
         {erro && modo === null && <p className="erro">{erro}</p>}
         {carregando ? (
@@ -351,35 +374,46 @@ export function AviamentosPage() {
         ) : itens.length === 0 ? (
           <p className="vazio">Nenhum aviamento encontrado.</p>
         ) : (
-          <table className="tabela">
+          <div className="materias-tabela-rolagem">
+          <table className="tabela tabela--materias" aria-label="Aviamentos">
             <thead>
               <tr>
-                <th>Categoria</th>
+                <th>Referência</th>
                 <th>Nome</th>
-                <th>Modelo</th>
-                <th>Marca</th>
-                <th>Variantes</th>
-                <th>Unid.</th>
-                <th>Status</th>
+                <th>Cor</th>
+                <th>Unidade</th>
+                <th>Estoque</th>
+                <th>Custo</th>
+                <th>Situação</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {itens.map((item) => (
                 <tr key={item.id}>
-                  <td>{CATEGORIA_AVIAMENTO_LABEL[item.categoria]}</td>
-                  <td>{item.nome}</td>
-                  <td>{item.modelo ?? '—'}</td>
-                  <td>{item.marca ?? '—'}</td>
-                  <td>
-                    {item.variantes.map((variante) => (
-                      <div key={variante.id}>
-                        {resumoVariante(variante)}: {variante.quantidade}
-                        {variante.abaixo_minimo ? ' (abaixo do mínimo)' : ''}
-                      </div>
-                    ))}
+                  <td className="materias-cel-ref">{textoReferenciaAviamento(item)}</td>
+                  <td className="materias-cel-nome">
+                    <strong>{item.nome}</strong>
+                    <span className="materias-cel-sub">
+                      {[CATEGORIA_AVIAMENTO_LABEL[item.categoria], item.modelo, item.marca].filter(Boolean).join(' · ')}
+                    </span>
                   </td>
-                  <td>{item.unidade}</td>
+                  <td>{textoCorAviamento(item)}</td>
+                  <td className="materias-cel-unidade">{item.unidade}</td>
+                  <td>
+                    <div className="materias-estoque-lista">
+                      {item.variantes.map((variante) => (
+                        <span
+                          key={variante.id}
+                          className={classeEstoqueVariante(variante.quantidade, variante.abaixo_minimo)}
+                        >
+                          {resumoVariante(variante)}: {variante.quantidade} {item.unidade}
+                          {variante.abaixo_minimo && variante.quantidade > 0 ? ' (abaixo do mínimo)' : ''}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="materias-cel-custo">—</td>
                   <td>
                     <span className={`pill pill--${item.status}`}>
                       {item.status === 'ativo' ? 'Ativo' : 'Inativo'}
@@ -399,19 +433,22 @@ export function AviamentosPage() {
               ))}
             </tbody>
           </table>
-        )}
-        <div className="paginacao">
-          <span>{total} aviamento{total === 1 ? '' : 's'}</span>
-          <div>
-            <button type="button" disabled={pagina <= 1} onClick={() => setPagina((atual) => atual - 1)}>Anterior</button>
-            <span>Página {pagina} de {totalPaginas}</span>
-            <button type="button" disabled={pagina >= totalPaginas} onClick={() => setPagina((atual) => atual + 1)}>Próxima</button>
           </div>
-        </div>
+        )}
+        <p className="materias-resumo">
+          {total} aviamento{total === 1 ? '' : 's'}
+        </p>
       </section>
 
       {modo && (
-        <section className="card">
+        <>
+        <button
+          type="button"
+          className="catalogo-painel__fundo"
+          aria-label="Fechar painel"
+          onClick={() => setModo(null)}
+        />
+        <section className="card catalogo-painel">
           <div className="card__head">
             <h2>
               {modo === 'criar' && 'Novo aviamento'}
@@ -729,6 +766,7 @@ export function AviamentosPage() {
             </form>
           )}
         </section>
+        </>
       )}
     </main>
   );

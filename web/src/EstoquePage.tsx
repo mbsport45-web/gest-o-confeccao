@@ -197,7 +197,7 @@ function EstoqueSaldos({ visao }: { visao: 'completo' | 'materiais' }) {
                   <td>{s.codigo ?? '—'}</td>
                   <td>{s.detalhe ?? (s.tipo === 'materia' ? 'Matéria-prima' : 'Produto')}</td>
                   <td>
-                    <span className={s.abaixo_minimo ? 'pill pill--inativo' : 'pill pill--ativo'}>
+                    <span className={s.abaixo_minimo ? 'pill pill--estoque-baixo' : 'pill pill--estoque-ok'}>
                       {s.quantidade} {s.unidade}
                     </span>
                   </td>

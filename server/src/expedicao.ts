@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
-import { arredondarDinheiro } from './financeiro.js';
+import { arredondarDinheiro, pecasContaPagarOficina } from './financeiro.js';
+import {
+  obterOrdemCorte,
+  registrarHistoricoOrdemCorte,
+} from './ordensGrade.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
-export const STATUS_EXPEDICAO = ['pronto_envio', 'expedido', 'entregue'] as const;
+export const STATUS_EXPEDICAO = ['pronto_envio', 'conferido', 'expedido', 'entregue'] as const;
 export type StatusExpedicao = (typeof STATUS_EXPEDICAO)[number];
 
 const FILAS = ['prontos', 'expedidos', 'entregues', 'todos'] as const;
@@ -95,6 +99,368 @@ function mapRow(row: ExpedicaoRow) {
     data_entrega: row.data_entrega,
     observacoes: row.observacoes,
   };
+}
+
+export type ExpedicaoOcRegistro = {
+  id: number;
+  ordem_id: number;
+  ordem_corte_id: number;
+  codigo_oc: string;
+  oficina: string;
+  costureiro: string;
+  modelo: string;
+  referencia: string;
+  pecas: number;
+  pecas_conferidas: number | null;
+  pecas_expedicao: number;
+  conferido_em: string | null;
+  conferido_por: number | null;
+  conferido_por_nome: string | null;
+  status: StatusExpedicao;
+  encaminhado_em: string;
+  data_expedicao: string | null;
+  data_entrega: string | null;
+  observacoes: string | null;
+};
+
+const OC_SELECT = `
+  SELECT e.id, e.ordem_id, e.ordem_corte_id, e.codigo_oc, e.oficina, e.costureiro, e.modelo, e.referencia,
+         e.pecas, e.pecas_conferidas, e.status, e.encaminhado_em, e.data_expedicao, e.data_entrega,
+         e.observacoes, e.conferido_em, e.conferido_por, u.nome AS conferido_por_nome
+    FROM ordem_corte_expedicoes e
+    LEFT JOIN usuarios u ON u.id = e.conferido_por
+`;
+
+type OcRow = {
+  id: number;
+  ordem_id: number;
+  ordem_corte_id: number;
+  codigo_oc: string;
+  oficina: string;
+  costureiro: string;
+  modelo: string;
+  referencia: string;
+  pecas: number;
+  pecas_conferidas: number | null;
+  conferido_em: string | null;
+  conferido_por: number | null;
+  conferido_por_nome: string | null;
+  status: string;
+  encaminhado_em: string;
+  data_expedicao: string | null;
+  data_entrega: string | null;
+  observacoes: string | null;
+};
+
+function inteiroPecas(valor: unknown): number | null {
+  if (typeof valor === 'number' && Number.isFinite(valor) && valor >= 0) {
+    const n = Math.round(valor);
+    return Math.abs(n - valor) < 1e-9 ? n : null;
+  }
+  const t = String(valor ?? '')
+    .trim()
+    .replace(/\s/g, '')
+    .replace(',', '.');
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return null;
+  const inteiro = Math.round(n);
+  return Math.abs(inteiro - n) < 1e-9 ? inteiro : null;
+}
+
+function mapOc(row: OcRow): ExpedicaoOcRegistro {
+  const pecas = Number(row.pecas) || 0;
+  const conferidasRaw = row.pecas_conferidas;
+  const conferidas =
+    conferidasRaw === null || conferidasRaw === undefined || String(conferidasRaw).trim() === ''
+      ? null
+      : Number(conferidasRaw);
+  const pecasConferidas = conferidas != null && Number.isFinite(conferidas) ? conferidas : null;
+  return {
+    id: row.id,
+    ordem_id: row.ordem_id,
+    ordem_corte_id: row.ordem_corte_id,
+    codigo_oc: row.codigo_oc,
+    oficina: row.oficina,
+    costureiro: row.costureiro,
+    modelo: row.modelo,
+    referencia: row.referencia,
+    pecas,
+    pecas_conferidas: pecasConferidas,
+    pecas_expedicao: pecasConferidas ?? pecas,
+    conferido_em: row.conferido_em ?? null,
+    conferido_por: row.conferido_por ?? null,
+    conferido_por_nome: row.conferido_por_nome ?? null,
+    status: row.status as StatusExpedicao,
+    encaminhado_em: row.encaminhado_em,
+    data_expedicao: row.data_expedicao,
+    data_entrega: row.data_entrega,
+    observacoes: row.observacoes,
+  };
+}
+
+function falhaExp(mensagem: string, status = 400): never {
+  throw Object.assign(new Error(mensagem), { status });
+}
+
+function obterExpedicaoOc(
+  db: AppDatabase,
+  empresaId: number,
+  ordemId: number,
+): ExpedicaoOcRegistro | undefined {
+  const row = db
+    .prepare(`${OC_SELECT} WHERE e.empresa_id = ? AND e.ordem_id = ? ORDER BY e.id DESC LIMIT 1`)
+    .get(empresaId, ordemId) as OcRow | undefined;
+  return row ? mapOc(row) : undefined;
+}
+
+export function obterExpedicaoOcDaFicha(
+  db: AppDatabase,
+  empresaId: number,
+  ordemCorteId: number,
+): ExpedicaoOcRegistro | undefined {
+  const row = db
+    .prepare(`${OC_SELECT} WHERE e.empresa_id = ? AND e.ordem_corte_id = ?`)
+    .get(empresaId, ordemCorteId) as OcRow | undefined;
+  return row ? mapOc(row) : undefined;
+}
+
+export function listarExpedicoesOc(
+  db: AppDatabase,
+  empresaId: number,
+  fila: string,
+): ExpedicaoOcRegistro[] {
+  const where = ['e.empresa_id = ?'];
+  if (fila === 'expedidos') where.push(`e.status = 'expedido'`);
+  else if (fila === 'entregues') where.push(`e.status = 'entregue'`);
+  else if (fila === 'todos') {
+    /* todas as OCs encaminhadas */
+  } else where.push(`e.status IN ('pronto_envio', 'conferido')`);
+  return (
+    db
+      .prepare(
+        `${OC_SELECT} WHERE ${where.join(' AND ')}
+          ORDER BY datetime(e.encaminhado_em) DESC, e.id DESC`,
+      )
+      .all(empresaId) as OcRow[]
+  ).map(mapOc);
+}
+
+export function contarExpedicoesOcAbertas(db: AppDatabase, empresaId: number): number {
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM ordem_corte_expedicoes
+          WHERE empresa_id = ? AND status != 'entregue'`,
+      )
+      .get(empresaId) as { n: number }
+  ).n;
+}
+
+export function encaminharOcParaExpedicao(
+  db: AppDatabase,
+  empresaId: number,
+  ordemId: number,
+  usuarioId: number | null,
+): ExpedicaoOcRegistro {
+  const corte = obterOrdemCorte(db, empresaId, ordemId);
+  if (!corte) falhaExp('Ordem de corte não encontrada', 404);
+  const liberacao = db
+    .prepare(
+      `SELECT entregue_em, oficina, costureiro, referencia, codigo_oc
+         FROM ordem_corte_liberacoes
+        WHERE empresa_id = ? AND ordem_corte_id = ?`,
+    )
+    .get(empresaId, corte.id) as
+    | {
+        entregue_em: string | null;
+        oficina: string;
+        costureiro: string;
+        referencia: string;
+        codigo_oc: string;
+      }
+    | undefined;
+  if (!liberacao) falhaExp('Ficha ainda não foi liberada para a oficina', 409);
+  if (!String(liberacao.entregue_em ?? '').trim()) {
+    falhaExp('Confirme a entrega da oficina antes de enviar para expedição', 409);
+  }
+  const existente = obterExpedicaoOcDaFicha(db, empresaId, corte.id);
+  if (existente) falhaExp('Esta OC já foi encaminhada para expedição', 409);
+
+  const pecas = pecasContaPagarOficina(
+    corte.grade.reduce((soma, celula) => soma + celula.quantidade, 0),
+    corte.quantidade,
+  );
+  const aplicar = db.transaction(() => {
+    try {
+      db.prepare(
+        `INSERT INTO ordem_corte_expedicoes (
+           empresa_id, ordem_corte_id, ordem_id, codigo_oc, oficina, costureiro,
+           modelo, referencia, pecas, status, encaminhado_em, encaminhado_por
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pronto_envio', datetime('now'), ?)`,
+      ).run(
+        empresaId,
+        corte.id,
+        corte.ordem_id,
+        corte.codigo || liberacao.codigo_oc,
+        liberacao.oficina ?? '',
+        liberacao.costureiro ?? '',
+        corte.modelo || corte.produto || '',
+        (liberacao.referencia || corte.referencia || '').trim(),
+        pecas,
+        usuarioId,
+      );
+    } catch (e) {
+      const msg = String((e as Error).message);
+      if (msg.includes('UNIQUE')) falhaExp('Esta OC já foi encaminhada para expedição', 409);
+      throw e;
+    }
+    db.prepare(
+      `UPDATE ordens_corte
+          SET status_processo = 'expedicao', atualizado_em = datetime('now')
+        WHERE empresa_id = ? AND id = ?
+          AND status_processo IN ('entregue', 'encaminhado')`,
+    ).run(empresaId, corte.id);
+    registrarHistoricoOrdemCorte(
+      db,
+      empresaId,
+      corte.id,
+      usuarioId,
+      'encaminhar_expedicao',
+      `Encaminhou a ficha ${corte.codigo} para expedição`,
+      {
+        codigo_oc: corte.codigo,
+        oficina: liberacao.oficina,
+        costureiro: liberacao.costureiro,
+        pecas,
+      },
+    );
+  });
+  aplicar();
+  const salva = obterExpedicaoOcDaFicha(db, empresaId, corte.id);
+  if (!salva) falhaExp('Não foi possível encaminhar a OC para expedição', 500);
+  return salva;
+}
+
+export function salvarConferenciaExpedicaoOc(
+  db: AppDatabase,
+  empresaId: number,
+  ordemId: number,
+  pecasConferidasRaw: unknown,
+  usuarioId: number | null,
+): ExpedicaoOcRegistro {
+  const pecasConferidas = inteiroPecas(pecasConferidasRaw);
+  if (pecasConferidas == null) {
+    falhaExp('Informe a quantidade conferida em peças inteiras, igual ou maior que zero', 400);
+  }
+  const corte = obterOrdemCorte(db, empresaId, ordemId);
+  if (!corte) falhaExp('Ordem de corte não encontrada', 404);
+  const atual = obterExpedicaoOcDaFicha(db, empresaId, corte.id);
+  if (!atual) falhaExp('Encaminhe a OC para expedição antes de conferir as peças', 409);
+
+  const mesmaQuantidade =
+    atual.conferido_em != null &&
+    atual.pecas_conferidas != null &&
+    Number(atual.pecas_conferidas) === pecasConferidas;
+  if (mesmaQuantidade) {
+    if (atual.status === 'pronto_envio') {
+      db.prepare(
+        `UPDATE ordem_corte_expedicoes
+            SET status = 'conferido',
+                atualizado_em = datetime('now')
+          WHERE id = ? AND empresa_id = ?`,
+      ).run(atual.id, empresaId);
+      return obterExpedicaoOcDaFicha(db, empresaId, corte.id) ?? atual;
+    }
+    return atual;
+  }
+
+  const primeiraConferencia = !atual.conferido_em || atual.pecas_conferidas == null;
+  const statusConferido = atual.status === 'pronto_envio' || atual.status === 'conferido' ? 'conferido' : atual.status;
+  const aplicar = db.transaction(() => {
+    if (primeiraConferencia) {
+      db.prepare(
+        `UPDATE ordem_corte_expedicoes
+            SET pecas_conferidas = ?,
+                conferido_em = datetime('now'),
+                conferido_por = ?,
+                status = ?,
+                atualizado_em = datetime('now')
+          WHERE id = ? AND empresa_id = ?`,
+      ).run(pecasConferidas, usuarioId, statusConferido, atual.id, empresaId);
+    } else {
+      db.prepare(
+        `UPDATE ordem_corte_expedicoes
+            SET pecas_conferidas = ?,
+                status = ?,
+                atualizado_em = datetime('now')
+          WHERE id = ? AND empresa_id = ?`,
+      ).run(pecasConferidas, statusConferido, atual.id, empresaId);
+    }
+    registrarHistoricoOrdemCorte(
+      db,
+      empresaId,
+      corte.id,
+      usuarioId,
+      'conferir_expedicao',
+      `Conferiu ${pecasConferidas} peças da ficha ${corte.codigo} na expedição (enviadas: ${atual.pecas})`,
+      {
+        pecas_originais: atual.pecas,
+        pecas_conferidas: pecasConferidas,
+        diferenca: pecasConferidas - atual.pecas,
+      },
+    );
+  });
+  aplicar();
+  const salva = obterExpedicaoOcDaFicha(db, empresaId, corte.id);
+  if (!salva) falhaExp('Não foi possível gravar a conferência', 500);
+  return salva;
+}
+
+function avancarExpedicaoOc(
+  db: AppDatabase,
+  empresaId: number,
+  ordemId: number,
+  para: 'expedido' | 'entregue',
+  dados: { data_expedicao?: string; data_entrega?: string; observacoes?: string },
+): ExpedicaoOcRegistro {
+  const atual = obterExpedicaoOc(db, empresaId, ordemId);
+  if (!atual) falhaExp('OC ainda não foi encaminhada para expedição', 404);
+  if (para === 'expedido') {
+    if (atual.status === 'expedido') falhaExp('Esta OC já foi expedida', 409);
+    if (atual.status === 'entregue') falhaExp('Esta OC já foi finalizada na expedição', 409);
+    db.prepare(
+      `UPDATE ordem_corte_expedicoes
+          SET status = 'expedido',
+              data_expedicao = @data_expedicao,
+              observacoes = @observacoes,
+              atualizado_em = datetime('now')
+        WHERE id = @id AND empresa_id = @empresa_id`,
+    ).run({
+      id: atual.id,
+      empresa_id: empresaId,
+      data_expedicao: dados.data_expedicao ?? hojeIso(),
+      observacoes: dados.observacoes ?? atual.observacoes,
+    });
+  } else {
+    if (atual.status !== 'expedido') falhaExp('Registre a expedição antes de marcar como entregue', 409);
+    db.prepare(
+      `UPDATE ordem_corte_expedicoes
+          SET status = 'entregue',
+              data_entrega = @data_entrega,
+              observacoes = @observacoes,
+              atualizado_em = datetime('now')
+        WHERE id = @id AND empresa_id = @empresa_id`,
+    ).run({
+      id: atual.id,
+      empresa_id: empresaId,
+      data_entrega: dados.data_entrega ?? hojeIso(),
+      observacoes: dados.observacoes ?? atual.observacoes,
+    });
+  }
+  const depois = obterExpedicaoOc(db, empresaId, ordemId);
+  if (!depois) falhaExp('OC não encontrada na expedição', 404);
+  return depois;
 }
 
 function filtroFila(fila: string): string {
@@ -225,6 +591,53 @@ export function createExpedicaoRouter(db: AppDatabase): Router {
       total,
       total_paginas: Math.max(1, Math.ceil(total / porPagina)),
     });
+  });
+
+  router.get('/ordens-corte', (req, res) => {
+    const filaRaw = String(req.query.fila ?? 'prontos').trim();
+    const fila = (FILAS as readonly string[]).includes(filaRaw) ? filaRaw : 'prontos';
+    const data = listarExpedicoesOc(db, empresaDaSessao(req), fila);
+    res.json({ data, total: data.length });
+  });
+
+  router.post('/ordens-corte/:ordemId/expedir', (req, res) => {
+    const parsed = acaoSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ erro: 'Dados inválidos', detalhes: parsed.error.flatten().fieldErrors });
+    }
+    try {
+      const item = avancarExpedicaoOc(
+        db,
+        empresaDaSessao(req),
+        Number(req.params.ordemId),
+        'expedido',
+        parsed.data,
+      );
+      res.json(item);
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
+  });
+
+  router.post('/ordens-corte/:ordemId/entregar', (req, res) => {
+    const parsed = acaoSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ erro: 'Dados inválidos', detalhes: parsed.error.flatten().fieldErrors });
+    }
+    try {
+      const item = avancarExpedicaoOc(
+        db,
+        empresaDaSessao(req),
+        Number(req.params.ordemId),
+        'entregue',
+        parsed.data,
+      );
+      res.json(item);
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
   });
 
   router.post('/:id/pronto-envio', (req, res) => {

@@ -1,16 +1,23 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createDatabase } from '../db.js';
-import { diretorioMigracoes, ordemCopia } from './arquivos.js';
+import { arquivosSql, diretorioMigracoes, ordemCopia } from './arquivos.js';
 import { join } from 'node:path';
 
 function sql(arquivo: string): string {
   return readFileSync(join(diretorioMigracoes(), arquivo), 'utf8');
 }
 
+function sqlCompleto(): string {
+  return arquivosSql()
+    .filter((arquivo) => arquivo.endsWith('.sql'))
+    .map((arquivo) => sql(arquivo))
+    .join('\n');
+}
+
 describe('estrutura PostgreSQL', () => {
   it('cobre as tabelas e os índices do SQLite, mais a ficha técnica', () => {
-    const estrutura = sql('001_estrutura.sql');
+    const estrutura = sqlCompleto();
     const db = createDatabase(':memory:');
     try {
       const tabelas = db
@@ -25,11 +32,11 @@ describe('estrutura PostgreSQL', () => {
       const indices = db
         .prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`)
         .all() as Array<{ name: string }>;
-      expect(indices.length).toBe(60);
+      expect(indices.length).toBeGreaterThanOrEqual(60);
       for (const indice of indices) {
         expect(estrutura).toContain(`INDEX IF NOT EXISTS ${indice.name}`);
       }
-      expect(estrutura).not.toContain('ifnull(');
+      expect(sql('001_estrutura.sql')).not.toContain('ifnull(');
     } finally {
       db.close();
     }

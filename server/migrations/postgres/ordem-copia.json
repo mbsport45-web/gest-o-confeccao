@@ -37,5 +37,11 @@
   "ordem_requisitos",
   "ordens_corte",
   "corte_infesto_itens",
-  "ordem_corte_grade"
+  "ordem_corte_grade",
+  "ordem_corte_linhas",
+  "ordem_corte_aviamentos",
+  "ordem_corte_oficinas",
+  "ordem_corte_historico",
+  "ocs_disponiveis_estampas",
+  "amostras_cadastro"
 ]

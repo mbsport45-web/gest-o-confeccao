@@ -27,6 +27,7 @@ import {
   type TipoDocumento,
 } from './api';
 import { FornecedorImportacao } from './FornecedorImportacao';
+import { extrairDadosTecidoTexto } from './consumoCorte';
 import type { PayloadFornecedorImportacao } from './regrasFornecedorImportacao';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -447,11 +448,16 @@ export function ComprasPage({
     const familia = familiaUnidade(item.unidade);
     try {
       setSalvando(true);
+      const extraido = extrairDadosTecidoTexto(item.descricao);
+      const unidade = unidadeParaCadastro(item.unidade) || extraido.unidade || 'UN';
       const criada = await criarMateriaPrima({
         nome: nome.slice(0, 200),
         tipo: familia === 'KG' || familia === 'METRO' ? 'tecido' : 'outro',
-        unidade: unidadeParaCadastro(item.unidade),
+        unidade,
         custo: item.valor_unitario ?? 0,
+        composicao: extraido.composicao || undefined,
+        largura_cm: extraido.larguraCm,
+        gramatura: extraido.gramatura,
       });
       setMaterias((atual) => [...atual, criada].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')));
       atualizarItemLido(indice, {

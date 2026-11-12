@@ -32,6 +32,7 @@ export interface MateriaPrima {
   unidade: string;
   custo: number;
   estoque_minimo: number;
+  estoque_atual: number;
   fornecedor: string | null;
   referencia_fornecedor: string | null;
   ncm: string | null;
@@ -39,6 +40,17 @@ export interface MateriaPrima {
   observacoes: string | null;
   criado_em: string;
   atualizado_em: string;
+}
+
+const MATERIA_SELECT = `
+  SELECT m.*, ifnull(s.quantidade, 0) AS estoque_atual
+    FROM materias_primas m
+    LEFT JOIN estoque_saldos s
+      ON s.materia_prima_id = m.id AND s.empresa_id = m.empresa_id
+`;
+
+function mapMateria(row: MateriaPrima): MateriaPrima {
+  return { ...row, estoque_atual: Number(row.estoque_atual) || 0 };
 }
 
 const textoOpcional = z
@@ -180,7 +192,7 @@ function camposMateria(
 
 export function createMateriasPrimasRouter(db: AppDatabase): Router {
   const router = Router();
-  const getStmt = db.prepare('SELECT * FROM materias_primas WHERE id = ? AND empresa_id = ?');
+  const getStmt = db.prepare(`${MATERIA_SELECT} WHERE m.id = ? AND m.empresa_id = ?`);
 
   router.get('/', (req, res) => {
     const pagina = Math.max(1, Number(req.query.pagina ?? req.query.page ?? 1) || 1);
@@ -196,46 +208,49 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
 
     const where: string[] = [];
     const params: Record<string, string | number> = {};
-    aplicarEmpresa(where, params, req);
+    aplicarEmpresa(where, params, req, 'm.empresa_id');
 
     if (q) {
       where.push(
-        `(nome LIKE @q OR ifnull(codigo,'') LIKE @q OR ifnull(cor,'') LIKE @q
-          OR ifnull(categoria,'') LIKE @q OR ifnull(fornecedor,'') LIKE @q
-          OR ifnull(composicao,'') LIKE @q OR ifnull(descricao,'') LIKE @q)`,
+        `(m.nome LIKE @q OR ifnull(m.codigo,'') LIKE @q OR ifnull(m.cor,'') LIKE @q
+          OR ifnull(m.categoria,'') LIKE @q OR ifnull(m.fornecedor,'') LIKE @q
+          OR ifnull(m.composicao,'') LIKE @q OR ifnull(m.descricao,'') LIKE @q
+          OR ifnull(m.referencia_fornecedor,'') LIKE @q)`,
       );
       params.q = `%${q}%`;
     }
     if (status && (STATUS_MATERIA as readonly string[]).includes(status)) {
-      where.push('status = @status');
+      where.push('m.status = @status');
       params.status = status;
     }
     if (tipo && (TIPOS_MATERIA as readonly string[]).includes(tipo)) {
-      where.push('tipo = @tipo');
+      where.push('m.tipo = @tipo');
       params.tipo = tipo;
     }
     if (categoria) {
-      where.push('categoria LIKE @categoria');
+      where.push('m.categoria LIKE @categoria');
       params.categoria = `%${categoria}%`;
     }
     if (unidade && (UNIDADES_MATERIA as readonly string[]).includes(unidade)) {
-      where.push('unidade = @unidade');
+      where.push('m.unidade = @unidade');
       params.unidade = unidade;
     }
 
     const filtro = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = (
-      db.prepare(`SELECT COUNT(*) AS n FROM materias_primas ${filtro}`).get(params) as {
+      db.prepare(`SELECT COUNT(*) AS n FROM materias_primas m ${filtro}`).get(params) as {
         n: number;
       }
     ).n;
-    const data = db
-      .prepare(
-        `SELECT * FROM materias_primas ${filtro}
-         ORDER BY datetime(atualizado_em) DESC, id DESC
-         LIMIT @limit OFFSET @offset`,
-      )
-      .all({ ...params, limit: porPagina, offset: (pagina - 1) * porPagina }) as MateriaPrima[];
+    const data = (
+      db
+        .prepare(
+          `${MATERIA_SELECT} ${filtro}
+           ORDER BY datetime(m.atualizado_em) DESC, m.id DESC
+           LIMIT @limit OFFSET @offset`,
+        )
+        .all({ ...params, limit: porPagina, offset: (pagina - 1) * porPagina }) as MateriaPrima[]
+    ).map(mapMateria);
 
     res.json({
       data,
@@ -251,7 +266,7 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
     if (!materia) {
       return res.status(404).json({ erro: 'Matéria-prima não encontrada' });
     }
-    res.json(materia);
+    res.json(mapMateria(materia));
   });
 
   router.post('/', exigirLimite(db, 'materiais'), (req, res) => {
@@ -279,7 +294,7 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
            )`,
         )
         .run({ ...row, empresa_id: empresaId });
-      res.status(201).json(getStmt.get(info.lastInsertRowid, empresaId));
+      res.status(201).json(mapMateria(getStmt.get(info.lastInsertRowid, empresaId) as MateriaPrima));
     } catch (err) {
       if (erroDuplicidade(err)) {
         return res.status(409).json({ erro: 'Código já cadastrado' });
@@ -307,7 +322,7 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
     if (info.changes === 0) {
       return res.status(404).json({ erro: 'Matéria-prima não encontrada' });
     }
-    res.json(getStmt.get(id, empresaId));
+    res.json(mapMateria(getStmt.get(id, empresaId) as MateriaPrima));
   });
 
   router.patch('/:id', (req, res) => {
@@ -335,7 +350,7 @@ export function createMateriasPrimasRouter(db: AppDatabase): Router {
         `UPDATE materias_primas SET ${sets}, atualizado_em = datetime('now')
           WHERE id = @id AND empresa_id = @empresa_id`,
       ).run({ ...row, id, empresa_id: empresaId });
-      res.json(getStmt.get(id, empresaId));
+      res.json(mapMateria(getStmt.get(id, empresaId) as MateriaPrima));
     } catch (err) {
       if (erroDuplicidade(err)) {
         return res.status(409).json({ erro: 'Código já cadastrado' });

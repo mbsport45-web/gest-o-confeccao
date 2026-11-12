@@ -204,6 +204,11 @@ describe('API de produtos', () => {
     expect(pagina.body.data).toHaveLength(1);
     expect(pagina.body.total).toBe(3);
     expect(pagina.body.total_paginas).toBe(2);
+
+    const catalogo = await api.get('/api/produtos').query({ por_pagina: 200 });
+    expect(catalogo.status).toBe(200);
+    expect(catalogo.body.por_pagina).toBe(200);
+    expect(catalogo.body.data).toHaveLength(3);
   });
 
   it('detalha, edita, altera status e gera novas variantes', async () => {
@@ -345,5 +350,96 @@ describe('API de produtos', () => {
   it('retorna 404 para produto inexistente', async () => {
     const res = await api.get('/api/produtos/9999');
     expect(res.status).toBe(404);
+  });
+
+  it('importa catálogo em lote, atualiza ou ignora SKU duplicado sem mexer em estoque', async () => {
+    const original = await api.post('/api/produtos').send({
+      sku: 'CAM-POLO',
+      nome: 'Camiseta Polo',
+      categoria: 'Camiseta',
+      marca: 'Atelier Norte',
+      preco_venda: 89.9,
+      cores: ['Preto'],
+      tamanhos: ['M'],
+    });
+    expect(original.status).toBe(201);
+    const movimentosAntes = (db.prepare('SELECT COUNT(*) AS n FROM estoque_movimentos').get() as { n: number }).n;
+    const produtosAntes = (db.prepare('SELECT COUNT(*) AS n FROM produtos').get() as { n: number }).n;
+
+    const csv =
+      'SKU;Nome do produto;Categoria;Marca;Preço de venda;Descrição;Cores;Tamanhos\n' +
+      'CAM-POLO;Polo Atualizada;Camiseta;Atelier Norte;99,90;Nova descrição;Preto, Branco;M, G\n' +
+      'CAM-IMP;Camiseta Importada;Camiseta;Atelier;45,50;Malha PV;Azul;P, M\n' +
+      'CAM-ERR;;Camiseta;;;;;\n';
+    const analisar = await api.post('/api/produtos/importacao/analisar').send({
+      nome_arquivo: 'catalogo.csv',
+      conteudo_base64: Buffer.from(csv, 'utf8').toString('base64'),
+    });
+    expect(analisar.status).toBe(200);
+    expect(analisar.body.linhas).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sku: 'CAM-POLO',
+          existente: expect.objectContaining({ id: original.body.id }),
+          acao_sugerida: 'ignorar',
+        }),
+        expect.objectContaining({ sku: 'CAM-IMP', acao_sugerida: 'criar' }),
+      ]),
+    );
+
+    const itens = (analisar.body.linhas as Array<Record<string, unknown>>).map((linha) => ({
+      ...linha,
+      acao:
+        linha.sku === 'CAM-POLO' ? 'atualizar' : linha.sku === 'CAM-IMP' ? 'criar' : 'criar',
+    }));
+    const importacao = await api.post('/api/produtos/importacao').send({ itens });
+    expect(importacao.status).toBe(200);
+    expect(importacao.body).toMatchObject({
+      importados: 1,
+      atualizados: 1,
+      ignorados: 0,
+    });
+    expect(importacao.body.erros.length).toBeGreaterThan(0);
+
+    const polo = await api.get(`/api/produtos/${original.body.id}`);
+    expect(polo.body.nome).toBe('Polo Atualizada');
+    expect(polo.body.preco_venda).toBe(99.9);
+    expect(polo.body.cores).toEqual(expect.arrayContaining(['Preto', 'Branco']));
+    expect(polo.body.tamanhos).toEqual(expect.arrayContaining(['M', 'G']));
+
+    const lista = await api.get('/api/produtos').query({ q: 'CAM-IMP' });
+    expect(lista.body.data[0]).toMatchObject({
+      sku: 'CAM-IMP',
+      nome: 'Camiseta Importada',
+      preco_venda: 45.5,
+    });
+    expect(lista.body.data[0].variantes.length).toBe(2);
+
+    const duplicar = await api.post('/api/produtos/importacao').send({
+      itens: [
+        {
+          sku: 'CAM-IMP',
+          nome: 'Outra',
+          acao: 'criar',
+          cores: [],
+          tamanhos: [],
+        },
+      ],
+    });
+    expect(duplicar.body.importados).toBe(0);
+    expect(duplicar.body.erros[0].erro).toMatch(/já cadastrado/i);
+
+    const ignorar = await api.post('/api/produtos/importacao').send({
+      itens: [{ sku: 'CAM-POLO', nome: 'Ignorada', acao: 'ignorar' }],
+    });
+    expect(ignorar.body).toMatchObject({ importados: 0, atualizados: 0, ignorados: 1 });
+    expect((await api.get(`/api/produtos/${original.body.id}`)).body.nome).toBe('Polo Atualizada');
+
+    expect((db.prepare('SELECT COUNT(*) AS n FROM produtos').get() as { n: number }).n).toBe(
+      produtosAntes + 1,
+    );
+    expect((db.prepare('SELECT COUNT(*) AS n FROM estoque_movimentos').get() as { n: number }).n).toBe(
+      movimentosAntes,
+    );
   });
 });

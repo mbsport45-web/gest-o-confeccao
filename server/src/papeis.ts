@@ -84,6 +84,7 @@ export const PREFIXOS_MODULO: Array<{ prefixo: string; modulo: Modulo }> = [
   { prefixo: '/api/membros', modulo: 'equipe' },
   { prefixo: '/api/convites', modulo: 'equipe' },
   { prefixo: '/api/clientes', modulo: 'clientes' },
+  { prefixo: '/api/estampas', modulo: 'clientes' },
   { prefixo: '/api/produtos', modulo: 'produtos' },
   { prefixo: '/api/materias-primas', modulo: 'materiais' },
   { prefixo: '/api/aviamentos', modulo: 'materiais' },

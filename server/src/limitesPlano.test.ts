@@ -12,6 +12,7 @@ import {
 import {
   CHAVES_LIMITE,
   CODIGO_LIMITE_PLANO,
+  LIBERAR_LIMITE_ORDENS_MES_TESTES,
   PLANOS_CATALOGO,
   contarUso,
   type ChaveLimite,
@@ -173,6 +174,11 @@ describe('aplicação dos limites por plano', () => {
     expect(contarUso(db, 1)[chave]).toBe(maximo);
 
     const res = await tentarCriar(api, db, 1, chave);
+    if (chave === 'ordens_mes' && LIBERAR_LIMITE_ORDENS_MES_TESTES) {
+      expect(res.status).toBe(201);
+      expect(contarUso(db, 1)[chave]).toBe(maximo + 1);
+      return;
+    }
     expect(res.status).toBe(409);
     expect(res.body.codigo).toBe(CODIGO_LIMITE_PLANO);
     expect(res.body.upgrade).toBe(true);
@@ -319,6 +325,11 @@ describe('aplicação dos limites por plano', () => {
 
     preencher(db, 1, 'ordens_mes', 19);
     const lote = await api.post(`/api/pedidos/${pedido.body.id}/gerar-op`).send({});
+    if (LIBERAR_LIMITE_ORDENS_MES_TESTES) {
+      expect(lote.status).toBe(201);
+      expect(lote.body.ops_geradas.length).toBeGreaterThan(0);
+      return;
+    }
     expect(lote.status).toBe(409);
     expect(lote.body.limite.chave).toBe('ordens_mes');
     expect(contarUso(db, 1).ordens_mes).toBe(19);
@@ -329,5 +340,23 @@ describe('aplicação dos limites por plano', () => {
     });
     expect(umItem.status).toBe(409);
     expect(umItem.body.upgrade).toBe(true);
+  });
+
+  it('modo de testes libera criar OP e OC além de 20/20 no Básico', async () => {
+    expect(LIBERAR_LIMITE_ORDENS_MES_TESTES).toBe(true);
+    preencher(db, 1, 'ordens_mes', 20);
+    const op = await api.post('/api/ordens').send({
+      cliente: 'Loja Teste OC',
+      produto: 'Camiseta Teste OC',
+      tamanho: 'M',
+      quantidade: 4,
+      grade: [{ cor: 'Preto', tamanho: 'M', quantidade: 4 }],
+    });
+    expect(op.status).toBe(201);
+    expect(op.body.id).toBeTruthy();
+    const corte = await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+    expect([200, 201]).toContain(corte.status);
+    expect(corte.body.codigo).toMatch(/^OC-/);
+    expect(contarUso(db, 1).ordens_mes).toBe(21);
   });
 });

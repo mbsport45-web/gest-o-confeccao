@@ -27,8 +27,8 @@ export function ComprasEstoquePage({ permissoes }: { permissoes: PermissoesSessa
   }
 
   return (
-    <div className="modulo-compras-estoque">
-      <div className="abas" role="tablist" aria-label="Compras e Estoque">
+    <div className="modulo-compras-estoque modulo-compras-estoque-tela">
+      <div className="abas abas--compras" role="tablist" aria-label="Compras e Estoque">
         {abas.map((item) => (
           <button
             key={item.id}

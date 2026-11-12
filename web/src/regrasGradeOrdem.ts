@@ -82,6 +82,16 @@ export function totalGeral(grade: GradeValor): number {
   return grade.cores.reduce((soma, cor) => soma + totalCor(grade, cor), 0);
 }
 
+export function tamanhosDaCor(grade: GradeValor, cor: string): string[] {
+  return grade.tamanhos.filter((tamanho) => (grade.quantidades[chaveGrade(cor, tamanho)] ?? 0) > 0);
+}
+
+export function tamanhosEfetivos(grade: GradeValor): string[] {
+  return grade.tamanhos.filter((tamanho) =>
+    grade.cores.some((nomeCor) => (grade.quantidades[chaveGrade(nomeCor, tamanho)] ?? 0) > 0),
+  );
+}
+
 export function definirQuantidade(
   grade: GradeValor,
   cor: string,

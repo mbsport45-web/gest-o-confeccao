@@ -1,31 +1,58 @@
 import { Router, type Response } from 'express';
 import { z } from 'zod';
+import { numeroDoTexto } from './consumoCorte.js';
 import type { AppDatabase } from './db.js';
 import {
   type CelulaGrade,
   type OrdemCorte,
+  atualizarFichaOrdemCorte,
   criarCor,
   criarOuObterOrdemCorte,
   criarTamanho,
   editarCor,
   excluirCor,
   gravarGrade,
+  htmlImpressaoOrdemCorte,
   lerGrade,
   listarCores,
+  listarFilaEnfestoCorte,
+  listarHistoricoOrdemCorte,
+  registrarHistoricoOrdemCorte,
   listarTamanhos,
   obterOrdemCorte,
+  registrarApontamentoOrdemCorte,
+  enviarOrdemCorteEnfesto,
   resumoTamanhos,
   validarGrade,
+  ACOES_APONTAMENTO_OC,
 } from './ordensGrade.js';
 import {
+  baixarTecidoApontamento,
+  avancarOpAposCorte,
   concluirCorteInfesto,
   estornarCortesInfesto,
+  iniciarOpEmCorte,
   listarCortesInfesto,
   resumirCorteInfesto,
 } from './corteInfesto.js';
+import { baixarConsumosCoresOc } from './consumoCoresOc.js';
+import {
+  etapaLinhaProducao,
+  filtrarOrdensDaEtapa,
+  normalizarEtapaLinha,
+  totaisPorEtapaVazios,
+} from './linhaProducao.js';
+import { extrasImpressaoLiberacao } from './liberacaoFichas.js';
+import { nomeArquivoPdfOrdemCorte, pdfImpressaoOrdemCorte } from './ordemCortePdf.js';
 import { sincronizarStatusPedidoFromOps } from './pedidos.js';
 import { exigirLimite } from './planos.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
+import {
+  apagarRascunhoFicha,
+  garantirCodigoRascunho,
+  listarSugestoesFichaCorte,
+  salvarRascunhoFicha,
+} from './fichaCorteCadastro.js';
 
 export const STATUS_OP = [
   'planejada',
@@ -76,6 +103,101 @@ const celulaGradeSchema = z.object({
   quantidade: z.number().int().min(0, 'quantidade da grade não pode ser negativa'),
 });
 
+const fichaOrdemCorteSchema = z.object({
+  codigo: z.string().trim().min(1).max(40).optional(),
+  cliente: z.string().max(200).optional(),
+  cliente_id: z.number().int().positive().nullable().optional(),
+  produto_id: z.number().int().positive().nullable().optional(),
+  modelo: z.string().max(200).optional(),
+  composicao: z.string().max(2000).optional(),
+  referencia: z.string().max(120).optional(),
+  tecido_nome: z.string().max(200).optional(),
+  tecido_cor: z.string().max(80).optional(),
+  tecido_largura_cm: z.preprocess(
+    (v) => (typeof v === 'string' ? numeroDoTexto(v) : v === '' ? null : v),
+    z.number().min(0).nullable().optional(),
+  ),
+  tecido_largura_unidade: z.string().trim().max(4).optional(),
+  tecido_gramatura: z.preprocess(
+    (v) => (typeof v === 'string' ? numeroDoTexto(v) : v === '' ? null : v),
+    z.number().min(0).nullable().optional(),
+  ),
+  tecido_unidade: z.string().trim().max(10).optional(),
+  tecido_numero_rolo: z.string().max(80).optional(),
+  informacoes_oficina: z.string().max(4000).optional(),
+  data_retirada: z.string().max(40).nullable().optional(),
+  informacoes_costureiros: z.string().max(4000).optional(),
+  informacoes_acabamento: z.string().max(4000).optional(),
+  observacoes: z.string().max(4000).nullable().optional(),
+  tamanhos: z.array(z.string().trim().min(1).max(20)).max(30).optional(),
+  grade: z.array(celulaGradeSchema).max(2000).optional(),
+  linhas: z
+    .array(
+      z.object({
+        cor: z.string().trim().min(1).max(80),
+        detalhes: z.string().max(500).optional().default(''),
+      }),
+    )
+    .max(200)
+    .optional(),
+  aviamentos: z
+    .array(
+      z.object({
+        aviamento_id: z.number().int().positive().nullable().optional(),
+        descricao: z.string().trim().min(1).max(200),
+        quantidade: z.number().min(0).max(1_000_000_000),
+        unidade: z.string().trim().max(20).optional(),
+        observacoes: z.string().max(500).optional(),
+      }),
+    )
+    .max(200)
+    .optional(),
+  oficinas: z
+    .array(
+      z.object({
+        oficina: z.string().max(200).optional(),
+        costureiro: z.string().max(200).optional(),
+        observacoes: z.string().max(500).optional(),
+      }),
+    )
+    .max(100)
+    .optional(),
+  materia_prima_id: z.number().int().positive().nullable().optional(),
+  consumos_cores: z
+    .array(
+      z.object({
+        cor: z.string().trim().min(1).max(80),
+        camadas: z.number().int().min(0).optional(),
+        peso_folha: z.number().min(0).optional(),
+        consumo_total: z.number().min(0).optional(),
+        unidade: z.string().trim().max(20).optional(),
+      }),
+    )
+    .max(200)
+    .optional(),
+});
+
+const consumoCorSchema = z.object({
+  cor: z.string().trim().min(1).max(80),
+  camadas: z.number().int().min(0).optional(),
+  peso_folha: z.number().min(0).optional(),
+  consumo_total: z.number().min(0).optional(),
+  unidade: z.string().trim().max(20).optional(),
+});
+
+const apontamentoOrdemCorteSchema = z.object({
+  acao: z.enum(ACOES_APONTAMENTO_OC),
+  consumo_real: z.number().positive().optional(),
+  consumo_unidade: z.string().trim().max(20).optional(),
+  quantidade_cortada: z.number().int().min(0).optional(),
+  perdas: z.number().min(0).max(100).optional(),
+  metragem_risco: z.number().positive().optional(),
+  camadas: z.number().int().positive().optional(),
+  observacoes_corte: z.string().max(4000).optional(),
+  materia_prima_id: z.number().int().positive().nullable().optional(),
+  consumos_cores: z.array(consumoCorSchema).max(200).optional(),
+});
+
 const nomeCadastroSchema = z.object({
   nome: z.string().trim().min(1, 'nome é obrigatório').max(80),
 });
@@ -86,6 +208,7 @@ const corteInfestoSchema = z.object({
   camadas: z.number().int().positive('Informe o número de camadas do enfesto'),
   metragem: z.number().positive('Informe a metragem consumida').optional(),
   peso_real: z.number().positive('Informe o peso real consumido').optional(),
+  peso_folha: z.number().min(0).optional(),
   itens: z
     .array(
       z.object({
@@ -232,7 +355,12 @@ export interface OrdemProducao {
   requisitos?: OrdemRequisito[];
   grade?: CelulaGrade[];
   referencia?: string | null;
-  ordem_corte?: Pick<OrdemCorte, 'id' | 'codigo' | 'quantidade' | 'grade'> | null;
+  etapa_linha?: string | null;
+  ordem_corte?: (Pick<OrdemCorte, 'id' | 'codigo' | 'quantidade' | 'grade'> & {
+    status_processo?: string;
+    enviado_enfesto_em?: string | null;
+    referencia?: string;
+  }) | null;
 }
 
 function podeTransicionar(
@@ -363,7 +491,15 @@ export function createOrdensRouter(db: AppDatabase): Router {
     ordem.referencia = produto?.sku ?? null;
     const corte = obterOrdemCorte(db, ordem.empresa_id, ordem.id);
     ordem.ordem_corte = corte
-      ? { id: corte.id, codigo: corte.codigo, quantidade: corte.quantidade, grade: corte.grade }
+      ? {
+          id: corte.id,
+          codigo: corte.codigo,
+          quantidade: corte.quantidade,
+          grade: corte.grade,
+          status_processo: corte.status_processo,
+          enviado_enfesto_em: corte.enviado_enfesto_em ?? null,
+          referencia: corte.referencia,
+        }
       : null;
     if (comRequisitos) ordem.requisitos = mapRequisitos(ordem.id);
     return ordem;
@@ -872,6 +1008,105 @@ export function createOrdensRouter(db: AppDatabase): Router {
     res.json(listarCortesInfesto(db, empresaDaSessao(req)));
   });
 
+  router.get('/ordem-corte/fila-enfesto', (req, res) => {
+    res.json({ data: listarFilaEnfestoCorte(db, empresaDaSessao(req)) });
+  });
+
+  router.get('/ordem-corte/sugestoes', (req, res) => {
+    res.json(listarSugestoesFichaCorte(db, empresaDaSessao(req)));
+  });
+
+  router.get('/ordem-corte/rascunho', (req, res) => {
+    res.json(garantirCodigoRascunho(db, empresaDaSessao(req), req.usuario?.id ?? 0));
+  });
+
+  router.put('/ordem-corte/rascunho', (req, res) => {
+    salvarRascunhoFicha(db, empresaDaSessao(req), req.usuario?.id ?? 0, req.body ?? {});
+    res.json({ ok: true });
+  });
+
+  router.delete('/ordem-corte/rascunho', (req, res) => {
+    apagarRascunhoFicha(db, empresaDaSessao(req), req.usuario?.id ?? 0);
+    res.status(204).end();
+  });
+
+  router.get('/producao', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const etapaRaw = String(req.query.etapa ?? '').trim();
+    const etapa = normalizarEtapaLinha(etapaRaw);
+    if (etapaRaw && !etapa) {
+      return res.status(400).json({ erro: 'Etapa inválida' });
+    }
+    const ordens = db
+      .prepare(
+        `SELECT * FROM ordens_producao
+          WHERE empresa_id = ?
+          ORDER BY datetime(criado_em) DESC, id DESC`,
+      )
+      .all(empresaId) as OrdemProducao[];
+    const statusOc = db
+      .prepare(
+        `SELECT oc.ordem_id, oc.status_processo, lib.entregue_em
+           FROM ordens_corte oc
+           LEFT JOIN ordem_corte_liberacoes lib
+             ON lib.ordem_corte_id = oc.id AND lib.empresa_id = oc.empresa_id
+          WHERE oc.empresa_id = ?
+          ORDER BY oc.id ASC`,
+      )
+      .all(empresaId) as Array<{ ordem_id: number; status_processo: string; entregue_em: string | null }>;
+    const ocPorOp = new Map<number, { status_processo: string; entregue: boolean }>();
+    for (const ficha of statusOc) {
+      const entregue = Boolean(String(ficha.entregue_em ?? '').trim()) || ficha.status_processo === 'entregue';
+      const atual = ocPorOp.get(ficha.ordem_id);
+      if (!atual) {
+        ocPorOp.set(ficha.ordem_id, { status_processo: ficha.status_processo, entregue });
+      } else if (entregue) {
+        atual.entregue = true;
+      }
+    }
+
+    const porEtapa = totaisPorEtapaVazios();
+    const idsDaEtapa: number[] = [];
+    const vistos = new Set<number>();
+    let entregues = 0;
+    let andamentoTotal = 0;
+    for (const ordem of ordens) {
+      if (vistos.has(ordem.id)) continue;
+      vistos.add(ordem.id);
+      const oc = ocPorOp.get(ordem.id);
+      const entregueOficina = Boolean(oc?.entregue);
+      if (ordem.status === 'concluida' || (entregueOficina && ordem.status !== 'cancelada')) {
+        entregues += 1;
+      }
+      const etapaOp = etapaLinhaProducao(ordem.status, oc?.status_processo ?? null, entregueOficina);
+      if (!etapaOp) continue;
+      andamentoTotal += 1;
+      porEtapa[etapaOp] += 1;
+      if (etapa && etapaOp === etapa) idsDaEtapa.push(ordem.id);
+    }
+
+    const andamento = etapa
+      ? filtrarOrdensDaEtapa(
+          idsDaEtapa.map((id) => {
+            const ordem = ordens.find((item) => item.id === id) as OrdemProducao;
+            return { ...completarOrdem(ordem), etapa_linha: etapa };
+          }),
+          etapa,
+        )
+      : [];
+
+    res.json({
+      totais: {
+        cadastradas: vistos.size,
+        andamento: andamentoTotal,
+        entregues,
+      },
+      por_etapa: porEtapa,
+      etapa,
+      andamento,
+    });
+  });
+
   router.get('/:id/corte-infesto', (req, res) => {
     const empresaId = empresaDaSessao(req);
     const id = Number(req.params.id);
@@ -895,8 +1130,10 @@ export function createOrdensRouter(db: AppDatabase): Router {
         if (!antes) {
           throw Object.assign(new Error('Ordem de produção não encontrada'), { status: 404 });
         }
-        const corte = concluirCorteInfesto(db, empresaId, id, parsed.data);
-        if (corte.avancou && AINDA_PLANEJADA.has(antes.status)) {
+        const corte = concluirCorteInfesto(db, empresaId, id, parsed.data, req.usuario?.id ?? null);
+        const ficha = obterOrdemCorte(db, empresaId, id);
+        const baixaPelaFicha = Boolean(ficha && ficha.status_processo !== 'em_preenchimento');
+        if (corte.avancou && AINDA_PLANEJADA.has(antes.status) && !baixaPelaFicha) {
           const depois = getStmt.get(id, empresaId) as OrdemProducao;
           const consumo = consumirMateriais(depois);
           if (!consumo.ok) throw Object.assign(new Error(consumo.erro), { status: consumo.status });
@@ -923,13 +1160,185 @@ export function createOrdensRouter(db: AppDatabase): Router {
     res.json(corte);
   });
 
-  router.post('/:id/ordem-corte', (req, res) => {
+  router.get('/:id/ordem-corte/historico', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const corte = obterOrdemCorte(db, empresaId, id);
+    if (!corte) return res.status(404).json({ erro: 'Ordem de corte não encontrada' });
+    res.json({ data: listarHistoricoOrdemCorte(db, empresaId, id) });
+  });
+
+  router.post('/:id/ordem-corte/confirmar-cor', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const corte = obterOrdemCorte(db, empresaId, id);
+    if (!corte) return res.status(404).json({ erro: 'Ordem de corte não encontrada' });
+    const cor = String(req.body?.cor ?? '').trim();
+    if (!cor) return res.status(400).json({ erro: 'Informe a cor conferida' });
+    registrarHistoricoOrdemCorte(
+      db,
+      empresaId,
+      corte.id,
+      req.usuario?.id ?? null,
+      'confirmar_cor',
+      `${cor} OK`,
+      { cor },
+    );
+    res.json({ data: listarHistoricoOrdemCorte(db, empresaId, id) });
+  });
+
+  router.get('/:id/ordem-corte/impressao', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const corte = obterOrdemCorte(db, empresaId, id);
+    if (!corte) return res.status(404).json({ erro: 'Ordem de corte não encontrada' });
+    res.type('html').send(htmlImpressaoOrdemCorte(corte, extrasImpressaoLiberacao(db, empresaId, corte)));
+  });
+
+  router.get('/:id/ordem-corte/pdf', async (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const corte = obterOrdemCorte(db, empresaId, id);
+    if (!corte) return res.status(404).json({ erro: 'Ordem de corte não encontrada' });
+    try {
+      const pdf = await pdfImpressaoOrdemCorte(corte, extrasImpressaoLiberacao(db, empresaId, corte));
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivoPdfOrdemCorte(corte.codigo)}"`);
+      res.send(pdf);
+    } catch (e) {
+      const err = e as Error;
+      return res.status(500).json({ erro: err.message || 'Não foi possível gerar o PDF da ficha' });
+    }
+  });
+
+  router.post('/:id/ordem-corte/enviar-enfesto', (req, res) => {
     const empresaId = empresaDaSessao(req);
     const id = Number(req.params.id);
     const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
     if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
     try {
-      const resultado = criarOuObterOrdemCorte(db, empresaId, ordem);
+      const corte = enviarOrdemCorteEnfesto(db, empresaId, id, req.usuario?.id ?? null);
+      if (corte.status_processo !== 'em_preenchimento') {
+        iniciarOpEmCorte(db, empresaId, id);
+      }
+      res.json(corte);
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
+  });
+
+  router.post('/:id/ordem-corte/apontamento', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const parsed = apontamentoOrdemCorteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Informe a ação do apontamento',
+        detalhes: parsed.error.flatten().fieldErrors,
+      });
+    }
+    try {
+      const aplicar = db.transaction(() => {
+        const antes = obterOrdemCorte(db, empresaId, id);
+        const corte = registrarApontamentoOrdemCorte(
+          db,
+          empresaId,
+          id,
+          parsed.data,
+          req.usuario?.id ?? null,
+        );
+        const concluiuAgora =
+          parsed.data.acao === 'concluir_corte' &&
+          antes?.status_processo === 'em_corte' &&
+          corte.status_processo === 'corte_concluido';
+        if (concluiuAgora && corte.materia_prima_id) {
+          const consumosPorCor = (corte.consumos_cores ?? []).filter((item) => Number(item.consumo_total) > 0);
+          if (consumosPorCor.length > 0) {
+            const baixas = baixarConsumosCoresOc(
+              db,
+              empresaId,
+              id,
+              corte.id,
+              corte.codigo,
+              corte.materia_prima_id,
+              req.usuario?.id ?? null,
+            );
+            for (const baixa of baixas.filter((item) => item.baixou)) {
+              registrarHistoricoOrdemCorte(
+                db,
+                empresaId,
+                corte.id,
+                req.usuario?.id ?? null,
+                'consumo_cor',
+                `Consumo ${baixa.cor}: ${baixa.quantidade} ${baixa.unidade}`,
+                baixa,
+              );
+            }
+          } else if (Number(corte.consumo_real) > 0) {
+            baixarTecidoApontamento(
+              db,
+              empresaId,
+              id,
+              corte.materia_prima_id,
+              Number(corte.consumo_real),
+              `OC ${corte.codigo} · consumo ${corte.consumo_real} ${corte.consumo_unidade ?? ''}`.trim(),
+              req.usuario?.id ?? null,
+            );
+          }
+        }
+        if (concluiuAgora) {
+          avancarOpAposCorte(db, empresaId, id);
+        }
+        return obterOrdemCorte(db, empresaId, id) ?? corte;
+      });
+      res.json(aplicar());
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
+  });
+
+  router.patch('/:id/ordem-corte', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const parsed = fichaOrdemCorteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        erro: 'Dados inválidos',
+        detalhes: parsed.error.flatten().fieldErrors,
+      });
+    }
+    try {
+      const corte = atualizarFichaOrdemCorte(db, empresaId, id, parsed.data, req.usuario?.id ?? null);
+      res.json(corte);
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      return res.status(err.status ?? 400).json({ erro: err.message });
+    }
+  });
+
+  router.post('/:id/ordem-corte', (req, res) => {
+    const empresaId = empresaDaSessao(req);
+    const id = Number(req.params.id);
+    const ordem = getStmt.get(id, empresaId) as OrdemProducao | undefined;
+    if (!ordem) return res.status(404).json({ erro: 'Ordem de produção não encontrada' });
+    const codigoPreferido =
+      typeof req.body?.codigo === 'string' && req.body.codigo.trim() ? req.body.codigo.trim() : null;
+    try {
+      const resultado = criarOuObterOrdemCorte(db, empresaId, ordem, codigoPreferido);
       res.status(resultado.criada ? 201 : 200).json({ ...resultado.corte, criada: resultado.criada });
     } catch (e) {
       const err = e as Error & { status?: number };
@@ -1005,15 +1414,6 @@ export function createOrdensRouter(db: AppDatabase): Router {
       }
       if (itens.length) gravarRequisitos(id, data.quantidade, itens, empresaId);
       if (comGrade && data.grade) gravarGrade(db, empresaId, id, data.grade);
-
-      const criada = mapOrdem(id, empresaId, true)!;
-      if (CONSOME_ESTOQUE.has(criada.status)) {
-        const cons = consumirMateriais(criada);
-        if (!cons.ok) {
-          deleteStmt.run(id, empresaId);
-          return res.status(cons.status).json({ erro: cons.erro });
-        }
-      }
 
       res.status(201).json(mapOrdem(id, empresaId, true));
     } catch (e) {

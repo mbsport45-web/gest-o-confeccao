@@ -5,6 +5,7 @@ import {
   celulasDaGrade,
   definirQuantidade,
   gradeAoTrocarProduto,
+  gradeDaOrdem,
   gradeVazia,
   mensagemGrade,
   moverTamanho,
@@ -12,6 +13,8 @@ import {
   removerTamanho,
   renomearCor,
   renomearTamanho,
+  tamanhosDaCor,
+  tamanhosEfetivos,
   totalCor,
   totalGeral,
   totalTamanho,
@@ -63,6 +66,25 @@ describe('grade da ordem de produção', () => {
     expect(renomearCor(grade, 'Oliva', 'oliva').cores).toEqual(['oliva']);
     const repetida = adicionarCor(grade, 'Areia');
     expect(renomearCor(repetida, 'Areia', 'Oliva')).toBe(repetida);
+  });
+
+  it('mostra só os tamanhos com quantidade na cor da ficha', () => {
+    const grade = gradeDaOrdem(
+      [
+        { cor: 'Preto', tamanho: 'P', quantidade: 0 },
+        { cor: 'Preto', tamanho: 'M', quantidade: 3 },
+        { cor: 'Preto', tamanho: 'G', quantidade: 1 },
+        { cor: 'Preto', tamanho: 'GG', quantidade: 0 },
+        { cor: 'Branco', tamanho: 'P', quantidade: 0 },
+        { cor: 'Branco', tamanho: 'M', quantidade: 2 },
+        { cor: 'Branco', tamanho: 'G', quantidade: 0 },
+        { cor: 'Branco', tamanho: 'GG', quantidade: 0 },
+      ],
+      ['P', 'M', 'G', 'GG', 'XG'],
+    );
+    expect(tamanhosEfetivos(grade)).toEqual(['M', 'G']);
+    expect(tamanhosDaCor(grade, 'Preto')).toEqual(['M', 'G']);
+    expect(tamanhosDaCor(grade, 'Branco')).toEqual(['M']);
   });
 
   it('mantém a grade já preenchida ao trocar o produto', () => {

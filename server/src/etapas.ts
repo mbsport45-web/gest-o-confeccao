@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDatabase } from './db.js';
+import { registrarRotasLiberacao } from './liberacaoFichas.js';
 import { aplicarEmpresa, empresaDaSessao } from './tenant.js';
 
 export const TIPOS_ETAPA = [
@@ -126,6 +127,7 @@ const SELECT = `
 
 export function createEtapasRouter(db: AppDatabase): Router {
   const router = Router();
+  registrarRotasLiberacao(router, db);
   const getStmt = db.prepare(`${SELECT} WHERE e.id = ? AND e.empresa_id = ?`);
   const getOrdem = db.prepare('SELECT id, empresa_id FROM ordens_producao WHERE id = ? AND empresa_id = ?');
   const countByOrdem = db.prepare(

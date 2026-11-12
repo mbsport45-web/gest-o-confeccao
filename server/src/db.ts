@@ -459,7 +459,14 @@ export function createDatabase(location: string) {
       ('Frete', 'pagar'),
       ('Vendas', 'receber'),
       ('Serviços', 'ambos'),
-      ('Outros', 'ambos');
+      ('Outros', 'ambos'),
+      ('Tecidos', 'pagar'),
+      ('Costureiros', 'pagar'),
+      ('Funcionários', 'pagar'),
+      ('Aluguéis', 'pagar'),
+      ('Conta de luz', 'pagar'),
+      ('Contas de água', 'pagar'),
+      ('IPTU', 'pagar');
 
     CREATE TABLE IF NOT EXISTS empresas (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -498,13 +505,19 @@ export function createDatabase(location: string) {
   aplicarDocumentosImportados(db);
   aplicarAviamentos(db);
   aplicarGradeProducao(db);
+  aplicarFichaOrdemCorte(db);
   aplicarCorteInfesto(db);
+  aplicarConsumoCoresOc(db);
+  aplicarExpedicaoOrdensCorte(db);
+  aplicarOcsDisponiveisEstampas(db);
+  aplicarAmostrasCadastro(db);
   aplicarColunaEmpresaId(db);
   aplicarCamposFornecedor(db);
   aplicarSchemaEquipe(db);
   aplicarSchemaPlanos(db);
   aplicarSchemaPagamentos(db);
   aplicarConfirmacaoNota(db);
+  aplicarPagamentoOficina(db);
 
   return db;
 }
@@ -525,6 +538,14 @@ const TABELAS_TENANT = [
   'ordem_grade',
   'ordens_corte',
   'ordem_corte_grade',
+  'ordem_corte_linhas',
+  'ordem_corte_aviamentos',
+  'ordem_corte_oficinas',
+  'ordem_corte_historico',
+  'financeiro_lancamento_eventos',
+  'ordem_corte_liberacoes',
+  'valores_peca_referencia',
+  'oficinas_cadastro',
   'cores_cadastro',
   'tamanhos_cadastro',
   'ordem_requisitos',
@@ -539,6 +560,9 @@ const TABELAS_TENANT = [
   'pedidos',
   'pedido_itens',
   'expedicoes',
+  'ordem_corte_expedicoes',
+  'ocs_disponiveis_estampas',
+  'amostras_cadastro',
   'ficha_tecnica_itens',
 ] as const;
 
@@ -561,11 +585,39 @@ function aplicarConfirmacaoNota(db: AppDatabase) {
   if (tabelaExiste(db, 'financeiro_lancamentos') && !colunaExiste(db, 'financeiro_lancamentos', 'parcela')) {
     db.exec('ALTER TABLE financeiro_lancamentos ADD COLUMN parcela INTEGER');
   }
+  if (tabelaExiste(db, 'financeiro_lancamentos') && !colunaExiste(db, 'financeiro_lancamentos', 'ordem_corte_id')) {
+    db.exec('ALTER TABLE financeiro_lancamentos ADD COLUMN ordem_corte_id INTEGER REFERENCES ordens_corte(id)');
+  }
   db.exec(`
     DROP INDEX IF EXISTS financeiro_lancamentos_compra_unique;
     CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_compra_parcela
       ON financeiro_lancamentos (compra_id, parcela)
       WHERE compra_id IS NOT NULL AND tipo = 'pagar';
+    CREATE UNIQUE INDEX IF NOT EXISTS financeiro_lancamentos_ordem_corte_pagar
+      ON financeiro_lancamentos (ordem_corte_id)
+      WHERE ordem_corte_id IS NOT NULL AND tipo = 'pagar';
+  `);
+}
+
+function aplicarPagamentoOficina(db: AppDatabase) {
+  if (tabelaExiste(db, 'financeiro_lancamentos') && !colunaExiste(db, 'financeiro_lancamentos', 'valor_pago')) {
+    db.exec('ALTER TABLE financeiro_lancamentos ADD COLUMN valor_pago REAL NOT NULL DEFAULT 0');
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS financeiro_lancamento_eventos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      lancamento_id INTEGER NOT NULL REFERENCES financeiro_lancamentos(id) ON DELETE CASCADE,
+      usuario_id INTEGER,
+      acao TEXT NOT NULL,
+      valor REAL,
+      saldo REAL,
+      resumo TEXT NOT NULL DEFAULT '',
+      payload TEXT NOT NULL DEFAULT '',
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS financeiro_lancamento_eventos_lancamento
+      ON financeiro_lancamento_eventos (empresa_id, lancamento_id, id);
   `);
 }
 
@@ -757,6 +809,11 @@ function aplicarGradeProducao(db: AppDatabase) {
       ON ordens_corte (empresa_id, codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS ordem_corte_grade_chave
       ON ordem_corte_grade (ordem_corte_id, lower(cor), lower(tamanho));
+
+    CREATE TABLE IF NOT EXISTS ordens_corte_sequencia (
+      empresa_id INTEGER PRIMARY KEY,
+      ultimo INTEGER NOT NULL
+    );
   `);
 
   if (!colunaExiste(db, 'cores_cadastro', 'codigo')) {
@@ -770,6 +827,291 @@ function aplicarGradeProducao(db: AppDatabase) {
       ON cores_cadastro (empresa_id, lower(codigo))
       WHERE codigo IS NOT NULL AND codigo != '';
   `);
+}
+
+function aplicarFichaOrdemCorte(db: AppDatabase) {
+  const colunas: Array<[string, string]> = [
+    ['modelo', "TEXT NOT NULL DEFAULT ''"],
+    ['composicao', "TEXT NOT NULL DEFAULT ''"],
+    ['referencia', "TEXT NOT NULL DEFAULT ''"],
+    ['informacoes_oficina', "TEXT NOT NULL DEFAULT ''"],
+    ['data_retirada', 'TEXT'],
+    ['informacoes_costureiros', "TEXT NOT NULL DEFAULT ''"],
+    ['informacoes_acabamento', "TEXT NOT NULL DEFAULT ''"],
+    ['tamanhos_grade', `TEXT NOT NULL DEFAULT '["P","M","G","GG","XG"]'`],
+    ['atualizado_em', "TEXT NOT NULL DEFAULT (datetime('now'))"],
+    ['status_processo', "TEXT NOT NULL DEFAULT 'em_preenchimento'"],
+    ['enviado_enfesto_em', 'TEXT'],
+    ['enviado_enfesto_por', 'INTEGER'],
+    ['iniciado_enfesto_em', 'TEXT'],
+    ['iniciado_enfesto_por', 'INTEGER'],
+    ['iniciado_corte_em', 'TEXT'],
+    ['iniciado_corte_por', 'INTEGER'],
+    ['concluido_corte_em', 'TEXT'],
+    ['concluido_corte_por', 'INTEGER'],
+    ['consumo_real', 'REAL'],
+    ['consumo_unidade', 'TEXT'],
+    ['quantidade_cortada', 'INTEGER'],
+    ['perdas', 'REAL'],
+    ['observacoes_corte', 'TEXT'],
+    ['materia_prima_id', 'INTEGER'],
+  ];
+  for (const [coluna, definicao] of colunas) {
+    if (tabelaExiste(db, 'ordens_corte') && !colunaExiste(db, 'ordens_corte', coluna)) {
+      db.exec(`ALTER TABLE ordens_corte ADD COLUMN ${coluna} ${definicao}`);
+    }
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS ordens_corte_status_processo
+      ON ordens_corte (empresa_id, status_processo);
+
+    CREATE TABLE IF NOT EXISTS ordem_corte_tecido_ficha (
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      materia_prima_id INTEGER,
+      nome TEXT NOT NULL DEFAULT '',
+      cor TEXT NOT NULL DEFAULT '',
+      largura_cm REAL,
+      gramatura REAL,
+      composicao TEXT NOT NULL DEFAULT '',
+      unidade TEXT NOT NULL DEFAULT 'KG',
+      largura_unidade TEXT NOT NULL DEFAULT 'cm',
+      numero_rolo TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (empresa_id, ordem_corte_id)
+    );
+  `);
+
+  if (tabelaExiste(db, 'ordem_corte_tecido_ficha') && !colunaExiste(db, 'ordem_corte_tecido_ficha', 'largura_unidade')) {
+    db.exec(`ALTER TABLE ordem_corte_tecido_ficha ADD COLUMN largura_unidade TEXT NOT NULL DEFAULT 'cm'`);
+  }
+  if (tabelaExiste(db, 'ordem_corte_tecido_ficha') && !colunaExiste(db, 'ordem_corte_tecido_ficha', 'numero_rolo')) {
+    db.exec(`ALTER TABLE ordem_corte_tecido_ficha ADD COLUMN numero_rolo TEXT NOT NULL DEFAULT ''`);
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ordem_corte_rascunhos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      usuario_id INTEGER NOT NULL DEFAULT 0,
+      payload TEXT NOT NULL,
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (empresa_id, usuario_id)
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ordem_corte_linhas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      cor TEXT NOT NULL,
+      detalhes TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS ordem_corte_aviamentos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      aviamento_id INTEGER REFERENCES aviamentos(id) ON DELETE SET NULL,
+      descricao TEXT NOT NULL,
+      quantidade REAL NOT NULL DEFAULT 0,
+      unidade TEXT NOT NULL DEFAULT 'UN',
+      observacoes TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS ordem_corte_oficinas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      oficina TEXT NOT NULL DEFAULT '',
+      costureiro TEXT NOT NULL DEFAULT '',
+      observacoes TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS ordem_corte_historico (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      usuario_id INTEGER,
+      acao TEXT NOT NULL,
+      resumo TEXT NOT NULL DEFAULT '',
+      payload TEXT NOT NULL DEFAULT '',
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS ordem_corte_linhas_chave
+      ON ordem_corte_linhas (ordem_corte_id, lower(cor));
+    CREATE INDEX IF NOT EXISTS ordem_corte_linhas_empresa
+      ON ordem_corte_linhas (empresa_id, ordem_corte_id);
+    CREATE INDEX IF NOT EXISTS ordem_corte_aviamentos_empresa
+      ON ordem_corte_aviamentos (empresa_id, ordem_corte_id);
+    CREATE INDEX IF NOT EXISTS ordem_corte_oficinas_empresa
+      ON ordem_corte_oficinas (empresa_id, ordem_corte_id);
+    CREATE INDEX IF NOT EXISTS ordem_corte_historico_ordem
+      ON ordem_corte_historico (empresa_id, ordem_corte_id, id);
+
+    CREATE TABLE IF NOT EXISTS ordem_corte_liberacoes (
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      ordem_id INTEGER NOT NULL,
+      costureiro TEXT NOT NULL DEFAULT '',
+      valor_peca REAL NOT NULL DEFAULT 0,
+      referencia TEXT NOT NULL DEFAULT '',
+      tipo_peca TEXT NOT NULL DEFAULT '',
+      oficina TEXT NOT NULL DEFAULT '',
+      data_liberacao TEXT,
+      codigo_oc TEXT NOT NULL DEFAULT '',
+      liberado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      liberado_por INTEGER,
+      entregue_em TEXT,
+      entregue_por INTEGER,
+      PRIMARY KEY (empresa_id, ordem_corte_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS valores_peca_referencia (
+      empresa_id INTEGER NOT NULL,
+      referencia TEXT NOT NULL,
+      tipo_peca TEXT NOT NULL DEFAULT '',
+      valor_peca REAL NOT NULL DEFAULT 0,
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (empresa_id, referencia, tipo_peca)
+    );
+
+    CREATE TABLE IF NOT EXISTS oficinas_cadastro (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      nome TEXT NOT NULL DEFAULT '',
+      chave_pix TEXT NOT NULL DEFAULT '',
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS ordem_corte_liberacoes_status
+      ON ordem_corte_liberacoes (empresa_id, ordem_id);
+    CREATE INDEX IF NOT EXISTS valores_peca_referencia_empresa
+      ON valores_peca_referencia (empresa_id, referencia, tipo_peca);
+    CREATE INDEX IF NOT EXISTS oficinas_cadastro_empresa
+      ON oficinas_cadastro (empresa_id, lower(nome));
+  `);
+
+  if (tabelaExiste(db, 'ordem_corte_liberacoes') && !colunaExiste(db, 'ordem_corte_liberacoes', 'oficina')) {
+    db.exec(`ALTER TABLE ordem_corte_liberacoes ADD COLUMN oficina TEXT NOT NULL DEFAULT ''`);
+  }
+  if (tabelaExiste(db, 'ordem_corte_liberacoes') && !colunaExiste(db, 'ordem_corte_liberacoes', 'data_liberacao')) {
+    db.exec(`ALTER TABLE ordem_corte_liberacoes ADD COLUMN data_liberacao TEXT`);
+  }
+  if (tabelaExiste(db, 'ordem_corte_liberacoes') && !colunaExiste(db, 'ordem_corte_liberacoes', 'codigo_oc')) {
+    db.exec(`ALTER TABLE ordem_corte_liberacoes ADD COLUMN codigo_oc TEXT NOT NULL DEFAULT ''`);
+  }
+  if (tabelaExiste(db, 'ordem_corte_liberacoes') && !colunaExiste(db, 'ordem_corte_liberacoes', 'entregue_em')) {
+    db.exec(`ALTER TABLE ordem_corte_liberacoes ADD COLUMN entregue_em TEXT`);
+  }
+  if (tabelaExiste(db, 'ordem_corte_liberacoes') && !colunaExiste(db, 'ordem_corte_liberacoes', 'entregue_por')) {
+    db.exec(`ALTER TABLE ordem_corte_liberacoes ADD COLUMN entregue_por INTEGER`);
+  }
+  if (tabelaExiste(db, 'oficinas_cadastro') && !colunaExiste(db, 'oficinas_cadastro', 'chave_pix')) {
+    db.exec(`ALTER TABLE oficinas_cadastro ADD COLUMN chave_pix TEXT NOT NULL DEFAULT ''`);
+  }
+}
+
+function aplicarOcsDisponiveisEstampas(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ocs_disponiveis_estampas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL,
+      ordem_id INTEGER NOT NULL,
+      codigo_oc TEXT NOT NULL DEFAULT '',
+      tipo TEXT NOT NULL DEFAULT 'amostra',
+      modelo TEXT NOT NULL DEFAULT '',
+      referencia TEXT NOT NULL DEFAULT '',
+      peca TEXT NOT NULL DEFAULT '',
+      quantidade INTEGER NOT NULL DEFAULT 0,
+      cores TEXT NOT NULL DEFAULT '[]',
+      tamanhos TEXT NOT NULL DEFAULT '[]',
+      grade TEXT NOT NULL DEFAULT '[]',
+      costureiro TEXT NOT NULL DEFAULT '',
+      oficina TEXT NOT NULL DEFAULT '',
+      produto_id INTEGER,
+      imagem TEXT,
+      entregue_em TEXT,
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (empresa_id, ordem_corte_id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ocs_disponiveis_estampas_oc_unica
+      ON ocs_disponiveis_estampas (empresa_id, ordem_corte_id);
+    CREATE INDEX IF NOT EXISTS ocs_disponiveis_estampas_empresa
+      ON ocs_disponiveis_estampas (empresa_id, entregue_em);
+    CREATE INDEX IF NOT EXISTS ocs_disponiveis_estampas_oc
+      ON ocs_disponiveis_estampas (empresa_id, codigo_oc);
+  `);
+}
+
+function aplicarAmostrasCadastro(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS amostras_cadastro (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      modelo TEXT NOT NULL DEFAULT '',
+      peca TEXT NOT NULL DEFAULT '',
+      referencia TEXT NOT NULL DEFAULT '',
+      tipo_peca TEXT NOT NULL DEFAULT '',
+      cor TEXT NOT NULL DEFAULT '',
+      tamanho TEXT NOT NULL DEFAULT '',
+      quantidade INTEGER NOT NULL DEFAULT 0,
+      observacoes TEXT NOT NULL DEFAULT '',
+      imagem TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS amostras_cadastro_empresa
+      ON amostras_cadastro (empresa_id, atualizado_em);
+    CREATE INDEX IF NOT EXISTS amostras_cadastro_ref
+      ON amostras_cadastro (empresa_id, referencia);
+  `);
+}
+
+function aplicarExpedicaoOrdensCorte(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ordem_corte_expedicoes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      ordem_id INTEGER NOT NULL,
+      codigo_oc TEXT NOT NULL DEFAULT '',
+      oficina TEXT NOT NULL DEFAULT '',
+      costureiro TEXT NOT NULL DEFAULT '',
+      modelo TEXT NOT NULL DEFAULT '',
+      referencia TEXT NOT NULL DEFAULT '',
+      pecas INTEGER NOT NULL DEFAULT 0,
+      pecas_conferidas INTEGER,
+      conferido_em TEXT,
+      conferido_por INTEGER,
+      status TEXT NOT NULL DEFAULT 'pronto_envio',
+      encaminhado_em TEXT NOT NULL,
+      encaminhado_por INTEGER,
+      data_expedicao TEXT,
+      data_entrega TEXT,
+      observacoes TEXT,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (empresa_id, ordem_corte_id)
+    );
+    CREATE INDEX IF NOT EXISTS ordem_corte_expedicoes_status
+      ON ordem_corte_expedicoes (empresa_id, status);
+    CREATE INDEX IF NOT EXISTS ordem_corte_expedicoes_ordem
+      ON ordem_corte_expedicoes (empresa_id, ordem_id);
+  `);
+  if (tabelaExiste(db, 'ordem_corte_expedicoes') && !colunaExiste(db, 'ordem_corte_expedicoes', 'pecas_conferidas')) {
+    db.exec(`ALTER TABLE ordem_corte_expedicoes ADD COLUMN pecas_conferidas INTEGER`);
+  }
+  if (tabelaExiste(db, 'ordem_corte_expedicoes') && !colunaExiste(db, 'ordem_corte_expedicoes', 'conferido_em')) {
+    db.exec(`ALTER TABLE ordem_corte_expedicoes ADD COLUMN conferido_em TEXT`);
+  }
+  if (tabelaExiste(db, 'ordem_corte_expedicoes') && !colunaExiste(db, 'ordem_corte_expedicoes', 'conferido_por')) {
+    db.exec(`ALTER TABLE ordem_corte_expedicoes ADD COLUMN conferido_por INTEGER`);
+  }
 }
 
 function aplicarCorteInfesto(db: AppDatabase) {
@@ -787,6 +1129,9 @@ function aplicarCorteInfesto(db: AppDatabase) {
       quantidade_baixada REAL NOT NULL,
       unidade_baixa TEXT NOT NULL,
       movimento_id INTEGER,
+      autorizado_excedente INTEGER NOT NULL DEFAULT 0,
+      autorizado_por INTEGER,
+      usuario_id INTEGER,
       concluido_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -806,6 +1151,40 @@ function aplicarCorteInfesto(db: AppDatabase) {
       ON cortes_infesto (empresa_id, concluido_em);
     CREATE INDEX IF NOT EXISTS corte_infesto_itens_corte
       ON corte_infesto_itens (corte_infesto_id);
+  `);
+
+  if (tabelaExiste(db, 'cortes_infesto') && !colunaExiste(db, 'cortes_infesto', 'autorizado_excedente')) {
+    db.exec(`ALTER TABLE cortes_infesto ADD COLUMN autorizado_excedente INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (tabelaExiste(db, 'cortes_infesto') && !colunaExiste(db, 'cortes_infesto', 'autorizado_por')) {
+    db.exec(`ALTER TABLE cortes_infesto ADD COLUMN autorizado_por INTEGER`);
+  }
+  if (tabelaExiste(db, 'cortes_infesto') && !colunaExiste(db, 'cortes_infesto', 'usuario_id')) {
+    db.exec(`ALTER TABLE cortes_infesto ADD COLUMN usuario_id INTEGER`);
+  }
+  if (tabelaExiste(db, 'cortes_infesto') && !colunaExiste(db, 'cortes_infesto', 'peso_folha')) {
+    db.exec(`ALTER TABLE cortes_infesto ADD COLUMN peso_folha REAL NOT NULL DEFAULT 0`);
+  }
+}
+
+function aplicarConsumoCoresOc(db: AppDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ordem_corte_consumo_cores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER NOT NULL,
+      ordem_corte_id INTEGER NOT NULL REFERENCES ordens_corte(id) ON DELETE CASCADE,
+      cor TEXT NOT NULL,
+      cor_chave TEXT NOT NULL,
+      camadas INTEGER NOT NULL DEFAULT 0,
+      peso_folha REAL NOT NULL DEFAULT 0,
+      consumo_total REAL NOT NULL DEFAULT 0,
+      unidade TEXT NOT NULL DEFAULT 'KG',
+      movimento_id INTEGER,
+      baixado_em TEXT,
+      baixado_por INTEGER
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ordem_corte_consumo_cores_unica
+      ON ordem_corte_consumo_cores (empresa_id, ordem_corte_id, cor_chave);
   `);
 }
 

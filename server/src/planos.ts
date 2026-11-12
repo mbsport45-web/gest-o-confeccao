@@ -219,6 +219,18 @@ export type UsoPlano = Record<ChaveLimite, UsoLimite>;
 
 export const CODIGO_LIMITE_PLANO = 'limite_plano' as const;
 
+/**
+ * MODO DE TESTES — limite mensal de ordens (OCs/OPs).
+ *
+ * `true`  = não bloqueia criar OP/OC quando o Básico chega em 20/20.
+ *           Os outros limites do plano continuam valendo.
+ * `false` = reativa o bloqueio mensal (comportamento comercial).
+ *
+ * Não altera cadastro do plano, pagamentos nem o banco.
+ * Espelhar o mesmo valor em `web/src/api.ts`.
+ */
+export const LIBERAR_LIMITE_ORDENS_MES_TESTES = true;
+
 export type RecursosPlano = {
   expedicao: boolean;
   financeiro: boolean;
@@ -604,6 +616,7 @@ export function avaliarLimite(
     | undefined;
   if (!row) throw new Error('assinatura não encontrada');
   const plano = mapearPlano(row);
+  if (chave === 'ordens_mes' && LIBERAR_LIMITE_ORDENS_MES_TESTES) return { ok: true };
   const maximo = plano.limites[chave];
   if (maximo === null) return { ok: true };
   const atual = ocupacao ?? contarUso(db, empresaId)[chave];

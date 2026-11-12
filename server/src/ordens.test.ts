@@ -331,6 +331,63 @@ describe('API de ordens de produção', () => {
     expect(ainda.body.status).toBe('planejada');
   });
 
+  it('cria OP e OC com tecido sem saldo e não movimenta estoque', async () => {
+    const materia = await api.post('/api/materias-primas').send({
+      codigo: 'PV-ZERADO',
+      nome: 'Malha Sem Saldo',
+      tipo: 'tecido',
+      unidade: 'KG',
+      composicao: '48% algodao 52% poliester',
+    });
+    const produto = await api.post('/api/produtos').send({
+      sku: 'CAM-ZERO',
+      nome: 'Camiseta Zero',
+    });
+    const movimentosAntes = db.prepare('SELECT COUNT(*) AS n FROM estoque_movimentos').get() as { n: number };
+
+    const op = await api.post('/api/ordens').send({
+      cliente: 'Loja Zero',
+      produto_id: produto.body.id,
+      quantidade: 8,
+      status: 'planejada',
+      requisitos: [{ materia_prima_id: materia.body.id, quantidade: 1 }],
+      grade: [
+        { cor: 'Preto', tamanho: 'M', quantidade: 5 },
+        { cor: 'Preto', tamanho: 'G', quantidade: 3 },
+      ],
+    });
+    expect(op.status).toBe(201);
+    expect(op.body.requisitos[0]).toMatchObject({
+      materia_prima_id: materia.body.id,
+      estoque_disponivel: 0,
+      suficiente: false,
+    });
+
+    const opCorte = await api.post('/api/ordens').send({
+      cliente: 'Loja Corte Zero',
+      produto: 'Peca Corte',
+      quantidade: 2,
+      status: 'corte',
+      requisitos: [{ materia_prima_id: materia.body.id, quantidade: 2 }],
+      grade: [{ cor: 'Preto', tamanho: 'M', quantidade: 2 }],
+    });
+    expect(opCorte.status).toBe(201);
+    expect(opCorte.body.status).toBe('corte');
+
+    const oc = await api.post(`/api/ordens/${op.body.id}/ordem-corte`).send({});
+    expect(oc.status).toBe(201);
+    expect(oc.body.materia_prima_id).toBe(materia.body.id);
+    expect(oc.body.composicao).toBe('48% algodao 52% poliester');
+
+    const movimentosDepois = db.prepare('SELECT COUNT(*) AS n FROM estoque_movimentos').get() as { n: number };
+    expect(movimentosDepois.n).toBe(movimentosAntes.n);
+    const saldo = await api.get('/api/estoque').query({ tipo: 'materia' });
+    const item = (
+      saldo.body.data as Array<{ materia_prima_id: number; quantidade: number }>
+    ).find((row) => row.materia_prima_id === materia.body.id);
+    expect(item?.quantidade ?? 0).toBe(0);
+  });
+
   it('impede transição a partir de status terminal e exclusão em produção', async () => {
     const criada = await api.post('/api/ordens').send({
       cliente: 'Loja Fim',
@@ -662,7 +719,7 @@ describe('API de ordens de produção', () => {
 
     const reaberta = await api.get(`/api/ordens/${op.body.id}`);
     expect(reaberta.body.grade[0].cor).toBe('Preto carvão');
-    expect(reaberta.body.ordem_corte.grade[0].cor).toBe('Preto fosco');
+    expect(reaberta.body.ordem_corte.grade[0].cor).toBe('Preto carvão');
 
     const exclusao = await api.delete(`/api/ordens/cores/${criada.body.id}`);
     expect(exclusao.status).toBe(409);

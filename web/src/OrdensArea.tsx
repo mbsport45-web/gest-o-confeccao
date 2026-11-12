@@ -1,16 +1,20 @@
 import { useState } from 'react';
 import type { AssinaturaEmpresa } from './api';
-import { CoresPage } from './CoresPage';
 import { OrdensPage } from './OrdensPage';
 
 const ABAS = [
   { id: 'ordens', label: 'Ordens' },
-  { id: 'cores', label: 'Cores' },
+  { id: 'criar-oc', label: 'Criar OC' },
 ] as const;
 
 type Aba = (typeof ABAS)[number]['id'];
 
-export function OrdensArea({ sessao }: { sessao: { assinatura: AssinaturaEmpresa } }) {
+export function OrdensArea({
+  sessao,
+}: {
+  sessao: { assinatura: AssinaturaEmpresa };
+  onIrFila?: () => void;
+}) {
   const [aba, setAba] = useState<Aba>('ordens');
 
   return (
@@ -31,11 +35,16 @@ export function OrdensArea({ sessao }: { sessao: { assinatura: AssinaturaEmpresa
           </button>
         ))}
       </div>
-      <div role="tabpanel" id="painel-ordens-ordens" aria-labelledby="aba-ordens-ordens" hidden={aba !== 'ordens'}>
-        <OrdensPage sessao={sessao} ativa={aba === 'ordens'} />
-      </div>
-      <div role="tabpanel" id="painel-ordens-cores" aria-labelledby="aba-ordens-cores" hidden={aba !== 'cores'}>
-        <CoresPage />
+      <div
+        role="tabpanel"
+        id={aba === 'criar-oc' ? 'painel-ordens-criar-oc' : 'painel-ordens-ordens'}
+        aria-labelledby={aba === 'criar-oc' ? 'aba-ordens-criar-oc' : 'aba-ordens-ordens'}
+      >
+        <OrdensPage
+          sessao={sessao}
+          visao={aba === 'criar-oc' ? 'criar-oc' : 'producao'}
+          onIrProducao={() => setAba('ordens')}
+        />
       </div>
     </div>
   );

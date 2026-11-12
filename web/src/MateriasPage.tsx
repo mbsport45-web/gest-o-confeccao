@@ -14,8 +14,8 @@ export function MateriasPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
   const [aba, setAba] = useState<Aba>('materias');
 
   return (
-    <div className="modulo-compras-estoque">
-      <div className="abas" role="tablist" aria-label="Matérias">
+    <div className="modulo-compras-estoque modulo-materias">
+      <div className="abas abas--materias" role="tablist" aria-label="Matérias">
         {ABAS.map((item) => (
           <button
             key={item.id}

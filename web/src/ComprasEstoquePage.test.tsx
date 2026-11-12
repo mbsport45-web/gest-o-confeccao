@@ -62,13 +62,17 @@ describe('abas de Compras e Estoque', () => {
     expect(screen.queryByRole('tab', { name: 'Movimentações' })).toBeNull();
   });
 
-  it('mantém Materiais, Estoque e Produção no menu', () => {
+  it('mantém Materiais e Produção no menu e tira só a navegação de Estoque', () => {
     const app = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'App.tsx'), 'utf8');
     expect(app).toContain("label: 'Materiais'");
-    expect(app).toContain("label: 'Estoque'");
+    expect(app).not.toContain("label: 'Estoque', grupo: 'Produção'");
     expect(app).toContain("label: 'Ordens de Produção'");
-    expect(app).toContain("label: 'Produção/Etapas'");
+    expect(app).toContain("label: 'Liberação Ficha/Oficina'");
+    expect(app).toContain("label: 'Compras e Estoque'");
+    expect(app).toContain("label: 'Enfesto e Corte'");
+    expect(app).toContain("label: 'OCs disponíveis/estampas'");
     expect(app).toContain('<EstoquePage />');
     expect(app).toContain('<MateriasPage');
+    expect(app).toContain('<PainelMotivacao />');
   });
 });

@@ -534,6 +534,9 @@ CREATE TABLE IF NOT EXISTS cortes_infesto (
   quantidade_baixada NUMERIC NOT NULL,
   unidade_baixa TEXT NOT NULL,
   movimento_id INTEGER,
+  autorizado_excedente INTEGER NOT NULL DEFAULT 0,
+  autorizado_por INTEGER,
+  usuario_id INTEGER,
   concluido_em TEXT NOT NULL DEFAULT (to_char((CURRENT_TIMESTAMP AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:MI:SS')),
   CONSTRAINT cortes_infesto_fk_1 FOREIGN KEY (ordem_id) REFERENCES ordens_producao (id)
 );

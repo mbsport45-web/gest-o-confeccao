@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GENEROS_PRODUTO,
   UNIDADES_PRODUTO,
@@ -16,8 +16,9 @@ import {
   type AssinaturaEmpresa,
 } from './api';
 import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
+import { ImportacaoProdutosPainel } from './ImportacaoProdutosPainel';
 
-type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
+type ModoPainel = 'criar' | 'editar' | 'detalhe' | 'importar' | null;
 
 const FORM_VAZIO: ProdutoPayload & { coresTexto: string; tamanhosTexto: string } = {
   sku: '',
@@ -42,6 +43,8 @@ const FORM_VAZIO: ProdutoPayload & { coresTexto: string; tamanhosTexto: string }
 };
 
 type FormProduto = typeof FORM_VAZIO;
+
+const CATALOGO_POR_PAGINA = 200;
 
 const GENERO_LABEL: Record<string, string> = {
   masculino: 'Masculino',
@@ -121,10 +124,10 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
   const [q, setQ] = useState('');
   const [qDebounced, setQDebounced] = useState('');
   const [statusFiltro, setStatusFiltro] = useState<StatusProduto | ''>('');
-  const [categoriaFiltro, setCategoriaFiltro] = useState('');
-  const [marcaFiltro, setMarcaFiltro] = useState('');
-  const [generoFiltro, setGeneroFiltro] = useState('');
+  const [tipoFiltro, setTipoFiltro] = useState('');
   const [carregando, setCarregando] = useState(true);
+  const fotoInputRef = useRef<HTMLInputElement>(null);
+  const fotoAlvoRef = useRef<number | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [modo, setModo] = useState<ModoPainel>(null);
   const [form, setForm] = useState<FormProduto>(FORM_VAZIO);
@@ -143,7 +146,7 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
 
   useEffect(() => {
     setPagina(1);
-  }, [statusFiltro, categoriaFiltro, marcaFiltro, generoFiltro]);
+  }, [statusFiltro]);
 
   const recarregar = useCallback(async () => {
     try {
@@ -151,11 +154,8 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
       const lista = await listarProdutos({
         q: qDebounced,
         status: statusFiltro,
-        categoria: categoriaFiltro,
-        marca: marcaFiltro,
-        genero: generoFiltro,
         pagina,
-        por_pagina: 8,
+        por_pagina: CATALOGO_POR_PAGINA,
       });
       setProdutos(lista.data);
       setTotal(lista.total);
@@ -166,7 +166,7 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
     } finally {
       setCarregando(false);
     }
-  }, [qDebounced, statusFiltro, categoriaFiltro, marcaFiltro, generoFiltro, pagina]);
+  }, [qDebounced, statusFiltro, pagina]);
 
   useEffect(() => {
     recarregar();
@@ -176,6 +176,22 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
     () => parseLista(form.coresTexto).length * parseLista(form.tamanhosTexto).length,
     [form.coresTexto, form.tamanhosTexto],
   );
+
+  const tiposCatalogo = useMemo(() => {
+    const tipos = new Set<string>();
+    for (const produto of produtos) {
+      const tipo = (produto.categoria ?? '').trim();
+      if (tipo) tipos.add(tipo);
+    }
+    return [...tipos].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [produtos]);
+
+  const modelosVisiveis = useMemo(() => {
+    if (!tipoFiltro) return produtos;
+    return produtos.filter(
+      (produto) => (produto.categoria ?? '').trim().toLocaleLowerCase('pt-BR') === tipoFiltro.toLocaleLowerCase('pt-BR'),
+    );
+  }, [produtos, tipoFiltro]);
 
   function abrirCriar() {
     if (!podeCriarNoPlano(sessao.assinatura, 'produtos')) return;
@@ -284,29 +300,80 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
     reader.readAsDataURL(file);
   }
 
+  function pedirTrocaFoto(id: number) {
+    fotoAlvoRef.current = id;
+    fotoInputRef.current?.click();
+  }
+
+  async function aplicarFotoArquivo(file: File | undefined) {
+    const id = fotoAlvoRef.current;
+    if (!file || id == null) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      void (async () => {
+        try {
+          await atualizarProduto(id, { imagem: String(reader.result ?? '') });
+          if (detalhe?.id === id) setDetalhe(await obterProduto(id));
+          if (editandoId === id) {
+            setForm((atual) => ({ ...atual, imagem: String(reader.result ?? '') }));
+          }
+          await recarregar();
+        } catch (err) {
+          setErro((err as Error).message);
+        }
+      })();
+    };
+    reader.readAsDataURL(file);
+  }
+
   return (
-    <main className="app__main app__main--produtos">
-      <section className="card card--wide">
+    <main className="app__main app__main--produtos app__main--produtos-catalogo">
+      <section className="catalogo-modelos" aria-label="Catálogo de modelos e referências">
         <div className="card__head">
-          <h2>Produtos</h2>
-          <button
-            type="button"
-            className="btn-secundario"
-            onClick={abrirCriar}
-            disabled={!podeCriarNoPlano(sessao.assinatura, 'produtos')}
-          >
-            Novo produto
-          </button>
+          <h2>Catálogo de modelos e referências</h2>
+          <div className="card__head-acoes">
+            <button
+              type="button"
+              className="btn-secundario"
+              onClick={() => {
+                setModo('importar');
+                setDetalhe(null);
+                setEditandoId(null);
+              }}
+            >
+              Importar produtos
+            </button>
+            <button
+              type="button"
+              className="btn-secundario"
+              onClick={abrirCriar}
+              disabled={!podeCriarNoPlano(sessao.assinatura, 'produtos')}
+            >
+              Novo produto
+            </button>
+          </div>
         </div>
         <AvisoLimite assinatura={sessao.assinatura} chave="produtos" />
 
-        <div className="filtros filtros--produtos">
+        <div className="filtros filtros--catalogo">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar nome, SKU, código de barras, marca…"
-            aria-label="Buscar produtos"
+            placeholder="Pesquisar por nome ou referência"
+            aria-label="Pesquisar por nome ou referência"
           />
+          <select
+            value={tipoFiltro}
+            onChange={(e) => setTipoFiltro(e.target.value)}
+            aria-label="Filtrar por tipo"
+          >
+            <option value="">Todos os tipos</option>
+            {tiposCatalogo.map((tipo) => (
+              <option key={tipo} value={tipo}>
+                {tipo}
+              </option>
+            ))}
+          </select>
           <select
             value={statusFiltro}
             onChange={(e) =>
@@ -318,125 +385,112 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
             <option value="ativo">Ativo</option>
             <option value="inativo">Inativo</option>
           </select>
-          <input
-            value={categoriaFiltro}
-            onChange={(e) => setCategoriaFiltro(e.target.value)}
-            placeholder="Categoria"
-            aria-label="Filtrar categoria"
-          />
-          <input
-            value={marcaFiltro}
-            onChange={(e) => setMarcaFiltro(e.target.value)}
-            placeholder="Marca"
-            aria-label="Filtrar marca"
-          />
-          <select
-            value={generoFiltro}
-            onChange={(e) => setGeneroFiltro(e.target.value)}
-            aria-label="Filtrar gênero"
-          >
-            <option value="">Todos os gêneros</option>
-            {GENEROS_PRODUTO.map((g) => (
-              <option key={g} value={g}>
-                {GENERO_LABEL[g]}
-              </option>
-            ))}
-          </select>
         </div>
 
         {erro && <p className="erro">{erro}</p>}
 
+        <input
+          ref={fotoInputRef}
+          type="file"
+          accept="image/*"
+          hidden
+          aria-label="Arquivo da foto do modelo"
+          onChange={(e) => {
+            const arquivo = e.target.files?.[0];
+            e.target.value = '';
+            void aplicarFotoArquivo(arquivo);
+          }}
+        />
+
         {carregando ? (
           <p className="vazio">Carregando…</p>
-        ) : produtos.length === 0 ? (
-          <p className="vazio">Nenhum produto encontrado.</p>
+        ) : modelosVisiveis.length === 0 ? (
+          <p className="vazio">Nenhum modelo encontrado.</p>
         ) : (
-          <table className="tabela">
-            <thead>
-              <tr>
-                <th>SKU</th>
-                <th>Produto</th>
-                <th>Categoria</th>
-                <th>Marca</th>
-                <th>Venda</th>
-                <th>Variantes</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {produtos.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.sku ?? '—'}</td>
-                  <td>
-                    <div className="produto-nome">
-                      {p.imagem ? (
-                        <img src={p.imagem} alt="" className="thumb" />
-                      ) : null}
-                      <span>{p.nome}</span>
-                    </div>
-                  </td>
-                  <td>{p.categoria ?? '—'}</td>
-                  <td>{p.marca ?? '—'}</td>
-                  <td>{moeda.format(p.preco_venda)}</td>
-                  <td>{p.variantes.length}</td>
-                  <td>
-                    <span className={`pill pill--${p.status}`}>
-                      {p.status === 'ativo' ? 'Ativo' : 'Inativo'}
-                    </span>
-                  </td>
-                  <td className="acoes">
-                    <button type="button" onClick={() => abrirDetalhe(p.id)}>
-                      Ver
-                    </button>
-                    <button type="button" onClick={() => abrirEditar(p.id)}>
-                      Editar
-                    </button>
-                    <button type="button" onClick={() => alternarStatus(p)}>
-                      {p.status === 'ativo' ? 'Inativar' : 'Ativar'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-remover-texto"
-                      onClick={() => excluir(p)}
-                    >
-                      Excluir
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="catalogo-modelos__grade" role="list">
+            {modelosVisiveis.map((p) => (
+              <article key={p.id} className="catalogo-card" role="listitem">
+                <button
+                  type="button"
+                  className="catalogo-card__foto"
+                  onClick={() => abrirDetalhe(p.id)}
+                  aria-label={`Visualizar ${p.nome}`}
+                >
+                  {p.imagem ? (
+                    <img src={p.imagem} alt={p.nome} />
+                  ) : (
+                    <span className="catalogo-card__sem-foto">Sem foto</span>
+                  )}
+                </button>
+                <div className="catalogo-card__info">
+                  <strong>{p.nome}</strong>
+                  <span>REF {p.sku || '—'}</span>
+                </div>
+                <div className="catalogo-card__acoes">
+                  <button type="button" onClick={() => abrirDetalhe(p.id)}>
+                    Visualizar
+                  </button>
+                  <button type="button" onClick={() => abrirEditar(p.id)}>
+                    Editar
+                  </button>
+                  <button type="button" onClick={() => pedirTrocaFoto(p.id)}>
+                    Trocar foto
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
         )}
 
         <div className="paginacao">
           <span>
-            {total} produto{total === 1 ? '' : 's'}
+            {tipoFiltro ? modelosVisiveis.length : total} modelo
+            {(tipoFiltro ? modelosVisiveis.length : total) === 1 ? '' : 's'}
           </span>
-          <div>
-            <button
-              type="button"
-              disabled={pagina <= 1}
-              onClick={() => setPagina((p) => p - 1)}
-            >
-              Anterior
-            </button>
-            <span>
-              Página {pagina} de {totalPaginas}
-            </span>
-            <button
-              type="button"
-              disabled={pagina >= totalPaginas}
-              onClick={() => setPagina((p) => p + 1)}
-            >
-              Próxima
-            </button>
-          </div>
+          {totalPaginas > 1 ? (
+            <div>
+              <button
+                type="button"
+                disabled={pagina <= 1}
+                onClick={() => setPagina((p) => p - 1)}
+              >
+                Anterior
+              </button>
+              <span>
+                Página {pagina} de {totalPaginas}
+              </span>
+              <button
+                type="button"
+                disabled={pagina >= totalPaginas}
+                onClick={() => setPagina((p) => p + 1)}
+              >
+                Próxima
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
 
-      {modo && (
-        <section className="card">
+      {modo === 'importar' ? (
+        <div className="catalogo-painel catalogo-painel--largo">
+          <ImportacaoProdutosPainel
+            onFechar={() => setModo(null)}
+            onConcluido={() => recarregar()}
+          />
+        </div>
+      ) : null}
+
+      {modo && modo !== 'importar' ? (
+        <button
+          type="button"
+          className="catalogo-painel__fundo"
+          aria-label="Fechar painel"
+          onClick={() => setModo(null)}
+        />
+      ) : null}
+
+      {modo && modo !== 'importar' && (
+        <section className="card catalogo-painel">
           <div className="card__head">
             <h2>
               {modo === 'criar' && 'Novo produto'}
@@ -451,8 +505,18 @@ export function ProdutosPage({ sessao }: { sessao: { assinatura: AssinaturaEmpre
           {modo === 'detalhe' && detalhe ? (
             <div>
               {detalhe.imagem ? (
-                <img src={detalhe.imagem} alt={detalhe.nome} className="produto-foto" />
-              ) : null}
+                <img src={detalhe.imagem} alt={detalhe.nome} className="produto-foto produto-foto--catalogo" />
+              ) : (
+                <p className="catalogo-card__sem-foto">Sem foto</p>
+              )}
+              <div className="catalogo-card__acoes catalogo-card__acoes--painel">
+                <button type="button" onClick={() => pedirTrocaFoto(detalhe.id)}>
+                  Trocar foto
+                </button>
+                <button type="button" onClick={() => abrirEditar(detalhe.id)}>
+                  Editar
+                </button>
+              </div>
               <dl className="detalhe">
                 <div><dt>SKU</dt><dd>{detalhe.sku ?? '—'}</dd></div>
                 <div><dt>Nome</dt><dd>{detalhe.nome}</dd></div>

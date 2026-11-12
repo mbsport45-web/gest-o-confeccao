@@ -66,10 +66,42 @@ const moeda = new Intl.NumberFormat('pt-BR', {
   currency: 'BRL',
 });
 
+const quantidade = new Intl.NumberFormat('pt-BR', {
+  maximumFractionDigits: 3,
+});
+
+function textoReferencia(m: MateriaPrima) {
+  return m.codigo?.trim() || m.referencia_fornecedor?.trim() || '—';
+}
+
+function textoNomeDescricao(m: MateriaPrima) {
+  const descricao = m.descricao?.trim();
+  return descricao ? `${m.nome} · ${descricao}` : m.nome;
+}
+
+function textoCor(cor: string | null | undefined) {
+  return cor?.trim() || '—';
+}
+
+function textoEstoque(m: MateriaPrima) {
+  return `${quantidade.format(Number(m.estoque_atual) || 0)} ${m.unidade}`;
+}
+
+function classeEstoque(m: MateriaPrima) {
+  const atual = Number(m.estoque_atual) || 0;
+  if (atual <= 0) return 'pill pill--estoque-zerado';
+  if (m.estoque_minimo > 0 && atual < m.estoque_minimo) return 'pill pill--estoque-baixo';
+  return 'pill pill--estoque-ok';
+}
+
+function textoCusto(m: MateriaPrima) {
+  return `${moeda.format(m.custo)} / ${m.unidade}`;
+}
+
+const LISTA_TODAS = 100;
+
 export function MateriasPrimasPage({ sessao }: { sessao: { assinatura: AssinaturaEmpresa } }) {
   const [materias, setMaterias] = useState<MateriaPrima[]>([]);
-  const [pagina, setPagina] = useState(1);
-  const [totalPaginas, setTotalPaginas] = useState(1);
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState('');
   const [qDebounced, setQDebounced] = useState('');
@@ -85,38 +117,42 @@ export function MateriasPrimasPage({ sessao }: { sessao: { assinatura: Assinatur
   const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      setQDebounced(q);
-      setPagina(1);
-    }, 300);
+    const t = setTimeout(() => setQDebounced(q), 300);
     return () => clearTimeout(t);
   }, [q]);
-
-  useEffect(() => {
-    setPagina(1);
-  }, [statusFiltro, tipoFiltro, categoriaFiltro]);
 
   const recarregar = useCallback(async () => {
     try {
       setCarregando(true);
-      const lista = await listarMateriasPrimas({
+      const filtros = {
         q: qDebounced,
         status: statusFiltro,
         tipo: tipoFiltro,
         categoria: categoriaFiltro,
-        pagina,
-        por_pagina: 8,
+      };
+      const primeira = await listarMateriasPrimas({
+        ...filtros,
+        pagina: 1,
+        por_pagina: LISTA_TODAS,
       });
-      setMaterias(lista.data);
-      setTotal(lista.total);
-      setTotalPaginas(lista.total_paginas);
+      const itens = [...primeira.data];
+      for (let pagina = 2; pagina <= primeira.total_paginas; pagina += 1) {
+        const extra = await listarMateriasPrimas({
+          ...filtros,
+          pagina,
+          por_pagina: LISTA_TODAS,
+        });
+        itens.push(...extra.data);
+      }
+      setMaterias(itens);
+      setTotal(primeira.total);
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setCarregando(false);
     }
-  }, [qDebounced, statusFiltro, tipoFiltro, categoriaFiltro, pagina]);
+  }, [qDebounced, statusFiltro, tipoFiltro, categoriaFiltro]);
 
   useEffect(() => {
     recarregar();
@@ -208,53 +244,55 @@ export function MateriasPrimasPage({ sessao }: { sessao: { assinatura: Assinatur
       <section className="card card--wide">
         <div className="card__head">
           <h2>Matérias-primas</h2>
+        </div>
+        <AvisoLimite assinatura={sessao.assinatura} chave="materiais" />
+
+        <div className="materias-toolbar">
+          <div className="filtros filtros--materias">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar nome, código, cor, fornecedor…"
+              aria-label="Buscar matérias-primas"
+            />
+            <select
+              value={statusFiltro}
+              onChange={(e) =>
+                setStatusFiltro(e.target.value as StatusMateria | '')
+              }
+              aria-label="Filtrar status"
+            >
+              <option value="">Todos os status</option>
+              <option value="ativo">Ativo</option>
+              <option value="inativo">Inativo</option>
+            </select>
+            <select
+              value={tipoFiltro}
+              onChange={(e) => setTipoFiltro(e.target.value)}
+              aria-label="Filtrar tipo"
+            >
+              <option value="">Todos os tipos</option>
+              {TIPOS_MATERIA.map((t) => (
+                <option key={t} value={t}>
+                  {TIPO_MATERIA_LABEL[t]}
+                </option>
+              ))}
+            </select>
+            <input
+              value={categoriaFiltro}
+              onChange={(e) => setCategoriaFiltro(e.target.value)}
+              placeholder="Categoria"
+              aria-label="Filtrar categoria"
+            />
+          </div>
           <button
             type="button"
-            className="btn-secundario"
+            className="btn-secundario materias-toolbar__acao"
             onClick={abrirCriar}
             disabled={!podeCriarNoPlano(sessao.assinatura, 'materiais')}
           >
             Nova matéria-prima
           </button>
-        </div>
-        <AvisoLimite assinatura={sessao.assinatura} chave="materiais" />
-
-        <div className="filtros filtros--materias">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar nome, código, cor, fornecedor…"
-            aria-label="Buscar matérias-primas"
-          />
-          <select
-            value={statusFiltro}
-            onChange={(e) =>
-              setStatusFiltro(e.target.value as StatusMateria | '')
-            }
-            aria-label="Filtrar status"
-          >
-            <option value="">Todos os status</option>
-            <option value="ativo">Ativo</option>
-            <option value="inativo">Inativo</option>
-          </select>
-          <select
-            value={tipoFiltro}
-            onChange={(e) => setTipoFiltro(e.target.value)}
-            aria-label="Filtrar tipo"
-          >
-            <option value="">Todos os tipos</option>
-            {TIPOS_MATERIA.map((t) => (
-              <option key={t} value={t}>
-                {TIPO_MATERIA_LABEL[t]}
-              </option>
-            ))}
-          </select>
-          <input
-            value={categoriaFiltro}
-            onChange={(e) => setCategoriaFiltro(e.target.value)}
-            placeholder="Categoria"
-            aria-label="Filtrar categoria"
-          />
         </div>
 
         {erro && <p className="erro">{erro}</p>}
@@ -264,28 +302,31 @@ export function MateriasPrimasPage({ sessao }: { sessao: { assinatura: Assinatur
         ) : materias.length === 0 ? (
           <p className="vazio">Nenhuma matéria-prima encontrada.</p>
         ) : (
-          <table className="tabela">
+          <div className="materias-tabela-rolagem">
+          <table className="tabela tabela--materias" aria-label="Matérias-primas">
             <thead>
               <tr>
-                <th>Código</th>
+                <th>Referência</th>
                 <th>Nome</th>
-                <th>Tipo</th>
                 <th>Cor</th>
-                <th>Unid.</th>
+                <th>Unidade</th>
+                <th>Estoque</th>
                 <th>Custo</th>
-                <th>Status</th>
+                <th>Situação</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {materias.map((m) => (
                 <tr key={m.id}>
-                  <td>{m.codigo ?? '—'}</td>
-                  <td>{m.nome}</td>
-                  <td>{TIPO_MATERIA_LABEL[m.tipo] ?? m.tipo}</td>
-                  <td>{m.cor ?? '—'}</td>
-                  <td>{m.unidade}</td>
-                  <td>{moeda.format(m.custo)}</td>
+                  <td className="materias-cel-ref">{textoReferencia(m)}</td>
+                  <td className="materias-cel-nome">{textoNomeDescricao(m)}</td>
+                  <td>{textoCor(m.cor)}</td>
+                  <td className="materias-cel-unidade">{m.unidade}</td>
+                  <td>
+                    <span className={classeEstoque(m)}>{textoEstoque(m)}</span>
+                  </td>
+                  <td className="materias-cel-custo">{textoCusto(m)}</td>
                   <td>
                     <span className={`pill pill--${m.status}`}>
                       {m.status === 'ativo' ? 'Ativo' : 'Inativo'}
@@ -313,36 +354,23 @@ export function MateriasPrimasPage({ sessao }: { sessao: { assinatura: Assinatur
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
-        <div className="paginacao">
-          <span>
-            {total} matéria{total === 1 ? '-prima' : 's-primas'}
-          </span>
-          <div>
-            <button
-              type="button"
-              disabled={pagina <= 1}
-              onClick={() => setPagina((p) => p - 1)}
-            >
-              Anterior
-            </button>
-            <span>
-              Página {pagina} de {totalPaginas}
-            </span>
-            <button
-              type="button"
-              disabled={pagina >= totalPaginas}
-              onClick={() => setPagina((p) => p + 1)}
-            >
-              Próxima
-            </button>
-          </div>
-        </div>
+        <p className="materias-resumo">
+          {total} matéria{total === 1 ? '-prima' : 's-primas'}
+        </p>
       </section>
 
       {modo && (
-        <section className="card">
+        <>
+        <button
+          type="button"
+          className="catalogo-painel__fundo"
+          aria-label="Fechar painel"
+          onClick={() => setModo(null)}
+        />
+        <section className="card catalogo-painel">
           <div className="card__head">
             <h2>
               {modo === 'criar' && 'Nova matéria-prima'}
@@ -356,17 +384,23 @@ export function MateriasPrimasPage({ sessao }: { sessao: { assinatura: Assinatur
 
           {modo === 'detalhe' && detalhe ? (
             <dl className="detalhe">
-              <div><dt>Código</dt><dd>{detalhe.codigo ?? '—'}</dd></div>
+              <div><dt>Referência</dt><dd>{textoReferencia(detalhe)}</dd></div>
               <div><dt>Nome</dt><dd>{detalhe.nome}</dd></div>
               <div><dt>Descrição</dt><dd>{detalhe.descricao ?? '—'}</dd></div>
               <div><dt>Tipo</dt><dd>{TIPO_MATERIA_LABEL[detalhe.tipo] ?? detalhe.tipo}</dd></div>
               <div><dt>Categoria</dt><dd>{detalhe.categoria ?? '—'}</dd></div>
-              <div><dt>Cor</dt><dd>{detalhe.cor ?? '—'}</dd></div>
+              <div><dt>Cor</dt><dd>{textoCor(detalhe.cor)}</dd></div>
               <div><dt>Composição</dt><dd>{detalhe.composicao ?? '—'}</dd></div>
               <div><dt>Largura (cm)</dt><dd>{detalhe.largura_cm ?? '—'}</dd></div>
               <div><dt>Gramatura</dt><dd>{detalhe.gramatura ?? '—'}</dd></div>
               <div><dt>Unidade</dt><dd>{detalhe.unidade}</dd></div>
-              <div><dt>Custo</dt><dd>{moeda.format(detalhe.custo)}</dd></div>
+              <div><dt>Custo</dt><dd>{textoCusto(detalhe)}</dd></div>
+              <div>
+                <dt>Estoque atual</dt>
+                <dd>
+                  <span className={classeEstoque(detalhe)}>{textoEstoque(detalhe)}</span>
+                </dd>
+              </div>
               <div><dt>Estoque mínimo</dt><dd>{detalhe.estoque_minimo}</dd></div>
               <div><dt>Fornecedor</dt><dd>{detalhe.fornecedor ?? '—'}</dd></div>
               <div><dt>Ref. fornecedor</dt><dd>{detalhe.referencia_fornecedor ?? '—'}</dd></div>
@@ -601,6 +635,7 @@ export function MateriasPrimasPage({ sessao }: { sessao: { assinatura: Assinatur
             </form>
           )}
         </section>
+        </>
       )}
     </main>
   );

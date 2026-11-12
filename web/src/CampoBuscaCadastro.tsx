@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
 
 export type OpcaoCadastro = {
-  id: number;
+  id: number | string;
   rotulo: string;
+  texto?: string;
+  imagem?: string | null;
 };
 
 type Props = {
@@ -12,7 +14,7 @@ type Props = {
   selecionadoId: string;
   selecionadoRotulo: string;
   opcoes: OpcaoCadastro[];
-  textoNovo: string;
+  textoNovo?: string;
   cadastroAberto: boolean;
   onTexto: (valor: string) => void;
   onSelecionar: (id: string) => void;
@@ -54,8 +56,15 @@ export function CampoBuscaCadastro({
     if (selecionadoId && valor !== selecionadoRotulo) onSelecionar('');
   }
 
+  const termo = texto.trim().toLocaleLowerCase('pt-BR');
+  const filtradas = !termo
+    ? opcoes
+    : opcoes.filter((opcao) =>
+        `${opcao.rotulo} ${opcao.texto ?? ''}`.toLocaleLowerCase('pt-BR').includes(termo),
+      );
+
   function escolher(opcao: OpcaoCadastro) {
-    onTexto(opcao.rotulo);
+    onTexto(opcao.texto ?? opcao.rotulo);
     onSelecionar(String(opcao.id));
     onFecharCadastro();
     setAberto(false);
@@ -77,8 +86,13 @@ export function CampoBuscaCadastro({
           onKeyDown={(e) => {
             if (e.key !== 'Enter') return;
             e.preventDefault();
-            const unica = opcoes.length === 1 ? opcoes[0] : undefined;
-            if (unica && texto.trim() && unica.rotulo.toLocaleLowerCase('pt-BR').includes(texto.trim().toLocaleLowerCase('pt-BR'))) {
+            const unica = filtradas.length === 1 ? filtradas[0] : undefined;
+            const termoEnter = texto.trim().toLocaleLowerCase('pt-BR');
+            if (
+              unica &&
+              termoEnter &&
+              `${unica.rotulo} ${unica.texto ?? ''}`.toLocaleLowerCase('pt-BR').includes(termoEnter)
+            ) {
               escolher(unica);
             }
           }}
@@ -86,10 +100,10 @@ export function CampoBuscaCadastro({
       </label>
       {aberto && !cadastroAberto && (
         <div className="busca-cadastro__lista" id={listaId} role="listbox" aria-label={rotulo}>
-          {opcoes.length === 0 ? (
+          {filtradas.length === 0 ? (
             <p className="dica">Nenhum registro encontrado.</p>
           ) : (
-            opcoes.map((opcao) => (
+            filtradas.map((opcao) => (
               <button
                 key={opcao.id}
                 type="button"
@@ -98,23 +112,28 @@ export function CampoBuscaCadastro({
                 className="busca-cadastro__opcao"
                 onClick={() => escolher(opcao)}
               >
-                {opcao.rotulo}
+                {opcao.imagem ? (
+                  <img src={opcao.imagem} alt="" className="busca-cadastro__thumb" />
+                ) : null}
+                <span>{opcao.rotulo}</span>
               </button>
             ))
           )}
-          <button
-            type="button"
-            className="btn-secundario"
-            onClick={() => {
-              setAberto(false);
-              onAbrirCadastro();
-            }}
-          >
-            {textoNovo}
-          </button>
+          {textoNovo ? (
+            <button
+              type="button"
+              className="btn-secundario"
+              onClick={() => {
+                setAberto(false);
+                onAbrirCadastro();
+              }}
+            >
+              {textoNovo}
+            </button>
+          ) : null}
         </div>
       )}
-      {!cadastroAberto && !(aberto && !cadastroAberto) && (
+      {textoNovo && !cadastroAberto && !(aberto && !cadastroAberto) ? (
         <button
           type="button"
           className="btn-secundario"
@@ -125,7 +144,7 @@ export function CampoBuscaCadastro({
         >
           {textoNovo}
         </button>
-      )}
+      ) : null}
       {cadastroAberto && <div className="busca-cadastro__novo">{children}</div>}
     </div>
   );

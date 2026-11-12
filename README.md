@@ -174,5 +174,9 @@ Cada empresa tem um **histórico comercial imutável** (criação, início/fim d
 
 Os limites são **aplicados de verdade** na API (e refletidos na interface). Criar além do teto responde **409** com `codigo: "limite_plano"`, o uso atual, o máximo e um aviso de upgrade. A contagem usa só a empresa da sessão — `empresa_id` no body não contorna o limite. Convites pendentes ocupam vaga de usuário. Pedidos e OPs contam no mês calendário (`criado_em`). PostgreSQL/RLS ainda não entra nesta etapa.
 
+### Modo de testes — limite mensal de ordens
+
+O bloqueio de **20 OCs/OPs por mês** no plano Básico está temporariamente desligado (`LIBERAR_LIMITE_ORDENS_MES_TESTES = true` em `server/src/planos.ts` e `web/src/api.ts`). Os demais limites do plano continuam ativos. Para reativar depois dos testes, volte as duas constantes para `false`.
+
 O banco SQLite é criado automaticamente em `data/gestao-confeccao.sqlite`
 (configurável via `DB_PATH`).

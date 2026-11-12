@@ -3,7 +3,6 @@ import {
   PRIORIDADE_OP_LABEL,
   PRIORIDADES_OP,
   STATUS_OP_LABEL,
-  STATUS_VALIDOS,
   atualizarOrdem,
   atualizarStatus,
   criarCliente,
@@ -14,17 +13,18 @@ import {
   listarClientes,
   listarCores,
   listarMateriasPrimas,
-  listarOrdensPaginado,
+  listarOrdens,
   listarProdutos,
   listarTamanhos,
-  obterFichaTecnica,
   obterOrdem,
+  obterPainelProducao,
   removerOrdem,
   type AssinaturaEmpresa,
   type Cliente,
   type CorCadastro,
   type MateriaPrima,
   type OrdemProducao,
+  type PainelProducao,
   type PrioridadeOp,
   type Produto,
   type Status,
@@ -33,6 +33,7 @@ import {
 import { AvisoLimite, podeCriarNoPlano } from './AvisoLimite';
 import { CampoBuscaCadastro } from './CampoBuscaCadastro';
 import { GradeOrdem, GradeResumo } from './GradeOrdem';
+import { OrdemCorteFichaPage } from './OrdemCorteFichaPage';
 import {
   TAMANHOS_PADRAO,
   celulasDaGrade,
@@ -42,10 +43,9 @@ import {
   mensagemGrade,
   type GradeValor,
 } from './regrasGradeOrdem';
+import { etapaLinhaProducao, totaisPorEtapaVazios } from './linhaProducao';
 
 type ModoPainel = 'criar' | 'editar' | 'detalhe' | null;
-
-type ReqLinha = { materia_prima_id: string; quantidade: number };
 
 const FORM_VAZIO = {
   clienteId: '',
@@ -55,7 +55,7 @@ const FORM_VAZIO = {
   data_prevista: '',
   responsavel: '',
   observacoes: '',
-  requisitos: [] as ReqLinha[],
+  tecidoId: '',
 };
 
 const STATUS_NOVOS: Status[] = [
@@ -77,22 +77,22 @@ function formatarData(valor: string | null): string {
   return `${day}/${m}/${y}`;
 }
 
+function situacaoCadastro(ordem: OrdemProducao): 'Planejada' | 'Em andamento' | 'Entregue' | 'Cancelada' {
+  if (ordem.status === 'cancelada') return 'Cancelada';
+  if (ordem.status === 'concluida') return 'Entregue';
+  if (etapaLinhaProducao(ordem.status, ordem.ordem_corte?.status_processo ?? null)) return 'Em andamento';
+  return 'Planejada';
+}
+
 export function OrdensPage({
   sessao,
-  ativa = true,
+  visao = 'producao',
+  onIrProducao,
 }: {
   sessao: { assinatura: AssinaturaEmpresa };
-  ativa?: boolean;
+  visao?: 'producao' | 'criar-oc';
+  onIrProducao?: () => void;
 }) {
-  const [ordens, setOrdens] = useState<OrdemProducao[]>([]);
-  const [pagina, setPagina] = useState(1);
-  const [totalPaginas, setTotalPaginas] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [q, setQ] = useState('');
-  const [qDebounced, setQDebounced] = useState('');
-  const [statusFiltro, setStatusFiltro] = useState('');
-  const [prioridadeFiltro, setPrioridadeFiltro] = useState('');
-  const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [modo, setModo] = useState<ModoPainel>(null);
   const [form, setForm] = useState(FORM_VAZIO);
@@ -105,7 +105,20 @@ export function OrdensPage({
   const [catalogoCores, setCatalogoCores] = useState<CorCadastro[]>([]);
   const [catalogoTamanhos, setCatalogoTamanhos] = useState<TamanhoCadastro[]>([]);
   const [grade, setGrade] = useState<GradeValor>(gradeVazia());
+  const [painel, setPainel] = useState<PainelProducao>({
+    totais: { cadastradas: 0, andamento: 0, entregues: 0 },
+    por_etapa: totaisPorEtapaVazios(),
+    etapa: 'corte',
+    andamento: [],
+  });
+  const [verTodasOrdens, setVerTodasOrdens] = useState(false);
+  const [todasOrdens, setTodasOrdens] = useState<OrdemProducao[]>([]);
+  const [carregandoTodas, setCarregandoTodas] = useState(false);
+  const verTodasOrdensRef = useRef(false);
+  verTodasOrdensRef.current = verTodasOrdens;
   const [criandoCorte, setCriandoCorte] = useState(false);
+  const [fichaAberta, setFichaAberta] = useState(false);
+  const [fichaNova, setFichaNova] = useState(false);
   const [textoCliente, setTextoCliente] = useState('');
   const [textoProduto, setTextoProduto] = useState('');
   const [rotuloCliente, setRotuloCliente] = useState('');
@@ -122,18 +135,6 @@ export function OrdensPage({
   const [salvandoCliente, setSalvandoCliente] = useState(false);
   const [salvandoProduto, setSalvandoProduto] = useState(false);
   const produtoGradeRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setQDebounced(q);
-      setPagina(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [q]);
-
-  useEffect(() => {
-    setPagina(1);
-  }, [statusFiltro, prioridadeFiltro]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -163,32 +164,30 @@ export function OrdensPage({
   }, []);
 
   useEffect(() => {
-    if (!ativa) return;
     listarCores()
       .then(setCatalogoCores)
       .catch(() => undefined);
-  }, [ativa]);
+  }, []);
+
+  const carregarTodasOrdens = useCallback(async () => {
+    setCarregandoTodas(true);
+    try {
+      setTodasOrdens(await listarOrdens());
+    } finally {
+      setCarregandoTodas(false);
+    }
+  }, []);
 
   const recarregar = useCallback(async () => {
     try {
-      setCarregando(true);
-      const lista = await listarOrdensPaginado({
-        q: qDebounced,
-        status: statusFiltro,
-        prioridade: prioridadeFiltro,
-        pagina,
-        por_pagina: 8,
-      });
-      setOrdens(lista.data);
-      setTotal(lista.total);
-      setTotalPaginas(lista.total_paginas);
+      const producao = await obterPainelProducao();
+      setPainel(producao);
+      if (verTodasOrdensRef.current) await carregarTodasOrdens();
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
-    } finally {
-      setCarregando(false);
     }
-  }, [qDebounced, statusFiltro, prioridadeFiltro, pagina]);
+  }, [carregarTodasOrdens]);
 
   useEffect(() => {
     recarregar();
@@ -198,6 +197,14 @@ export function OrdensPage({
     () => produtos.find((p) => String(p.id) === form.produtoId),
     [produtos, form.produtoId],
   );
+  const tecidosCadastro = useMemo(
+    () => materias.filter((item) => item.tipo === 'tecido' || item.tipo === 'forro'),
+    [materias],
+  );
+  const tecidoSel = useMemo(
+    () => tecidosCadastro.find((item) => String(item.id) === form.tecidoId),
+    [tecidosCadastro, form.tecidoId],
+  );
 
   const tamanhosIniciais = useMemo(() => {
     const padrao = catalogoTamanhos
@@ -205,26 +212,6 @@ export function OrdensPage({
       .map((tamanho) => tamanho.nome);
     return padrao.length ? padrao : [...TAMANHOS_PADRAO];
   }, [catalogoTamanhos]);
-
-  useEffect(() => {
-    if (modo !== 'criar' || !form.produtoId) return;
-    const produtoId = Number(form.produtoId);
-    obterFichaTecnica(produtoId)
-      .then((ficha) => {
-        setForm((atual) => {
-          if (String(atual.produtoId) !== String(produtoId)) return atual;
-          if (atual.requisitos.length) return atual;
-          return {
-            ...atual,
-            requisitos: ficha.itens.map((i) => ({
-              materia_prima_id: String(i.materia_prima_id),
-              quantidade: i.quantidade,
-            })),
-          };
-        });
-      })
-      .catch(() => undefined);
-  }, [modo, form.produtoId]);
 
   useEffect(() => {
     if (modo !== 'criar') return;
@@ -236,34 +223,46 @@ export function OrdensPage({
   }, [modo, form.produtoId, produtos, tamanhosIniciais]);
 
   function abrirCriar() {
-    if (!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')) return;
-    setForm(FORM_VAZIO);
-    produtoGradeRef.current = null;
-    setTextoCliente('');
-    setTextoProduto('');
-    setRotuloCliente('');
-    setRotuloProduto('');
-    setNomeCliente('');
-    setNomeProduto('');
-    setReferenciaProduto('');
-    setCadastroCliente(false);
-    setCadastroProduto(false);
-    setNovoCliente({ nome: '', cpf_cnpj: '', telefone: '' });
-    setNovoProduto({ nome: '', sku: '' });
-    setErroCliente(null);
-    setErroProduto(null);
-    setGrade(gradeVazia(tamanhosIniciais));
+    if (!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')) {
+      setFichaAberta(false);
+      setFichaNova(false);
+      return;
+    }
     setEditandoId(null);
     setDetalhe(null);
-    setModo('criar');
+    setModo(null);
+    setFichaNova(true);
+    setFichaAberta(true);
     setErro(null);
   }
 
+  useEffect(() => {
+    if (visao === 'criar-oc') {
+      abrirCriar();
+      return;
+    }
+    if (fichaNova) {
+      setFichaAberta(false);
+      setFichaNova(false);
+    }
+  }, [visao]);
+
   async function abrirDetalhe(id: number) {
-    const ordem = await obterOrdem(id);
-    setDetalhe(ordem);
-    setEditandoId(null);
-    setModo('detalhe');
+    try {
+      let ordem = await obterOrdem(id);
+      if (!ordem.ordem_corte) {
+        await criarOrdemCorte(id);
+        ordem = await obterOrdem(id);
+      }
+      setDetalhe(ordem);
+      setFichaNova(false);
+      setFichaAberta(true);
+      setEditandoId(null);
+      setModo('detalhe');
+      setErro(null);
+    } catch (err) {
+      setErro((err as Error).message);
+    }
   }
 
   async function abrirEditar(id: number) {
@@ -276,10 +275,7 @@ export function OrdensPage({
       data_prevista: ordem.data_prevista ? ordem.data_prevista.slice(0, 10) : '',
       responsavel: ordem.responsavel ?? '',
       observacoes: ordem.observacoes ?? '',
-      requisitos: (ordem.requisitos ?? []).map((r) => ({
-        materia_prima_id: String(r.materia_prima_id),
-        quantidade: r.quantidade_unitaria ?? r.quantidade ?? 1,
-      })),
+      tecidoId: ordem.requisitos?.[0]?.materia_prima_id ? String(ordem.requisitos[0].materia_prima_id) : '',
     });
     setGrade(gradeDaOrdem(ordem.grade, tamanhosIniciais));
     const rotuloDaOrdem = ordem.referencia ? `${ordem.referencia} — ${ordem.produto}` : ordem.produto;
@@ -294,18 +290,14 @@ export function OrdensPage({
     setCadastroProduto(false);
     setEditandoId(id);
     setDetalhe(null);
+    setFichaAberta(false);
+    setFichaNova(false);
     setModo('editar');
   }
 
   function payloadDoForm() {
     const cliente = clientes.find((c) => String(c.id) === form.clienteId);
     const produto = produtos.find((p) => String(p.id) === form.produtoId);
-    const requisitos = form.requisitos
-      .filter((r) => r.materia_prima_id)
-      .map((r) => ({
-        materia_prima_id: Number(r.materia_prima_id),
-        quantidade: Number(r.quantidade),
-      }));
     return {
       cliente: cliente?.nome || nomeCliente,
       produto: produto?.nome || nomeProduto,
@@ -316,7 +308,9 @@ export function OrdensPage({
       data_prevista: form.data_prevista || undefined,
       responsavel: form.responsavel,
       observacoes: form.observacoes,
-      requisitos,
+      ...(form.tecidoId
+        ? { requisitos: [{ materia_prima_id: Number(form.tecidoId), quantidade: 1 }] }
+        : {}),
       grade: celulasDaGrade(grade),
     };
   }
@@ -441,6 +435,7 @@ export function OrdensPage({
       setCriandoCorte(true);
       await criarOrdemCorte(detalhe.id);
       setDetalhe(await obterOrdem(detalhe.id));
+      setFichaAberta(true);
       setErro(null);
     } catch (err) {
       setErro((err as Error).message);
@@ -455,6 +450,8 @@ export function OrdensPage({
       await removerOrdem(id);
       if (detalhe?.id === id || editandoId === id) {
         setDetalhe(null);
+        setFichaAberta(false);
+        setFichaNova(false);
         setModo(null);
         setEditandoId(null);
       }
@@ -470,153 +467,128 @@ export function OrdensPage({
     return base;
   };
 
+  function abrirTodasOrdens() {
+    onIrProducao?.();
+    if (verTodasOrdens) {
+      setVerTodasOrdens(false);
+      return;
+    }
+    setVerTodasOrdens(true);
+    void carregarTodasOrdens()
+      .then(() => setErro(null))
+      .catch((e) => setErro((e as Error).message));
+  }
+
+  const painelCheio = visao === 'producao' && !modo && !fichaAberta;
+  const mostrarPainelProducao = visao === 'producao' && !fichaAberta && modo !== 'editar';
+
   return (
-    <main className="app__main app__main--ordens">
-      <section className="card card--wide">
-        <div className="card__head">
-          <h2>Ordens de produção</h2>
-          <div className="card__head-acoes">
-            <span className="badge">
-              {total} OP{total === 1 ? '' : 's'}
-            </span>
-            <button
-              type="button"
-              className="btn-secundario"
-              onClick={abrirCriar}
-              disabled={!podeCriarNoPlano(sessao.assinatura, 'ordens_mes')}
-            >
-              Nova OP
-            </button>
-          </div>
+    <main
+      className={`app__main app__main--ordens${fichaAberta ? ' app__main--ficha-oc' : ''}${
+        painelCheio ? ' app__main--ordens-solo' : ''
+      }`}
+    >
+      {mostrarPainelProducao ? (
+      <div className="ordens-painel">
+      {erro && <p className="erro">{erro}</p>}
+      <section className="kpi-grid ordens-kpis" aria-label="Indicadores de produção">
+        <button
+          type="button"
+          className={verTodasOrdens ? 'kpi kpi--ativa' : 'kpi'}
+          aria-label="Total de ordens"
+          aria-pressed={verTodasOrdens}
+          onClick={abrirTodasOrdens}
+        >
+          <span className="kpi__label">Total de ordens</span>
+          <strong className="kpi__valor">{painel.totais.cadastradas}</strong>
+          <span className="kpi__dica">Cadastradas nesta empresa</span>
+        </button>
+        <div className="kpi">
+          <span className="kpi__label">Em andamento</span>
+          <strong className="kpi__valor">{painel.totais.andamento}</strong>
+          <span className="kpi__dica">Na linha de produção</span>
         </div>
-        <AvisoLimite assinatura={sessao.assinatura} chave="ordens_mes" />
-
-        <div className="filtros filtros--ordens">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar código, cliente, produto…"
-            aria-label="Buscar ordens"
-          />
-          <select
-            value={statusFiltro}
-            onChange={(e) => setStatusFiltro(e.target.value)}
-            aria-label="Filtrar status"
-          >
-            <option value="">Todos os status</option>
-            {STATUS_VALIDOS.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_OP_LABEL[s]}
-              </option>
-            ))}
-          </select>
-          <select
-            value={prioridadeFiltro}
-            onChange={(e) => setPrioridadeFiltro(e.target.value)}
-            aria-label="Filtrar prioridade"
-          >
-            <option value="">Todas as prioridades</option>
-            {PRIORIDADES_OP.map((p) => (
-              <option key={p} value={p}>
-                {PRIORIDADE_OP_LABEL[p]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {erro && <p className="erro">{erro}</p>}
-
-        {carregando ? (
-          <p className="vazio">Carregando…</p>
-        ) : ordens.length === 0 ? (
-          <p className="vazio">Nenhuma ordem de produção. Crie a primeira ao lado.</p>
-        ) : (
-          <table className="tabela">
-            <thead>
-              <tr>
-                <th>Código</th>
-                <th>Cliente</th>
-                <th>Produto</th>
-                <th>Qtd.</th>
-                <th>Prioridade</th>
-                <th>Previsão</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {ordens.map((o) => (
-                <tr key={o.id}>
-                  <td>{o.codigo ?? `OP-${o.id}`}</td>
-                  <td>{o.cliente}</td>
-                  <td>
-                    {o.produto}
-                    <div className="dica">
-                      {o.tamanho}
-                      {o.variante_id ? '' : ''}
-                    </div>
-                  </td>
-                  <td>{o.quantidade}</td>
-                  <td>{PRIORIDADE_OP_LABEL[o.prioridade] ?? o.prioridade}</td>
-                  <td>{formatarData(o.data_prevista)}</td>
-                  <td>
-                    <select
-                      className={`status status--${o.status}`}
-                      value={o.status}
-                      aria-label={`Status da OP ${o.codigo ?? o.id}`}
-                      onChange={(e) => handleStatus(o.id, e.target.value as Status)}
-                    >
-                      {statusesSelect(o.status).map((s) => (
-                        <option key={s} value={s}>
-                          {STATUS_OP_LABEL[s]}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="acoes">
-                    <button type="button" onClick={() => abrirDetalhe(o.id)}>
-                      Ver
-                    </button>
-                    <button type="button" onClick={() => abrirEditar(o.id)}>
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-remover-texto"
-                      onClick={() => handleRemover(o.id)}
-                    >
-                      Excluir
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-        <div className="paginacao">
-          <span>
-            Página {pagina} de {totalPaginas}
-          </span>
-          <div>
-            <button type="button" disabled={pagina <= 1} onClick={() => setPagina((p) => p - 1)}>
-              Anterior
-            </button>
-            <button
-              type="button"
-              disabled={pagina >= totalPaginas}
-              onClick={() => setPagina((p) => p + 1)}
-            >
-              Próxima
-            </button>
-          </div>
+        <div className="kpi">
+          <span className="kpi__label">Entregues</span>
+          <strong className="kpi__valor">{painel.totais.entregues}</strong>
+          <span className="kpi__dica">Ordens concluídas</span>
         </div>
       </section>
 
-      {modo === 'criar' || modo === 'editar' ? (
+      {verTodasOrdens ? (
+        <section className="card" aria-label="Todas as ordens cadastradas">
+          <div className="card__head">
+            <h2>Todas as ordens</h2>
+            <span className="badge">{todasOrdens.length} cadastradas</span>
+          </div>
+          <p className="dica">Planejadas, em andamento e entregues.</p>
+          {carregandoTodas ? (
+            <p className="vazio">Carregando ordens…</p>
+          ) : todasOrdens.length === 0 ? (
+            <p className="vazio">Nenhuma ordem cadastrada.</p>
+          ) : (
+            <div className="liberacao-andamento__tabela">
+              <table className="tabela" aria-label="Lista de todas as ordens">
+                <thead>
+                  <tr>
+                    <th>OP</th>
+                    <th>OC</th>
+                    <th>Cliente</th>
+                    <th>Produto</th>
+                    <th>Qtd.</th>
+                    <th>Situação</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {todasOrdens.map((ordem) => (
+                    <tr key={ordem.id}>
+                      <td>{ordem.codigo ?? `OP-${ordem.id}`}</td>
+                      <td>{ordem.ordem_corte?.codigo ?? '—'}</td>
+                      <td>{ordem.cliente}</td>
+                      <td>
+                        {ordem.produto}
+                        {ordem.ordem_corte?.referencia || ordem.referencia ? (
+                          <div className="dica">
+                            Ref. {ordem.ordem_corte?.referencia?.trim() || ordem.referencia}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td>{ordem.quantidade}</td>
+                      <td>{situacaoCadastro(ordem)}</td>
+                      <td>
+                        <span className={`pill pill--${ordem.status}`}>{STATUS_OP_LABEL[ordem.status]}</span>
+                      </td>
+                      <td className="acoes">
+                        <button type="button" onClick={() => void abrirDetalhe(ordem.id)}>
+                          Abrir
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
+      </div>
+      ) : null}
+
+      {visao === 'criar-oc' && !fichaAberta ? (
+        <section className="card">
+          <h2>Criar OC</h2>
+          <AvisoLimite assinatura={sessao.assinatura} chave="ordens_mes" />
+          {erro && <p className="erro">{erro}</p>}
+          <p className="dica">Preencha a ficha da ordem de corte. Ao enviar, ela entra em Corte em andamento.</p>
+        </section>
+      ) : null}
+
+      {modo === 'editar' ? (
         <section className="card card--grade">
           <div className="card__head">
-            <h2>{modo === 'editar' ? 'Editar OP' : 'Nova ordem de produção'}</h2>
+            <h2>Editar OP</h2>
             <button type="button" className="btn-fechar" onClick={() => setModo(null)}>
               ×
             </button>
@@ -708,6 +680,7 @@ export function OrdensPage({
               opcoes={produtos.map((produto) => ({
                 id: produto.id,
                 rotulo: produto.sku ? `${produto.sku} — ${produto.nome}` : produto.nome,
+                imagem: produto.imagem,
               }))}
               textoNovo="Cadastrar novo produto"
               cadastroAberto={cadastroProduto}
@@ -836,68 +809,70 @@ export function OrdensPage({
               />
             </label>
 
-            <h3 className="subtitulo">Requisitos de material (BOM)</h3>
-            <p className="dica">Quantidade por peça. O total usa a quantidade da OP. O estoque é consultado ao avançar para corte.</p>
-            {form.requisitos.map((linha, idx) => (
-              <div className="form__row" key={idx}>
-                <label>
-                  Matéria-prima
-                  <select
-                    value={linha.materia_prima_id}
-                    onChange={(e) => {
-                      const requisitos = [...form.requisitos];
-                      requisitos[idx] = { ...linha, materia_prima_id: e.target.value };
-                      setForm({ ...form, requisitos });
-                    }}
-                  >
-                    <option value="">Selecione</option>
-                    {materias.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.codigo ? `${m.codigo} — ` : ''}
-                        {m.nome}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Qtd. por peça
-                  <input
-                    type="number"
-                    min={0.01}
-                    step="0.01"
-                    value={linha.quantidade}
-                    onChange={(e) => {
-                      const requisitos = [...form.requisitos];
-                      requisitos[idx] = { ...linha, quantidade: Number(e.target.value) };
-                      setForm({ ...form, requisitos });
-                    }}
-                  />
-                </label>
-              </div>
-            ))}
-            <button
-              type="button"
-              className="btn-secundario"
-              onClick={() =>
-                setForm({
-                  ...form,
-                  requisitos: [...form.requisitos, { materia_prima_id: '', quantidade: 1 }],
-                })
-              }
-            >
-              Adicionar material
-            </button>
+            <h3 className="subtitulo">Tecido da ordem</h3>
+            <p className="dica">
+              Selecione o tecido cadastrado. A composição entra na ficha da ordem de corte e pode ser editada lá.
+              A criação não consulta nem baixa estoque.
+            </p>
+            <label>
+              Tecido cadastrado
+              <select
+                aria-label="Tecido cadastrado"
+                value={form.tecidoId}
+                onChange={(e) => setForm({ ...form, tecidoId: e.target.value })}
+              >
+                <option value="">Selecionar tecido cadastrado</option>
+                {tecidosCadastro.map((tecido) => (
+                  <option key={tecido.id} value={tecido.id}>
+                    {tecido.codigo ? `${tecido.codigo} — ` : ''}
+                    {tecido.nome}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {tecidoSel ? (
+              <p className="dica">
+                Composição do cadastro: {(tecidoSel.composicao ?? '').trim() || tecidoSel.nome}
+              </p>
+            ) : null}
 
             <button type="submit" disabled={salvando || Boolean(mensagemGrade(grade, Number(form.quantidade) || 0))}>
-              {salvando ? 'Salvando…' : modo === 'editar' ? 'Salvar alterações' : 'Criar OP'}
+              {salvando ? 'Salvando…' : 'Salvar alterações'}
             </button>
           </form>
         </section>
+      ) : fichaAberta && (fichaNova || detalhe) ? (
+        <OrdemCorteFichaPage
+          ordemId={fichaNova ? null : detalhe!.id}
+          onVoltar={() => {
+            const eraNova = fichaNova;
+            setFichaAberta(false);
+            setFichaNova(false);
+            setDetalhe(null);
+            if (eraNova) onIrProducao?.();
+            void recarregar();
+          }}
+          onPublicada={() => {
+            setFichaAberta(false);
+            setFichaNova(false);
+            setDetalhe(null);
+            setModo(null);
+            onIrProducao?.();
+            void recarregar();
+          }}
+        />
       ) : detalhe ? (
         <section className="card card--grade">
           <div className="card__head">
             <h2>{detalhe.codigo ?? `OP ${detalhe.id}`}</h2>
-            <button type="button" className="btn-fechar" onClick={() => setDetalhe(null)}>
+            <button
+              type="button"
+              className="btn-fechar"
+              onClick={() => {
+                setDetalhe(null);
+                setFichaAberta(false);
+              }}
+            >
               ×
             </button>
           </div>
@@ -955,12 +930,16 @@ export function OrdensPage({
           <h3 className="subtitulo">Grade planejada</h3>
           <GradeResumo celulas={detalhe.grade ?? []} />
           <h3 className="subtitulo">Ordem de corte</h3>
+          <p className="dica">A ordem de corte é a ficha de produção desta OP. Um único registro.</p>
           {detalhe.ordem_corte ? (
             <>
               <p className="dica">
                 {detalhe.ordem_corte.codigo} · {detalhe.ordem_corte.quantidade} peças
               </p>
               <GradeResumo celulas={detalhe.ordem_corte.grade} />
+              <button type="button" onClick={() => setFichaAberta(true)}>
+                Abrir ordem de corte
+              </button>
             </>
           ) : (
             <button type="button" disabled={criandoCorte} onClick={() => void handleCriarCorte()}>
@@ -968,8 +947,9 @@ export function OrdensPage({
             </button>
           )}
           <h3 className="subtitulo">Materiais da OP</h3>
+          <p className="dica">O saldo é consultivo. A baixa do tecido acontece só na conclusão do corte.</p>
           {!detalhe.requisitos?.length ? (
-            <p className="dica">Sem BOM vinculado a este produto/variante.</p>
+            <p className="dica">Nenhum tecido selecionado nesta OP.</p>
           ) : (
             <table className="tabela tabela--compacta">
               <thead>
@@ -1012,12 +992,7 @@ export function OrdensPage({
             </button>
           </div>
         </section>
-      ) : (
-        <section className="card">
-          <h2>Detalhe da OP</h2>
-          <p className="dica">Selecione uma ordem na lista ou clique em Nova OP.</p>
-        </section>
-      )}
+      ) : null}
     </main>
   );
 }
