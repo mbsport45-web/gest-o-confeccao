@@ -31,7 +31,7 @@ import {
   type TamanhoCadastro,
 } from './api';
 import { CampoBuscaCadastro } from './CampoBuscaCadastro';
-import { DadosTecidoCadastro, type TecidoFichaCampos } from './DadosTecidoCadastro';
+import { DadosTecidoCadastro } from './DadosTecidoCadastro';
 import { composicaoMaisCompleta, extrairDadosTecidoTexto, numeroDoTexto } from './consumoCorte';
 import { chaveGrade } from './regrasGradeOrdem';
 

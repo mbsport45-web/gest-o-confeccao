@@ -47,6 +47,7 @@ export function createApp(db: AppDatabase, opcoes: AppOpcoes = {}): Express {
   const webhookToken =
     opcoes.webhookToken ?? (process.env.VITEST ? '' : process.env.ASAAS_WEBHOOK_TOKEN ?? '');
 
+  app.set('trust proxy', 1);
   app.use(cors({ origin: true, credentials: true }));
   // PDFs de nota e pedido seguem em base64; imagens de produto também passam por JSON.
   app.use(express.json({ limit: '12mb' }));

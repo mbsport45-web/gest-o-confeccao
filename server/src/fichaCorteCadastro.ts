@@ -211,8 +211,8 @@ export function tecidoParaConsumo(
 ): { unidade: string; larguraCm: number | null; gramatura: number | null } {
   return {
     unidade: ficha?.unidade || materia?.unidade || 'KG',
-    larguraCm: larguraParaCm(ficha?.largura_cm ?? materia?.largura_cm ?? null, ficha?.largura_unidade),
-    gramatura: ficha?.gramatura ?? materia?.gramatura ?? null,
+    larguraCm: larguraParaCm(nuloNumero(ficha?.largura_cm ?? materia?.largura_cm), ficha?.largura_unidade),
+    gramatura: nuloNumero(ficha?.gramatura ?? materia?.gramatura),
   };
 }
 

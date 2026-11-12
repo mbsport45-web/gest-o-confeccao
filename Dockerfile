@@ -14,8 +14,9 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
+RUN mkdir -p /data
+
 ENV NODE_ENV=production
-ENV PORT=3002
 ENV DB_PATH=/data/gestao-confeccao.sqlite
 
 EXPOSE 3002

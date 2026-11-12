@@ -40,14 +40,13 @@ npm run dev:web
 
 O GitHub Pages (`github.io`) **não executa** o servidor Node nem o SQLite — por isso aquele endereço só mostra o README.
 
-Para o sistema abrir na internet, publique este repositório num host que rode Node (Render, plano Free):
+Para o sistema abrir na internet, publique este repositório no Render (Web Service Docker, branch `recuperacao-segura`, disco persistente em `/data`):
 
 1. Abra https://render.com/deploy?repo=https://github.com/mbsport45-web/gest-o-confeccao
 2. Entre com a conta GitHub `mbsport45-web`.
-3. Se pedir o branch, escolha `recuperacao-segura`.
-4. Confirme o Web Service Free.
+3. Confirme o blueprint (`gestao-confeccao`, disco SQLite).
 
-O Render gera um link `https://….onrender.com` com a tela de login. Esse ambiente nasce com banco vazio (não envia o SQLite do Mac). O sistema da empresa continua no computador.
+O Render gera um link `https://….onrender.com` com a tela de login. Esse ambiente nasce com banco vazio (não envia o SQLite do Mac). No primeiro acesso, crie o cadastro da empresa.
 
 ## Scripts úteis
 

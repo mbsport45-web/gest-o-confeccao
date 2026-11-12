@@ -511,10 +511,9 @@ export function LiberacaoFichasPage() {
       }));
       setAviamentosPorFicha((atual) => ({
         ...atual,
-        [salva.id]: aviamentosIniciais({
-          ...salva,
-          aviamentos: salva.aviamentos?.length ? salva.aviamentos : atual[ficha.id] ?? salva.aviamentos,
-        }),
+        [salva.id]: atual[ficha.id]?.some((linha) => linha.descricao.trim())
+          ? atual[ficha.id]
+          : aviamentosIniciais(salva),
       }));
       setAba('liberadas');
       setFichaAbertaId(salva.id);

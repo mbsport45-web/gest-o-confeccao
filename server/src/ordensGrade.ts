@@ -1,5 +1,5 @@
 import type { AppDatabase } from './db.js';
-import { calcularConsumoCorte, consumoParaBaixa } from './consumoCorte.js';
+import { calcularConsumoCorte, consumoParaBaixa, numeroDoTexto } from './consumoCorte.js';
 import {
   garantirCliente,
   garantirProduto,
@@ -726,9 +726,9 @@ function mapCorte(db: AppDatabase, empresaId: number, linha: OrdemCorteLinhaBanc
     tecido_nome: snapshot?.nome || tecido.nome,
     tecido_unidade: snapshot?.unidade || tecido.unidade,
     tecido_cor: snapshot?.cor || null,
-    tecido_largura_cm: snapshot?.largura_cm ?? null,
+    tecido_largura_cm: numeroDoTexto(snapshot?.largura_cm),
     tecido_largura_unidade: snapshot?.largura_unidade ?? 'cm',
-    tecido_gramatura: snapshot?.gramatura ?? null,
+    tecido_gramatura: numeroDoTexto(snapshot?.gramatura),
     tecido_numero_rolo: snapshot?.numero_rolo ?? '',
     tecido_composicao: snapshot?.composicao || null,
     materia_prima_id: snapshot?.materia_prima_id ?? tecido.id,
